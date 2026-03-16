@@ -169,8 +169,31 @@ for _, ch in ipairs {
   NO_BREAK_END[ch] = true
 end
 
---- Split text into segments for wrapping, handling CJK/fullwidth characters individually.
---- Each CJK/fullwidth character becomes its own segment so it can be wrapped independently.
+local budoux = require "md-render.budoux"
+local budoux_ja = require "md-render.budoux_ja"
+
+--- Check if a character is CJK/fullwidth or kinsoku-relevant punctuation.
+local function is_cjk_or_kinsoku(char)
+  return vim.fn.strdisplaywidth(char) >= 2 or NO_BREAK_START[char] or NO_BREAK_END[char]
+end
+
+--- Extract the first UTF-8 character from a string.
+local function first_char(s)
+  return s:match "[%z\1-\127\194-\253][\128-\191]*"
+end
+
+--- Extract the last UTF-8 character from a string.
+local function last_char(s)
+  local last
+  for c in s:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
+    last = c
+  end
+  return last
+end
+
+--- Split text into segments for wrapping.
+--- CJK runs are segmented using BudouX for natural word-boundary splitting.
+--- ASCII words are accumulated as single segments (split at spaces).
 ---@param text string
 ---@return {text: string, byte_pos: integer, has_leading_space: boolean}[]
 local function split_segments(text)
@@ -178,29 +201,56 @@ local function split_segments(text)
   local current_word = ""
   local current_word_start = 0
   local has_leading_space = false
+  local cjk_run = ""
+  local cjk_run_start = 0
+  local cjk_leading_space = false
   local byte_pos = 0
+
+  local function flush_ascii()
+    if current_word ~= "" then
+      table.insert(segments, { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space })
+      current_word = ""
+      has_leading_space = false
+    end
+  end
+
+  local function flush_cjk()
+    if cjk_run == "" then return end
+    local chunks = budoux.parse(budoux_ja, cjk_run)
+    local chunk_byte = cjk_run_start
+    local first = true
+    for _, chunk in ipairs(chunks) do
+      local sub_chunks = budoux.split_by_script(chunk)
+      for _, sub in ipairs(sub_chunks) do
+        table.insert(segments, {
+          text = sub,
+          byte_pos = chunk_byte,
+          has_leading_space = first and cjk_leading_space or false,
+        })
+        chunk_byte = chunk_byte + #sub
+        first = false
+      end
+    end
+    cjk_run = ""
+    has_leading_space = false
+  end
 
   for char in text:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
     if char:match "%s" then
-      -- Flush accumulated ASCII word
-      if current_word ~= "" then
-        table.insert(segments, { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space })
-        current_word = ""
-        has_leading_space = false
-      end
+      flush_ascii()
+      flush_cjk()
       has_leading_space = true
-    elseif vim.fn.strdisplaywidth(char) >= 2 or NO_BREAK_START[char] or NO_BREAK_END[char] then
-      -- CJK/fullwidth character or kinsoku-relevant punctuation:
-      -- flush word first, then emit as individual segment
-      if current_word ~= "" then
-        table.insert(segments, { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space })
-        current_word = ""
+    elseif is_cjk_or_kinsoku(char) then
+      flush_ascii()
+      if cjk_run == "" then
+        cjk_run_start = byte_pos
+        cjk_leading_space = has_leading_space
         has_leading_space = false
       end
-      table.insert(segments, { text = char, byte_pos = byte_pos, has_leading_space = has_leading_space })
-      has_leading_space = false
+      cjk_run = cjk_run .. char
     else
       -- ASCII/narrow character: accumulate into word
+      flush_cjk()
       if current_word == "" then
         current_word_start = byte_pos
       end
@@ -209,10 +259,8 @@ local function split_segments(text)
     byte_pos = byte_pos + #char
   end
 
-  -- Flush remaining word
-  if current_word ~= "" then
-    table.insert(segments, { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space })
-  end
+  flush_ascii()
+  flush_cjk()
 
   return segments
 end
@@ -245,19 +293,21 @@ local function wrap_words(text, max_width)
     local space_width = (seg.has_leading_space and current ~= "") and 1 or 0
 
     if current_width + space_width + seg_width > max_width and current ~= "" then
-      -- Kinsoku 追い出し: if this segment is a no-break-start char,
+      -- Kinsoku 追い出し: if this segment starts with a no-break-start char,
       -- push the last segment of the current line to the next line too
-      if NO_BREAK_START[seg.text] and prev_current ~= "" then
+      if NO_BREAK_START[first_char(seg.text)] and prev_current ~= "" then
         table.insert(wrapped_lines, prev_current)
         table.insert(line_starts, current_start)
-        current = last_seg_text .. seg.text
+        local sep = seg.has_leading_space and " " or ""
+        current = last_seg_text .. sep .. seg.text
         current_start = last_seg_pos
         current_width = vim.fn.strdisplaywidth(current)
-      elseif NO_BREAK_START[seg.text] then
+      elseif NO_BREAK_START[first_char(seg.text)] then
         -- Kinsoku 追い込み fallback: keep the char on the current line
         -- even if it exceeds max_width, to avoid it starting a new line
-        current = current .. seg.text
-        current_width = current_width + seg_width
+        local sep = (seg.has_leading_space and current ~= "") and " " or ""
+        current = current .. sep .. seg.text
+        current_width = current_width + #sep + seg_width
       else
         table.insert(wrapped_lines, current)
         table.insert(line_starts, current_start)
@@ -270,9 +320,9 @@ local function wrap_words(text, max_width)
       last_seg_text = ""
       last_seg_pos = 0
     else
-      -- Kinsoku: if this is a no-break-end char at the end of a full line,
+      -- Kinsoku: if this segment ends with a no-break-end char at the end of a full line,
       -- break before it so it doesn't sit at line end
-      if NO_BREAK_END[seg.text] and current ~= "" then
+      if NO_BREAK_END[last_char(seg.text)] and current ~= "" then
         local next_seg = segments[i + 1]
         local next_width = next_seg and vim.fn.strdisplaywidth(next_seg.text) or 0
         if current_width + space_width + seg_width + next_width > max_width then
