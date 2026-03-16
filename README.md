@@ -116,6 +116,8 @@ md.display_utils.apply_content_to_buffer(buf, ns, content)
 | `md-render.float_win` | Floating window lifecycle management with auto-close |
 | `md-render.display_utils` | Buffer/window utilities — extmarks, treesitter highlights, keymaps, OSC 8 |
 | `md-render.preview` | Markdown preview command with YAML frontmatter and interactive fold/expand |
+| `md-render.budoux` | BudouX parser for natural Japanese text segmentation (ported from [google/budoux](https://github.com/google/budoux)) |
+| `md-render.budoux_ja` | BudouX Japanese model data |
 
 ## Highlight Groups
 
@@ -248,6 +250,8 @@ md.display_utils.apply_content_to_buffer(buf, ns, content)
 | `md-render.float_win` | フローティングウィンドウのライフサイクル管理と自動クローズ |
 | `md-render.display_utils` | バッファ/ウィンドウユーティリティ — extmarks、treesitter ハイライト、キーマップ、OSC 8 |
 | `md-render.preview` | YAML フロントマターとインタラクティブな折りたたみ/展開付き Markdown プレビュー |
+| `md-render.budoux` | BudouX パーサー — 日本語テキストの自然な分節処理（[google/budoux](https://github.com/google/budoux) からの移植） |
+| `md-render.budoux_ja` | BudouX 日本語モデルデータ |
 
 ## ハイライトグループ
 
