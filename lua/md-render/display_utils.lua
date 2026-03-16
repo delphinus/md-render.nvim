@@ -256,6 +256,26 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
 
       local cur_content = get_content()
       local click_line = mouse.line - 1 -- 0-indexed
+      local click_col = mouse.column - 1
+
+      -- Helper: check if click is on a URL extmark and open it
+      local function try_open_url()
+        if M.supports_osc8() then return false end
+        local extmarks =
+          vim.api.nvim_buf_get_extmarks(buf, ns, { click_line, 0 }, { click_line + 1, 0 }, { details = true })
+        for _, mark in ipairs(extmarks) do
+          local _, _, start_col, details = unpack(mark)
+          if details.url then
+            local end_col = details.end_col or (start_col + 1)
+            if click_col >= start_col and click_col < end_col then
+              vim.notify("Opening: " .. details.url, vim.log.levels.INFO)
+              vim.ui.open(details.url)
+              return true
+            end
+          end
+        end
+        return false
+      end
 
       -- Check for foldable callout header click
       if on_fold_toggle and cur_content.callout_folds then
@@ -271,6 +291,8 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
       if on_expand_toggle and cur_content.expandable_regions then
         for _, region in ipairs(cur_content.expandable_regions) do
           if click_line >= region.start_line and click_line <= region.end_line then
+            -- If click is on a URL, open it instead of toggling expansion
+            if try_open_url() then return end
             on_expand_toggle(region.block_id, not region.expanded)
             return
           end
@@ -278,22 +300,7 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
       end
 
       -- In OSC 8 terminals, the terminal handles link clicks natively.
-      if not M.supports_osc8() then
-        local click_col = mouse.column - 1
-        local extmarks =
-          vim.api.nvim_buf_get_extmarks(buf, ns, { click_line, 0 }, { click_line + 1, 0 }, { details = true })
-        for _, mark in ipairs(extmarks) do
-          local _, _, start_col, details = unpack(mark)
-          if details.url then
-            local end_col = details.end_col or (start_col + 1)
-            if click_col >= start_col and click_col < end_col then
-              vim.notify("Opening: " .. details.url, vim.log.levels.INFO)
-              vim.ui.open(details.url)
-              return
-            end
-          end
-        end
-      end
+      try_open_url()
     end
   end, { buffer = buf, noremap = true, silent = true })
 end

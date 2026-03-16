@@ -96,6 +96,33 @@ function ContentBuilder:result()
   }
 end
 
+--- Detect bare URLs in a code block line and add link metadata for clickability.
+--- This ensures that URLs inside code blocks are clickable even when the line is
+--- visually truncated (the full URL is stored in the extmark).
+---@param self MdRender.ContentBuilder
+---@param raw_line string Raw code line content (without indent/prefix)
+---@param prefix_len integer Byte length of the displayed prefix
+---@param content_byte_end integer Byte position in displayed line where content ends (before "…" if truncated)
+local function detect_urls_in_code_line(self, raw_line, prefix_len, content_byte_end)
+  local pos = 1
+  while true do
+    local ms, me = raw_line:find("https?://[^%s%)<>]+", pos)
+    if not ms then break end
+    local url = raw_line:sub(ms, me):gsub("[.,;:!?*~]+$", "")
+    local col_start = prefix_len + ms - 1
+    local col_end = prefix_len + ms - 1 + #url
+    if col_start < content_byte_end then
+      table.insert(self.link_metadata, {
+        line = #self.lines - 1,
+        col_start = col_start,
+        col_end = math.min(col_end, content_byte_end),
+        url = url,
+      })
+    end
+    pos = me + 1
+  end
+end
+
 --- Characters that must not appear at the start of a line (JIS X 4051 行頭禁則文字).
 ---@type table<string, true>
 local NO_BREAK_START = {}
@@ -841,8 +868,10 @@ function ContentBuilder:render_document(lines, opts)
           { col = 0, end_col = byte_pos, hl = "String" },
           { col = byte_pos, end_col = #truncated_line, hl = "Underlined" },
         })
+        detect_urls_in_code_line(self, line, #indent, byte_pos)
       else
         self:add_line(indented, { { col = 0, end_col = -1, hl = "String" } })
+        detect_urls_in_code_line(self, line, #indent, #indented)
       end
     else
       local handled = false
@@ -906,11 +935,13 @@ function ContentBuilder:render_document(lines, opts)
               { col = #callout_code_prefix, end_col = byte_pos, hl = "String" },
               { col = byte_pos, end_col = #truncated_code, hl = "Underlined" },
             })
+            detect_urls_in_code_line(self, stripped, #callout_code_prefix, byte_pos)
           else
             self:add_line(code_line, {
               { col = #indent, end_col = #indent + #"│ ", hl = "FloatBorder" },
               { col = #callout_code_prefix, end_col = -1, hl = "String" },
             })
+            detect_urls_in_code_line(self, stripped, #callout_code_prefix, #code_line)
           end
           self:apply_alert_styling(lines_before, #self.lines, current_alert_type, false)
           handled = true
