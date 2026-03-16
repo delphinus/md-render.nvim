@@ -8,8 +8,12 @@ FloatWin.new = function(augroup_name)
   return setmetatable({ augroup = augroup_name or "md_render_float" }, { __index = FloatWin })
 end
 
-function FloatWin:setup(win)
+function FloatWin:setup(win, opts)
   self.win = win
+  opts = opts or {}
+  if opts.auto_close == false then
+    return
+  end
   vim.api.nvim_create_autocmd({ "WinEnter", "CursorMoved" }, {
     group = vim.api.nvim_create_augroup(self.augroup, { clear = false }),
     callback = function()

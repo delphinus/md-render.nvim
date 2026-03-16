@@ -33,8 +33,26 @@ Markdown rendering engine for Neovim floating windows. Transforms raw Markdown t
 {
   "delphinus/md-render.nvim",
   version = "*",
+  keys = {
+    { "<leader>mp", "<Plug>(md-render-preview)", desc = "Markdown preview (toggle)" },
+    { "<leader>md", "<Plug>(md-render-demo)",    desc = "Markdown render demo" },
+  },
 }
 ```
+
+## Keymaps
+
+The plugin provides `<Plug>` mappings but does **not** set any default keybindings. Map them yourself:
+
+```lua
+vim.keymap.set("n", "<leader>mp", "<Plug>(md-render-preview)", { desc = "Markdown preview (toggle)" })
+vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",    { desc = "Markdown render demo" })
+```
+
+| `<Plug>` mapping | Description |
+|---|---|
+| `<Plug>(md-render-preview)` | Toggle a floating preview window for the current Markdown buffer |
+| `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
 ## Usage
 

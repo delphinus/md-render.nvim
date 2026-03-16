@@ -212,9 +212,7 @@ function M.open_float_window(buf, content, float_win, opts)
     title_pos = "center",
   })
 
-  if not enter then
-    float_win:setup(win)
-  end
+  float_win:setup(win, { auto_close = not enter })
 
   vim.api.nvim_set_option_value("wrap", true, { win = win })
   vim.api.nvim_set_option_value("cursorline", true, { win = win })

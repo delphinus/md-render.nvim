@@ -4,6 +4,7 @@ local display_utils = require "md-render.display_utils"
 local ContentBuilder = cb.ContentBuilder
 
 local float_win = FloatWin.new "md_render_preview_float"
+local demo_float_win = FloatWin.new "md_render_demo_float"
 
 local MdPreview = {}
 
@@ -126,16 +127,16 @@ end
 --- Show a floating window previewing the current buffer's markdown content
 ---@param opts? { max_width?: integer }
 MdPreview.show = function(opts)
+  if float_win:close_if_valid() then
+    return
+  end
+
   local bufnr = vim.api.nvim_get_current_buf()
   local ft = vim.bo[bufnr].filetype
   local name = vim.api.nvim_buf_get_name(bufnr)
 
   if ft ~= "markdown" and not name:match "%.md$" and not name:match "%.markdown$" then
     vim.notify("md-render: current buffer is not a Markdown file", vim.log.levels.WARN)
-    return
-  end
-
-  if float_win:close_if_valid() then
     return
   end
 
@@ -318,15 +319,13 @@ MdPreview.show_demo = function()
     "Obsidian ==highlight== markers and `%%hidden comments%%` are also supported.",
   }, "\n"), "\n")
 
-  local fold_state = {}
-  local expand_state = {}
-  local opts = {}
-
-  local demo_float_win = FloatWin.new "md_render_demo_float"
-
   if demo_float_win:close_if_valid() then
     return
   end
+
+  local fold_state = {}
+  local expand_state = {}
+  local opts = {}
 
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace "md_render_demo"
