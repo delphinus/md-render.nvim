@@ -149,6 +149,8 @@ for _, ch in ipairs {
   "ㇰ", "ㇱ", "ㇲ", "ㇳ", "ㇴ", "ㇵ", "ㇶ", "ㇷ", "ㇸ", "ㇹ", "ㇺ", "ㇻ", "ㇼ", "ㇽ", "ㇾ", "ㇿ",
   -- 半角カタカナ
   "｡", "､", "｣", "ｧ", "ｨ", "ｩ", "ｪ", "ｫ", "ｯ", "ｬ", "ｭ", "ｮ", "ｰ",
+  -- ASCII (half-width) punctuation
+  ")", "]", "}", "!", "?", ",", ".", ";", ":",
 } do
   NO_BREAK_START[ch] = true
 end
@@ -161,6 +163,8 @@ for _, ch in ipairs {
   "（", "〔", "［", "｛", "〈", "《", "「", "『", "【", "｟", "〘", "〖", "«",
   -- 半角カタカナ
   "｢",
+  -- ASCII (half-width) punctuation
+  "(", "[", "{",
 } do
   NO_BREAK_END[ch] = true
 end
@@ -185,8 +189,9 @@ local function split_segments(text)
         has_leading_space = false
       end
       has_leading_space = true
-    elseif vim.fn.strdisplaywidth(char) >= 2 then
-      -- CJK/fullwidth character: flush word first, then emit as individual segment
+    elseif vim.fn.strdisplaywidth(char) >= 2 or NO_BREAK_START[char] or NO_BREAK_END[char] then
+      -- CJK/fullwidth character or kinsoku-relevant punctuation:
+      -- flush word first, then emit as individual segment
       if current_word ~= "" then
         table.insert(segments, { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space })
         current_word = ""
@@ -248,6 +253,11 @@ local function wrap_words(text, max_width)
         current = last_seg_text .. seg.text
         current_start = last_seg_pos
         current_width = vim.fn.strdisplaywidth(current)
+      elseif NO_BREAK_START[seg.text] then
+        -- Kinsoku 追い込み fallback: keep the char on the current line
+        -- even if it exceeds max_width, to avoid it starting a new line
+        current = current .. seg.text
+        current_width = current_width + seg_width
       else
         table.insert(wrapped_lines, current)
         table.insert(line_starts, current_start)

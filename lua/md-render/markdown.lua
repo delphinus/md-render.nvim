@@ -590,17 +590,12 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
   local highlights = {}
   local links = {}
 
-  -- Heading (# ## ### etc.) - early return with level-specific icon and highlight
+  -- Heading (# ## ### etc.) - detect level and strip markers, process inline elements below
   local heading_markers, heading_content = rendered_text:match "^(#+)%s+(.+)$"
+  local heading_level = nil
   if heading_markers then
-    local level = math.min(#heading_markers, 6)
-    local icons = { "◉ ", "○ ", "◆ ", "◇ ", "▸ ", "▹ " }
-    local icon = icons[level]
-    rendered_text = icon .. heading_content
-    local hl_group = "MdRenderH" .. level
-    table.insert(highlights, { col = 0, end_col = #icon, hl = hl_group })
-    table.insert(highlights, { col = #icon, end_col = #rendered_text, hl = hl_group })
-    return rendered_text, highlights, links, "heading"
+    heading_level = math.min(#heading_markers, 6)
+    rendered_text = heading_content
   end
 
   -- Blockquote (> ) - extract prefix
@@ -677,6 +672,26 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
   rendered_text = process_paired_markers(rendered_text, "~~([^~]+)~~", "DiagnosticDeprecated", 2, highlights, links)
   rendered_text = process_paired_markers(rendered_text, "==([^=]+)==", "MdRenderHighlight", 2, highlights, links)
   rendered_text = process_code_markers(rendered_text, "String", highlights, links)
+
+  -- Add heading icon and highlight
+  if heading_level then
+    local icons = { "󰉫 ", "󰉬 ", "󰉭 ", "󰉮 ", "󰉯 ", "󰉰 " }
+    local icon = icons[heading_level]
+    local icon_len = #icon
+    -- Shift all existing highlights and links by the icon length
+    for _, hl in ipairs(highlights) do
+      hl.col = hl.col + icon_len
+      hl.end_col = hl.end_col + icon_len
+    end
+    for _, link in ipairs(links) do
+      link.col_start = link.col_start + icon_len
+      link.col_end = link.col_end + icon_len
+    end
+    rendered_text = icon .. rendered_text
+    local hl_group = "MdRenderH" .. heading_level
+    table.insert(highlights, 1, { col = 0, end_col = #rendered_text, hl = hl_group })
+    return rendered_text, highlights, links, "heading"
+  end
 
   -- Add list marker highlight
   if list_marker then
