@@ -14,7 +14,7 @@ Markdown rendering engine for Neovim floating windows. Transforms raw Markdown t
 - **Foldable callouts** — `[!TYPE]+` / `[!TYPE]-` syntax with click-to-toggle fold indicators
 - **Tables** — parsed and rendered with box-drawing borders, column alignment (left/center/right), proportional column shrinking, and inline formatting within cells
 - **Code blocks** — fenced code blocks with treesitter syntax highlighting for the specified language
-- **Word wrapping** — CJK-aware wrapping with JIS X 4051 kinsoku shori (line-breaking rules)
+- **Word wrapping** — CJK-aware wrapping with [BudouX](https://github.com/google/budoux) phrase segmentation and JIS X 4051 kinsoku shori (line-breaking rules)
 - **Blockquotes** — nested blockquote rendering with `│` border indicators
 - **Ordered lists** — CommonMark-compliant renumbering
 - **Expandable regions** — click to expand/collapse truncated code blocks and tables
@@ -144,7 +144,7 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
 - **折りたたみコールアウト** — `[!TYPE]+` / `[!TYPE]-` 構文でクリックによる折りたたみ切り替え
 - **テーブル** — 罫線文字による描画、列アラインメント（左/中央/右）、比例列縮小、セル内インライン書式
 - **コードブロック** — フェンスコードブロックと treesitter によるシンタックスハイライト
-- **ワードラップ** — CJK 対応の折り返しと JIS X 4051 禁則処理
+- **ワードラップ** — [BudouX](https://github.com/google/budoux) によるフレーズ分割と JIS X 4051 禁則処理による CJK 対応の折り返し（[詳細](docs/line-breaking-ja.md)）
 - **ブロック引用** — `│` ボーダー付きのネスト対応
 - **番号付きリスト** — CommonMark 準拠の番号振り直し
 - **展開可能領域** — クリックで省略されたコードブロックやテーブルを展開/折りたたみ
