@@ -1,5 +1,8 @@
 --- BudouX parser for Japanese text segmentation.
---- Ported from https://github.com/google/budoux (Apache-2.0 license).
+--- Ported to Lua from https://github.com/google/budoux
+--- Original work Copyright 2021 Google LLC, licensed under Apache-2.0.
+--- See LICENSE-APACHE-2.0 and NOTICE in the project root.
+---
 --- Uses a compact machine-learning model to find natural word boundaries in CJK text,
 --- producing more readable line breaks than character-level splitting.
 

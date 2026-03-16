@@ -1,0 +1,15 @@
+This project includes code ported from BudouX.
+
+BudouX
+  https://github.com/google/budoux
+  Copyright 2021 Google LLC
+  Licensed under the Apache License, Version 2.0
+
+  Files:
+    lua/md-render/budoux.lua    - Parser logic ported from Python/JavaScript to Lua
+    lua/md-render/budoux_ja.lua - Japanese model data from budoux/models/ja.json
+
+  The full text of the Apache License, Version 2.0 is available at:
+  https://www.apache.org/licenses/LICENSE-2.0
+
+  A copy is included in this repository at LICENSE-APACHE-2.0.

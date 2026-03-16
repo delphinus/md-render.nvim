@@ -1,6 +1,7 @@
 --- BudouX Japanese model data.
 --- Source: https://github.com/google/budoux/blob/main/budoux/models/ja.json
---- License: Apache-2.0
+--- Original work Copyright 2021 Google LLC, licensed under Apache-2.0.
+--- See LICENSE-APACHE-2.0 and NOTICE in the project root.
 
 local M = {}
 

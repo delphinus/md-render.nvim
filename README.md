@@ -130,7 +130,9 @@ The plugin defines the following highlight groups (all set with `default = true`
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+This project includes code ported from [BudouX](https://github.com/google/budoux) (Copyright 2021 Google LLC, Apache-2.0). See [NOTICE](NOTICE) for details.
 
 ---
 
@@ -264,4 +266,6 @@ md.display_utils.apply_content_to_buffer(buf, ns, content)
 
 ## ライセンス
 
-MIT
+MIT — [LICENSE](LICENSE) を参照。
+
+本プロジェクトには [BudouX](https://github.com/google/budoux)（Copyright 2021 Google LLC、Apache-2.0）から移植したコードが含まれています。詳細は [NOTICE](NOTICE) を参照してください。
