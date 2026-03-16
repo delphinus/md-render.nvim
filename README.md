@@ -4,6 +4,8 @@
 
 Markdown rendering engine for Neovim floating windows. Transforms raw Markdown text into richly highlighted, interactive content displayed in floating windows.
 
+![demo](assets/demo.png)
+
 ## Features
 
 - **Inline formatting** — bold (`**bold**`), strikethrough (`~~strike~~`), inline code (`` `code` ``), and Obsidian highlight (`==highlight==`)
@@ -133,6 +135,8 @@ MIT
 # 日本語
 
 Neovim のフローティングウィンドウで Markdown をリッチにレンダリングするエンジンです。生の Markdown テキストをハイライト付きのインタラクティブなコンテンツに変換して表示します。
+
+![demo](assets/demo.png)
 
 ## 機能
 
