@@ -261,6 +261,107 @@ test("tight list: no change", function()
   assert_eq(#lines, 3, "tight list: should have 3 lines")
 end)
 
+-- render_document <details>/<summary> tests
+local function render_doc_full(input_lines, opts)
+  local builder = ContentBuilder.new()
+  builder:render_document(input_lines, opts or { max_width = 80, indent = "" })
+  return builder.lines, builder.callout_folds
+end
+
+test("details: collapsed by default (no open attribute)", function()
+  local lines, folds = render_doc_full({
+    "<details>",
+    "<summary>Title</summary>",
+    "",
+    "Body content",
+    "",
+    "</details>",
+  })
+  -- Should show only the summary header, body is hidden
+  assert_eq(#lines, 1, "collapsed details: should have 1 line (header only)")
+  assert_eq(#folds, 1, "collapsed details: should have 1 fold entry")
+  assert_eq(folds[1].collapsed, true, "collapsed details: fold should be collapsed")
+  -- Header should contain the title
+  local header = lines[1]
+  assert_eq(header:match("Title") ~= nil, true, "collapsed details: header should contain title")
+end)
+
+test("details open: expanded by default with │ prefix", function()
+  local lines, folds = render_doc_full({
+    "<details open>",
+    "<summary>Title</summary>",
+    "",
+    "Body content",
+    "",
+    "</details>",
+  })
+  -- Should show header + blank + body content
+  assert_eq(#folds, 1, "open details: should have 1 fold entry")
+  assert_eq(folds[1].collapsed, false, "open details: fold should be expanded")
+  -- Body should be visible with │ prefix
+  local has_body = false
+  for _, l in ipairs(lines) do
+    if l:match("│") and l:match("Body content") then has_body = true end
+  end
+  assert_eq(has_body, true, "open details: body should have │ prefix")
+  -- Header should NOT have │ prefix
+  local header = lines[1]
+  assert_eq(header:match("^│") == nil, true, "open details: header should not have │ prefix")
+end)
+
+test("details: fold_state overrides default", function()
+  local lines = render_doc_full({
+    "<details>",
+    "<summary>Title</summary>",
+    "",
+    "Body content",
+    "",
+    "</details>",
+  }, { max_width = 80, indent = "", fold_state = { [1] = false } })
+  -- fold_state says src_idx 1 (the <details> line) is NOT collapsed
+  local has_body = false
+  for _, l in ipairs(lines) do
+    if l:match("Body content") then has_body = true end
+  end
+  assert_eq(has_body, true, "fold_state override: body should be visible")
+end)
+
+test("details: no summary tag renders default 'Details' label", function()
+  local lines = render_doc_full({
+    "<details open>",
+    "Body without summary",
+    "</details>",
+  })
+  local has_details_label = false
+  for _, l in ipairs(lines) do
+    if l:match("Details") then has_details_label = true end
+  end
+  assert_eq(has_details_label, true, "no summary: should use default 'Details' label")
+end)
+
+test("details: inline summary on details tag", function()
+  local lines, folds = render_doc_full({
+    "<details><summary>Inline Title</summary>",
+    "",
+    "Body",
+    "",
+    "</details>",
+  })
+  assert_eq(#folds, 1, "inline summary: should have 1 fold")
+  assert_eq(lines[1]:match("Inline Title") ~= nil, true, "inline summary: header should contain title")
+end)
+
+test("details: nested details depth tracking", function()
+  local lines = render_doc_full({
+    "<details>",
+    "<summary>Outer</summary>",
+    "Outer body",
+    "</details>",
+  })
+  -- Collapsed: only header visible
+  assert_eq(#lines, 1, "nested: outer collapsed should have 1 line")
+end)
+
 -- Print summary
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then

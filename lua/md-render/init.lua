@@ -61,12 +61,28 @@ function M.setup_alert_highlights()
   end
 end
 
+--- Set up <details> highlight groups (MdRenderDetailsBg)
+function M.setup_details_highlights()
+  local normal_hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
+  if not normal_hl.bg then
+    normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  end
+  local normal_bg = normal_hl.bg or 0x1e1e2e
+
+  local border_hl = vim.api.nvim_get_hl(0, { name = "FloatBorder", link = false })
+  local fg = border_hl.fg or 0x888888
+  local bg = blend_color(fg, normal_bg, 0.1)
+  vim.api.nvim_set_hl(0, "MdRenderDetailsBg", { bg = bg, default = true })
+  vim.api.nvim_set_hl(0, "MdRenderDetailsBar", { fg = fg, bg = bg, default = true })
+end
+
 --- Set up all highlight groups used by md-render
 function M.setup_highlights()
   -- Obsidian ==highlight== marker
   vim.api.nvim_set_hl(0, "MdRenderHighlight", { bg = "#3b3600", fg = "#ffec80", default = true })
   M.setup_heading_highlights()
   M.setup_alert_highlights()
+  M.setup_details_highlights()
 end
 
 -- Re-export submodules (preview is lazy-loaded to avoid circular dependency)

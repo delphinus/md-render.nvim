@@ -749,6 +749,14 @@ function ContentBuilder:render_document(lines, opts)
   local callout_code_has_truncation = false
   local in_comment_block = false
   local skip_next_line = false
+  local in_details = false
+  local details_src_idx = nil
+  local details_default_open = false
+  local details_summary_rendered = false
+  local details_depth = 0
+  local in_details_summary = false
+  local details_summary_parts = {}
+  local skip_details_body = false
 
   --- Flush accumulated table lines
   local function flush_table()
@@ -778,6 +786,111 @@ function ContentBuilder:render_document(lines, opts)
       end
       table_buf = {}
       table_buf_start_idx = nil
+    end
+  end
+
+  --- Render a <details> summary header with fold indicator
+  local function render_details_summary(summary_text)
+    local is_collapsed
+    if fold_state[details_src_idx] ~= nil then
+      is_collapsed = fold_state[details_src_idx]
+    else
+      is_collapsed = not details_default_open
+    end
+
+    local det_lines_before = #self.lines
+    local det_icon = is_collapsed and "▶ " or "▼ "
+    local det_rendered, det_hls, det_links = markdown.render(
+      summary_text, repo_base_url, autolinks, ref_links
+    )
+
+    local det_icon_len = #det_icon
+    for _, hl in ipairs(det_hls) do
+      hl.col = hl.col + det_icon_len
+      hl.end_col = hl.end_col + det_icon_len
+    end
+    for _, link in ipairs(det_links) do
+      link.col_start = link.col_start + det_icon_len
+      link.col_end = link.col_end + det_icon_len
+    end
+
+    local det_full = det_icon .. det_rendered
+    table.insert(det_hls, 1, { col = 0, end_col = #det_full, hl = "Title" })
+
+    self:add_simple_markdown(det_full, det_hls, det_links, indent)
+
+    table.insert(self.callout_folds, {
+      header_line = det_lines_before,
+      source_line = details_src_idx,
+      collapsed = is_collapsed,
+    })
+
+    if is_collapsed then
+      skip_details_body = true
+    end
+
+    details_summary_rendered = true
+    lines_shown = lines_shown + (#self.lines - det_lines_before)
+  end
+
+  --- Apply │ prefix and FloatBorder highlight to lines rendered within a <details> body
+  local function apply_details_body_prefix(from_line, to_line)
+    local prefix = "│ "
+    local prefix_len = #prefix
+    local indent_len = #indent
+
+    for i = from_line + 1, to_line do
+      local line_text = self.lines[i]
+      self.lines[i] = line_text:sub(1, indent_len) .. prefix .. line_text:sub(indent_len + 1)
+    end
+
+    for _, hl_info in ipairs(self.highlights) do
+      if hl_info.line >= from_line and hl_info.line < to_line then
+        for _, group in ipairs(hl_info.groups) do
+          group.col = group.col + prefix_len
+          if group.end_col >= 0 then
+            group.end_col = group.end_col + prefix_len
+          end
+        end
+        table.insert(hl_info.groups, 1, {
+          col = indent_len,
+          end_col = indent_len + prefix_len,
+          hl = "MdRenderDetailsBar",
+        })
+        table.insert(hl_info.groups, { col = 0, end_col = -1, hl = "MdRenderDetailsBg", hl_eol = true })
+      end
+    end
+
+    for line_idx = from_line, to_line - 1 do
+      local has_hl = false
+      for _, hl_info in ipairs(self.highlights) do
+        if hl_info.line == line_idx then
+          has_hl = true
+          break
+        end
+      end
+      if not has_hl then
+        table.insert(self.highlights, {
+          line = line_idx,
+          groups = {
+            { col = indent_len, end_col = indent_len + prefix_len, hl = "MdRenderDetailsBar" },
+            { col = 0, end_col = -1, hl = "MdRenderDetailsBg", hl_eol = true },
+          },
+        })
+      end
+    end
+
+    for _, link in ipairs(self.link_metadata) do
+      if link.line >= from_line and link.line < to_line then
+        link.col_start = link.col_start + prefix_len
+        link.col_end = link.col_end + prefix_len
+      end
+    end
+
+    for _, cb in ipairs(self.code_blocks) do
+      if cb.start_line >= from_line and cb.end_line < to_line then
+        cb.prefix_len = (cb.prefix_len or indent_len) + prefix_len
+      end
     end
   end
 
@@ -828,6 +941,101 @@ function ContentBuilder:render_document(lines, opts)
     end
     if in_comment_block then
       goto continue
+    end
+
+    -- Handle <details>/<summary> HTML blocks (outside code blocks)
+    if not in_code_block and not in_callout_code_block then
+      -- Handle </details> end tag
+      if line:match "^%s*</details>%s*$" then
+        if in_details then
+          if details_depth > 0 then
+            details_depth = details_depth - 1
+          else
+            in_details = false
+            skip_details_body = false
+            details_src_idx = nil
+            details_summary_rendered = false
+          end
+        end
+        goto continue
+      end
+
+      -- Skip body of collapsed <details>
+      if skip_details_body then
+        if line:match "^%s*<details" then
+          details_depth = details_depth + 1
+        end
+        goto continue
+      end
+
+      -- Handle <details> opening tag
+      if line:match "^%s*<details" then
+        if in_details then
+          details_depth = details_depth + 1
+          goto continue
+        end
+        local attrs = line:match "^%s*<details(.-)>" or ""
+        in_details = true
+        details_src_idx = src_idx
+        details_default_open = attrs:match "open" ~= nil
+        details_summary_rendered = false
+        details_depth = 0
+        in_details_summary = false
+        details_summary_parts = {}
+
+        -- Check for inline <summary>...</summary>
+        local rest = line:match "^%s*<details.->(.+)$"
+        if rest then
+          local s = rest:match "<summary>(.-)</summary>"
+          if s then
+            render_details_summary(s ~= "" and s or "Details")
+          end
+        end
+        goto continue
+      end
+
+      -- Handle <summary> within <details>
+      if in_details and not details_summary_rendered then
+        if in_details_summary then
+          -- Accumulating multi-line summary
+          local before = line:match "^(.-)</summary>%s*$"
+          if before then
+            if before ~= "" then
+              table.insert(details_summary_parts, before)
+            end
+            in_details_summary = false
+            local joined = table.concat(details_summary_parts, " ")
+            render_details_summary(joined ~= "" and joined or "Details")
+            goto continue
+          end
+          table.insert(details_summary_parts, line)
+          goto continue
+        end
+
+        -- Single-line <summary>text</summary>
+        local s = line:match "^%s*<summary>(.-)</summary>%s*$"
+        if s then
+          render_details_summary(s ~= "" and s or "Details")
+          goto continue
+        end
+
+        -- Multi-line <summary> start
+        local start_text = line:match "^%s*<summary>(.*)$"
+        if start_text then
+          in_details_summary = true
+          details_summary_parts = {}
+          if start_text ~= "" then
+            table.insert(details_summary_parts, start_text)
+          end
+          goto continue
+        end
+
+        -- No <summary> found and this is content - render default header
+        if not is_blank then
+          render_details_summary "Details"
+          -- Fall through to render this line as body content
+        end
+      end
     end
 
     -- Accumulate table lines
@@ -909,10 +1117,15 @@ function ContentBuilder:render_document(lines, opts)
         code_block_has_truncation = false
       else
         if code_block_lang and code_block_start < #self.lines then
+          local cb_prefix = nil
+          if in_details and details_summary_rendered then
+            cb_prefix = #indent + #"│ "
+          end
           table.insert(self.code_blocks, {
             language = code_block_lang,
             start_line = code_block_start,
             end_line = #self.lines - 1,
+            prefix_len = cb_prefix,
             source_lines = code_source_lines,
           })
         end
@@ -1067,6 +1280,14 @@ function ContentBuilder:render_document(lines, opts)
         else
           current_alert_type = nil
         end
+      end
+    end
+
+    -- Apply │ prefix to lines rendered within <details> body
+    if in_details and details_summary_rendered and not skip_details_body then
+      local lines_after_render = #self.lines
+      if lines_after_render > lines_before then
+        apply_details_body_prefix(lines_before, lines_after_render)
       end
     end
 
