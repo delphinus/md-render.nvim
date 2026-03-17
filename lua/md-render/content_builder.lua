@@ -378,14 +378,17 @@ end
 ---@param quote_prefix string Blockquote prefix (may be empty)
 ---@param content_offset integer Byte offset of content within the original rendered text
 ---@param list_prefix_len? integer Byte length of list marker prefix (0 if none)
+---@param list_cont_len? integer Display width of list marker for continuation indent (0 if none)
 ---@return MdRender.Highlight.Group[][] per_line_highlights Array of highlight lists, one per wrapped line
-local function distribute_highlights(md_highlights, wrapped_lines, line_starts, indent, quote_prefix, content_offset, list_prefix_len)
+local function distribute_highlights(md_highlights, wrapped_lines, line_starts, indent, quote_prefix, content_offset, list_prefix_len, list_cont_len)
   list_prefix_len = list_prefix_len or 0
+  list_cont_len = list_cont_len or list_prefix_len
   local per_line = {}
   for idx, wline in ipairs(wrapped_lines) do
     local line_start_pos = line_starts[idx]
+    local lm_len = idx == 1 and list_prefix_len or list_cont_len
     local line_prefix = (quote_prefix ~= "" and (indent .. quote_prefix) or indent)
-        .. string.rep(" ", list_prefix_len)
+        .. string.rep(" ", lm_len)
     local line_hls = {}
 
     -- Add FloatBorder highlight for blockquote prefix on continuation lines
@@ -401,9 +404,9 @@ local function distribute_highlights(md_highlights, wrapped_lines, line_starts, 
       local hl_start = hl.col - content_offset
       local hl_end = hl.end_col - content_offset
 
-      -- "Special" highlights (list markers) that end at or before the content start
-      -- should only appear on line 1 with their original positions
-      if hl.end_col <= content_offset and hl.hl == "Special" then
+      -- Marker-area highlights (list markers, checkbox icons) that end at or before
+      -- the content start should only appear on line 1 with their original positions
+      if hl.end_col <= content_offset and hl.hl ~= "FloatBorder" then
         if idx == 1 then
           table.insert(line_hls, {
             col = #indent + #quote_prefix + hl.col,
@@ -447,14 +450,17 @@ end
 ---@param content_offset integer Byte offset of content within the original rendered text
 ---@param base_line integer Current line count in the builder (0-indexed, before adding wrapped lines)
 ---@param list_prefix_len? integer Byte length of list marker prefix (0 if none)
+---@param list_cont_len? integer Display width of list marker for continuation indent (0 if none)
 ---@return MdRender.LinkMetadata[] link_entries
-local function distribute_links(md_links, wrapped_lines, line_starts, indent, quote_prefix, content_offset, base_line, list_prefix_len)
+local function distribute_links(md_links, wrapped_lines, line_starts, indent, quote_prefix, content_offset, base_line, list_prefix_len, list_cont_len)
   list_prefix_len = list_prefix_len or 0
+  list_cont_len = list_cont_len or list_prefix_len
   local entries = {}
   for idx, wline in ipairs(wrapped_lines) do
     local line_start_pos = line_starts[idx]
+    local lm_len = idx == 1 and list_prefix_len or list_cont_len
     local line_prefix = (quote_prefix ~= "" and (indent .. quote_prefix) or indent)
-        .. string.rep(" ", list_prefix_len)
+        .. string.rep(" ", lm_len)
 
     for _, link in ipairs(md_links) do
       local link_start = link.col_start - content_offset
@@ -495,27 +501,29 @@ function ContentBuilder:add_wrapped_markdown(rendered_text, md_highlights, md_li
 
   -- Strip list marker from wrap_text so wrapping is based on content only
   local list_prefix_len = 0
+  local list_cont_len = 0
   if list_marker and list_marker ~= "" then
     wrap_text = wrap_text:sub(#list_marker + 1)
     content_offset = content_offset + #list_marker
     list_prefix_len = #list_marker
+    list_cont_len = vim.fn.strdisplaywidth(list_marker)
   end
 
   local content_max_width = max_width
   if quote_prefix ~= "" then
     content_max_width = max_width - vim.fn.strdisplaywidth(quote_prefix)
   end
-  if list_prefix_len > 0 then
-    content_max_width = content_max_width - vim.fn.strdisplaywidth(list_marker)
+  if list_cont_len > 0 then
+    content_max_width = content_max_width - list_cont_len
   end
 
   local wrapped_lines, line_starts = wrap_words(wrap_text, content_max_width)
-  local per_line_hls = distribute_highlights(md_highlights, wrapped_lines, line_starts, indent, quote_prefix, content_offset, list_prefix_len)
+  local per_line_hls = distribute_highlights(md_highlights, wrapped_lines, line_starts, indent, quote_prefix, content_offset, list_prefix_len, list_cont_len)
   local base_line = #self.lines
-  local link_entries = distribute_links(md_links, wrapped_lines, line_starts, indent, quote_prefix, content_offset, base_line, list_prefix_len)
+  local link_entries = distribute_links(md_links, wrapped_lines, line_starts, indent, quote_prefix, content_offset, base_line, list_prefix_len, list_cont_len)
 
   local list_prefix = list_marker or ""
-  local list_continuation = string.rep(" ", list_prefix_len)
+  local list_continuation = string.rep(" ", list_cont_len)
 
   for idx, wline in ipairs(wrapped_lines) do
     local line_prefix = quote_prefix ~= "" and (indent .. quote_prefix) or indent
@@ -725,6 +733,7 @@ function ContentBuilder:render_document(lines, opts)
   local code_block_id = nil
   local code_block_has_truncation = false
   local prev_was_heading = false
+  local prev_list_marker_type = nil
   local lines_shown = 0
   local table_buf = {}
   local table_buf_start_idx = nil
@@ -860,6 +869,20 @@ function ContentBuilder:render_document(lines, opts)
       end
       if skip then
         goto continue
+      end
+
+      -- Skip blank lines between list items of the same marker type (loose list → tight)
+      if not skip and prev_list_marker_type then
+        local next_marker_type
+        for k = src_idx + 1, #lines do
+          if not lines[k]:match "^%s*$" then
+            next_marker_type = markdown.list_marker_type(lines[k])
+            break
+          end
+        end
+        if next_marker_type and next_marker_type == prev_list_marker_type then
+          goto continue
+        end
       end
     end
 
@@ -1051,6 +1074,9 @@ function ContentBuilder:render_document(lines, opts)
     lines_shown = lines_shown + lines_added
 
     prev_was_heading = is_heading
+    if not is_blank then
+      prev_list_marker_type = markdown.list_marker_type(line)
+    end
 
     if lines_shown >= max_lines then
       self:add_line(indent .. "... (truncated)", { { col = 0, end_col = -1, hl = "Comment" } })

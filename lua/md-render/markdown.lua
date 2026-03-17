@@ -653,6 +653,29 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
   local list_marker = rendered_text:match "^(%s*[-*]%s)"
     or rendered_text:match "^(%s*%d+%.%s)"
 
+  -- Checkbox (- [ ] / - [x] / - [X] / - [-]) - replace marker + checkbox with icon
+  local checkbox_hl = nil
+  if list_marker then
+    local after_marker = rendered_text:sub(#list_marker + 1)
+    local cb_match, cb_char = after_marker:match "^(%[([xX %-])%]%s?)"
+    if cb_match then
+      local icon
+      if cb_char == " " then
+        icon = "󰄱 "
+        checkbox_hl = "Comment"
+      elseif cb_char == "-" then
+        icon = "󰡖 "
+        checkbox_hl = "DiagnosticWarn"
+      else
+        icon = "󰄲 "
+        checkbox_hl = "DiagnosticOk"
+      end
+      local indent_part = list_marker:match "^(%s*)" or ""
+      list_marker = indent_part .. icon
+      rendered_text = list_marker .. after_marker:sub(#cb_match + 1)
+    end
+  end
+
   -- Remove Obsidian inline comments (%%...%%)
   rendered_text = rendered_text:gsub("%%%%(.-)%%%%", "")
 
@@ -693,9 +716,14 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
     return rendered_text, highlights, links, "heading"
   end
 
-  -- Add list marker highlight
+  -- Add list marker and checkbox highlight
   if list_marker then
-    table.insert(highlights, 1, { col = 0, end_col = #list_marker, hl = "Special" })
+    if checkbox_hl then
+      local indent_len = #(list_marker:match "^(%s*)" or "")
+      table.insert(highlights, 1, { col = indent_len, end_col = #list_marker, hl = checkbox_hl })
+    else
+      table.insert(highlights, 1, { col = 0, end_col = #list_marker, hl = "Special" })
+    end
   end
 
   -- Prepend blockquote prefix
@@ -728,6 +756,23 @@ end
 ---@return boolean
 Markdown.is_reference_link_def = function(line)
   return line:match "^%[([^%]]+)%]:%s+" ~= nil
+end
+
+--- Get the list marker type of a line.
+--- Returns the specific marker character/delimiter to distinguish list types per CommonMark:
+--- "-", "*", "+" for bullet lists, "." or ")" for ordered list delimiters, or nil for non-list lines.
+---@param line string
+---@return string? marker_type
+Markdown.list_marker_type = function(line)
+  local bullet = line:match "^%s*([-*+])%s"
+  if bullet then
+    return bullet
+  end
+  local delim = line:match "^%s*%d+([.)])%s"
+  if delim then
+    return delim
+  end
+  return nil
 end
 
 --- Renumber ordered list items following CommonMark rules.
