@@ -256,9 +256,8 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
       local click_line = mouse.line - 1 -- 0-indexed
       local click_col = mouse.column - 1
 
-      -- Helper: check if click is on a URL extmark and open it
+      -- Helper: check if click is on an internal anchor or URL extmark
       local function try_open_url()
-        if M.supports_osc8() then return false end
         local extmarks =
           vim.api.nvim_buf_get_extmarks(buf, ns, { click_line, 0 }, { click_line + 1, 0 }, { details = true })
         for _, mark in ipairs(extmarks) do
@@ -266,6 +265,17 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
           if details.url then
             local end_col = details.end_col or (start_col + 1)
             if click_col >= start_col and click_col < end_col then
+              -- Handle internal footnote anchors by scrolling
+              local anchor = details.url:match("^#(footnote%-.+)$")
+              if anchor and cur_content.footnote_anchors then
+                local target_line = cur_content.footnote_anchors[anchor]
+                if target_line then
+                  vim.api.nvim_win_set_cursor(win, { target_line + 1, 0 })
+                  return true
+                end
+              end
+              -- External URLs: skip if OSC8 terminal handles them natively
+              if M.supports_osc8() then return false end
               vim.notify("Opening: " .. details.url, vim.log.levels.INFO)
               vim.ui.open(details.url)
               return true

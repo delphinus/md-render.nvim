@@ -1104,12 +1104,13 @@ local function to_superscript(n)
   return table.concat(result)
 end
 
---- Process footnote references [^id] → superscript number with highlight
+--- Process footnote references [^id] → superscript number with highlight and link
 ---@param text string
 ---@param footnote_map table<string, integer> footnote label → number mapping
 ---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
 ---@return string processed
-local function process_footnote_refs(text, footnote_map, highlights)
+local function process_footnote_refs(text, footnote_map, highlights, links)
   if not footnote_map or not next(footnote_map) then
     return text
   end
@@ -1126,6 +1127,7 @@ local function process_footnote_refs(text, footnote_map, highlights)
           local start_col = #processed
           processed = processed .. display
           table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "Special" })
+          table.insert(links, { col_start = start_col, col_end = start_col + #display, url = "#footnote-def-" .. label })
           i = close + 1
         else
           processed = processed .. text:sub(i, i)
@@ -1349,7 +1351,7 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   -- Process inline elements (embeds and wikilinks before standard links)
   rendered_text = process_embeds(rendered_text, highlights, links)
   rendered_text = process_wikilinks(rendered_text, highlights, links)
-  rendered_text = process_footnote_refs(rendered_text, footnote_map, highlights)
+  rendered_text = process_footnote_refs(rendered_text, footnote_map, highlights, links)
   rendered_text = process_links(rendered_text, highlights, links)
   rendered_text = process_reference_links(rendered_text, ref_links, highlights, links)
   repeat

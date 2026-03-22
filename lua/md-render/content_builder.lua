@@ -49,6 +49,7 @@
 ---@field callout_folds MdRender.CalloutFold[]
 ---@field expandable_regions MdRender.ExpandableRegion[]
 ---@field image_placements MdRender.ImagePlacement[]
+---@field footnote_anchors table<string, integer> anchor name → 0-indexed line number
 ---@field title_line? integer
 ---@field title_text? string
 ---@field close_line_idx? integer
@@ -61,6 +62,7 @@
 ---@field callout_folds MdRender.CalloutFold[]
 ---@field expandable_regions MdRender.ExpandableRegion[]
 ---@field image_placements MdRender.ImagePlacement[]
+---@field footnote_anchors table<string, integer>
 local ContentBuilder = {}
 
 ---@return MdRender.ContentBuilder
@@ -73,6 +75,7 @@ function ContentBuilder.new()
     callout_folds = {},
     expandable_regions = {},
     image_placements = {},
+    footnote_anchors = {},
   }, { __index = ContentBuilder })
 end
 
@@ -106,6 +109,7 @@ function ContentBuilder:result()
     callout_folds = self.callout_folds,
     expandable_regions = self.expandable_regions,
     image_placements = self.image_placements,
+    footnote_anchors = self.footnote_anchors,
   }
 end
 
@@ -666,10 +670,21 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
     quote_prefix = rendered_text:sub(1, pos - 1)
   end
 
+  local lines_before_fn = #self.lines
   if vim.fn.strdisplaywidth(rendered_text) > max_width then
     self:add_wrapped_markdown(rendered_text, md_highlights, md_links, indent, max_width, quote_prefix, list_marker)
   else
     self:add_simple_markdown(rendered_text, md_highlights, md_links, indent)
+  end
+
+  -- Register footnote ref anchors (first occurrence per label)
+  for _, link in ipairs(self.link_metadata) do
+    if link.line >= lines_before_fn then
+      local label = link.url and link.url:match("^#footnote%-def%-(.+)$")
+      if label and not self.footnote_anchors["footnote-ref-" .. label] then
+        self.footnote_anchors["footnote-ref-" .. label] = link.line
+      end
+    end
   end
 
   return alert_type, fold_mod
@@ -1797,6 +1812,7 @@ function ContentBuilder:render_document(lines, opts)
         markdown.render(def.text, repo_base_url, autolinks, ref_links, footnote_map)
 
       local full_text = prefix .. rendered_text
+      local def_first_line = #self.lines -- 0-indexed line where this def starts
       if vim.fn.strdisplaywidth(full_text) > max_width then
         -- Wrap: use prefix on first line, spaces on continuation lines
         local content_max_width = max_width - prefix_display_width
@@ -1866,6 +1882,15 @@ function ContentBuilder:render_document(lines, opts)
           })
         end
       end
+
+      -- Register footnote definition anchor and back-link on the superscript number
+      self.footnote_anchors["footnote-def-" .. def.label] = def_first_line
+      table.insert(self.link_metadata, {
+        line = def_first_line,
+        col_start = #indent,
+        col_end = #prefix - 1, -- superscript number (exclude trailing space)
+        url = "#footnote-ref-" .. def.label,
+      })
     end
   end
 end
