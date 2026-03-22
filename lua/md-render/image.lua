@@ -162,24 +162,25 @@ local function gif_dimensions(path)
   return le16(h, 7), le16(h, 9)
 end
 
---- Check if a GIF file has multiple frames (is animated)
+--- Check if a GIF file has multiple frames (is animated).
+--- Only reads the first 64KB to avoid loading huge files.
 ---@param path string
 ---@return boolean
 function M.is_animated_gif(path)
+  local h = read_header(path, 6)
+  if not h or h:sub(1, 3) ~= "GIF" then return false end
+  -- Read first 64KB — enough to find a second Image Descriptor
   local f = io.open(path, "rb")
   if not f then return false end
-  local data = f:read("*a")
+  local data = f:read(65536)
   f:close()
-  if not data or #data < 6 or data:sub(1, 3) ~= "GIF" then return false end
-  -- Count Image Descriptor markers (0x2C)
+  if not data then return false end
   local count = 0
-  local pos = 1
-  while pos <= #data do
+  for pos = 1, #data do
     if data:byte(pos) == 0x2C then
       count = count + 1
       if count > 1 then return true end
     end
-    pos = pos + 1
   end
   return false
 end
@@ -577,7 +578,10 @@ function M.transmit_image_async(path, callback)
   end)
 end
 
+local MAX_ANIM_TOTAL_FRAMES = 200  -- GIFs with more frames than this get static first-frame only
+
 --- Extract GIF frames and transmit asynchronously.
+--- For very large GIFs (>200 frames), falls back to static first-frame display.
 ---@param path string absolute path to animated GIF
 ---@param callback fun(frame_ids: integer[]?, tmp_dir: string?)
 function M.transmit_animated_async(path, callback)
@@ -595,6 +599,35 @@ function M.transmit_animated_async(path, callback)
         local total_frames = 1
         if count_result.code == 0 and count_result.stdout then
           total_frames = tonumber(count_result.stdout:match("%d+")) or 1
+        end
+
+        -- Too many frames: extract first frame only as static image
+        if total_frames > MAX_ANIM_TOTAL_FRAMES then
+          local tmp_dir = os.tmpname() .. "_frames"
+          vim.fn.mkdir(tmp_dir, "p")
+          local first_frame = tmp_dir .. "/frame_0000.png"
+          vim.system(
+            { "magick", path .. "[0]", "-resize", "800x800>", first_frame },
+            { text = true, timeout = 10000 },
+            function(result)
+              vim.schedule(function()
+                if result.code ~= 0 then
+                  vim.fn.delete(tmp_dir, "rf")
+                  callback(nil)
+                  return
+                end
+                _image_id = _image_id + 1
+                local id = _image_id
+                local b64_path = vim.base64.encode(first_frame)
+                term_write(string.format(
+                  "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+                  id, b64_path
+                ))
+                callback({ id }, tmp_dir)
+              end)
+            end
+          )
+          return
         end
 
         local tmp_dir = os.tmpname() .. "_frames"
