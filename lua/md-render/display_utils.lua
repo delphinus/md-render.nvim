@@ -303,9 +303,16 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
   end, { buffer = buf, noremap = true, silent = true })
 end
 
+---@class MdRender.AnimState
+---@field frame_ids integer[]  Kitty image IDs for each frame
+---@field current integer  current frame index (1-based)
+---@field timer any  uv timer for frame cycling
+---@field tmp_dir string  temp directory to clean up
+
 ---@class MdRender.ImageState
 ---@field placements MdRender.ImagePlacement[]
 ---@field image_ids table<string, integer>  path -> Kitty image ID (transmitted)
+---@field anims table<string, MdRender.AnimState>  path -> animation state
 ---@field win integer
 ---@field redraw_timer any?
 ---@field autocmd_ids integer[]
@@ -322,10 +329,13 @@ function M.setup_images(win, content)
   local image = require "md-render.image"
   if not image.supports_kitty() then return nil end
 
+  local uv = vim.uv or vim.loop
+
   ---@type MdRender.ImageState
   local state = {
     placements = content.image_placements,
     image_ids = {},
+    anims = {},
     win = win,
     redraw_timer = nil,
     autocmd_ids = {},
@@ -334,9 +344,22 @@ function M.setup_images(win, content)
   -- Phase 1: Transmit all images (store in terminal memory)
   for _, placement in ipairs(state.placements) do
     if not state.image_ids[placement.path] then
-      local id = image.transmit_image(placement.path)
-      if id then
-        state.image_ids[placement.path] = id
+      if placement.animated then
+        -- Animated GIF: extract frames and transmit each
+        local frame_ids, tmp_dir = image.transmit_animated(placement.path)
+        if frame_ids and #frame_ids > 0 then
+          state.image_ids[placement.path] = frame_ids[1]
+          state.anims[placement.path] = {
+            frame_ids = frame_ids,
+            current = 1,
+            tmp_dir = tmp_dir,
+          }
+        end
+      else
+        local id = image.transmit_image(placement.path)
+        if id then
+          state.image_ids[placement.path] = id
+        end
       end
     end
   end
@@ -346,10 +369,18 @@ function M.setup_images(win, content)
     if not vim.api.nvim_win_is_valid(state.win) then return end
     vim.cmd("redraw!")
     for _, placement in ipairs(state.placements) do
-      local id = state.image_ids[placement.path]
-      if id then
-        local anim_path = placement.animated and placement.path or nil
-        image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, anim_path)
+      local anim = state.anims[placement.path]
+      if anim then
+        -- Animated: show current frame
+        local id = anim.frame_ids[anim.current]
+        if id then
+          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
+        end
+      else
+        local id = state.image_ids[placement.path]
+        if id then
+          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
+        end
       end
     end
   end
@@ -361,6 +392,28 @@ function M.setup_images(win, content)
     state.redraw_timer = vim.defer_fn(function()
       redraw_images()
     end, 50)
+  end
+
+  -- Start animation timers for animated GIFs
+  for path, anim in pairs(state.anims) do
+    local timer = uv.new_timer()
+    anim.timer = timer
+    timer:start(200, 200, vim.schedule_wrap(function()
+      if not vim.api.nvim_win_is_valid(state.win) then
+        timer:stop()
+        return
+      end
+      anim.current = anim.current % #anim.frame_ids + 1
+      -- Find placements for this path and redraw them
+      for _, placement in ipairs(state.placements) do
+        if placement.path == path then
+          local id = anim.frame_ids[anim.current]
+          if id then
+            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
+          end
+        end
+      end
+    end))
   end
 
   -- Initial display
@@ -421,14 +474,29 @@ function M.cleanup_images(state)
   if not state then return end
   local image = require "md-render.image"
 
-  -- Delete images from terminal
+  -- Delete static images from terminal
   local ids = {}
   for _, id in pairs(state.image_ids) do
     table.insert(ids, id)
   end
+
+  -- Stop animation timers, delete frame images, clean up temp dirs
+  for _, anim in pairs(state.anims or {}) do
+    if anim.timer then
+      anim.timer:stop()
+      anim.timer:close()
+    end
+    for _, fid in ipairs(anim.frame_ids) do
+      table.insert(ids, fid)
+    end
+    if anim.tmp_dir then
+      vim.fn.delete(anim.tmp_dir, "rf")
+    end
+  end
+
   image.delete_images(ids)
 
-  -- Stop timer
+  -- Stop redraw timer
   if state.redraw_timer then
     state.redraw_timer:stop()
   end

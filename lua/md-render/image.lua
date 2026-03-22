@@ -398,7 +398,6 @@ local _image_id = 100
 --- The image can then be displayed cheaply with put_image().
 ---@param path string absolute path to image file
 ---@return integer? image_id
----@return boolean? is_temp  true if a temp PNG was created
 function M.transmit_image(path)
   if not M.supports_kitty() then return nil end
   if not get_tty_path() then return nil end
@@ -420,6 +419,48 @@ function M.transmit_image(path)
   term_write(message)
 
   return id
+end
+
+--- Extract frames from an animated GIF and transmit each as a separate image.
+--- Returns array of frame IDs and a temp directory to clean up.
+---@param path string absolute path to animated GIF
+---@return integer[]? frame_ids
+---@return string? tmp_dir  temp directory containing extracted frames
+function M.transmit_animated(path)
+  if not M.supports_kitty() then return nil end
+  if not get_tty_path() then return nil end
+
+  local tmp_dir = os.tmpname() .. "_frames"
+  vim.fn.mkdir(tmp_dir, "p")
+  local result = vim.system({
+    "magick", path, "-coalesce", tmp_dir .. "/frame_%03d.png",
+  }, { text = true }):wait()
+
+  if result.code ~= 0 then
+    vim.fn.delete(tmp_dir, "rf")
+    return nil
+  end
+
+  local frames = vim.fn.glob(tmp_dir .. "/frame_*.png", false, true)
+  table.sort(frames)
+  if #frames == 0 then
+    vim.fn.delete(tmp_dir, "rf")
+    return nil
+  end
+
+  local frame_ids = {}
+  for _, frame_path in ipairs(frames) do
+    _image_id = _image_id + 1
+    local id = _image_id
+    local b64_path = vim.base64.encode(frame_path)
+    term_write(string.format(
+      "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+      id, b64_path
+    ))
+    table.insert(frame_ids, id)
+  end
+
+  return frame_ids, tmp_dir
 end
 
 --- Display an image at a screen position.
