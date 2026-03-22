@@ -502,12 +502,12 @@ function MarkdownTable.render(parsed_table, indent, max_width)
           local raw = raw_rows[row_idx][col]
           if raw then
             local alt, url = cell_image(row[col], raw)
-            if alt and url then
+            if alt and url and not image_mod.is_badge_url(url) then
               local resolved = image_mod.resolve(url, buf_dir)
+              local src_url = image_mod.is_url(url) and url or nil
               if resolved then
                 local img_w, img_h = image_mod.image_dimensions(resolved)
                 if img_w and img_h then
-                  -- Scale to fit within column width
                   local display_cols, display_rows = image_mod.calc_display_size(img_w, img_h, col_widths[col], 15)
                   row_images[col] = {
                     alt = alt, url = url, resolved = resolved,
@@ -515,6 +515,13 @@ function MarkdownTable.render(parsed_table, indent, max_width)
                   }
                   row_has_images = true
                 end
+              elseif src_url then
+                -- URL not yet cached: use estimated size for placeholder
+                row_images[col] = {
+                  alt = alt, url = url, resolved = nil, src_url = src_url,
+                  display_cols = col_widths[col], display_rows = 10,
+                }
+                row_has_images = true
               end
             end
           end
@@ -568,7 +575,8 @@ function MarkdownTable.render(parsed_table, indent, max_width)
 
         table.insert(out_image_placements, {
           resolved = img.resolved,
-          line_offset = img_start_line_idx, -- relative to table start in out_lines
+          src_url = img.src_url,
+          line_offset = img_start_line_idx,
           col = col_byte_offset,
           rows = img.display_rows,
           cols = img.display_cols,

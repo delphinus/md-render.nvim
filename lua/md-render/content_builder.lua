@@ -635,6 +635,7 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
         col = p.col,
         rows = p.rows,
         cols = p.cols,
+        src_url = p.src_url,
       })
     end
   end
