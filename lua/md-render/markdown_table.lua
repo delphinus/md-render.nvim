@@ -215,7 +215,25 @@ function MarkdownTable.render(parsed_table, indent, max_width)
   local num_cols = #parsed_table.col_widths
   local col_widths = vim.deepcopy(parsed_table.col_widths)
 
-  -- Shrink column widths if table exceeds max_width
+  -- Check if any data row contains image cells
+  local has_image_cells = false
+  if parsed_table._raw_lines then
+    for i = 3, #parsed_table._raw_lines do
+      local cells = split_row(parsed_table._raw_lines[i])
+      if cells then
+        for _, cell_text in ipairs(cells) do
+          local trimmed = cell_text:match "^%s*(.-)%s*$"
+          if trimmed and trimmed:match "^!%[.-%]%(.-%)" then
+            has_image_cells = true
+            break
+          end
+        end
+      end
+      if has_image_cells then break end
+    end
+  end
+
+  -- Adjust column widths to fit max_width
   if max_width then
     local indent_width = vim.fn.strdisplaywidth(indent)
     -- Total = indent + num_cols * ("│ " + col_width + " ") + "│"
@@ -226,13 +244,34 @@ function MarkdownTable.render(parsed_table, indent, max_width)
       content_sum = content_sum + w
     end
     local total = overhead + content_sum
+
+    if has_image_cells then
+      -- Expand columns to fill max_width for better image display
+      local budget = max_width - overhead
+      if budget > content_sum then
+        local per_col = math.floor(budget / num_cols)
+        for col = 1, num_cols do
+          col_widths[col] = per_col
+        end
+        -- Distribute remainder
+        local remainder = budget - per_col * num_cols
+        for col = 1, remainder do
+          col_widths[col] = col_widths[col] + 1
+        end
+      end
+    end
+
+    -- Shrink if table still exceeds max_width
+    content_sum = 0
+    for _, w in ipairs(col_widths) do
+      content_sum = content_sum + w
+    end
+    total = overhead + content_sum
     if total > max_width then
       local budget = max_width - overhead
       if budget < num_cols then
-        -- Cannot fit even 1 char per column; use minimum of 1
         budget = num_cols
       end
-      -- Distribute budget proportionally, ensuring each column gets at least 1
       local new_widths = {}
       local assigned = 0
       for col = 1, num_cols do
@@ -241,7 +280,6 @@ function MarkdownTable.render(parsed_table, indent, max_width)
         new_widths[col] = w
         assigned = assigned + w
       end
-      -- Distribute remaining budget to the widest columns
       local remaining = budget - assigned
       while remaining > 0 do
         local best_col = 1
