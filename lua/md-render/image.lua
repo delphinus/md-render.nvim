@@ -155,6 +155,13 @@ local function webp_dimensions(path)
   return nil
 end
 
+local function gif_dimensions(path)
+  local h = read_header(path, 10)
+  if not h or #h < 10 then return nil end
+  if h:sub(1, 3) ~= "GIF" then return nil end
+  return le16(h, 7), le16(h, 9)
+end
+
 ---@param path string
 ---@return integer? width, integer? height
 function M.image_dimensions(path)
@@ -163,12 +170,18 @@ function M.image_dimensions(path)
   if h:sub(1, 4) == "\137PNG" then return png_dimensions(path) end
   if h:byte(1) == 0xFF and h:byte(2) == 0xD8 then return jpeg_dimensions(path) end
   if h:sub(1, 4) == "RIFF" then return webp_dimensions(path) end
+  if h:sub(1, 3) == "GIF" then return gif_dimensions(path) end
   return nil
 end
 
-function M.is_png(path)
+--- Check if file is a format the terminal can display directly (no conversion needed)
+---@param path string
+---@return boolean
+function M.is_native_format(path)
   local h = read_header(path, 4)
-  return h ~= nil and h:sub(1, 4) == "\137PNG"
+  if not h then return false end
+  -- PNG and GIF are natively supported by Kitty/WezTerm
+  return h:sub(1, 4) == "\137PNG" or h:sub(1, 3) == "GIF"
 end
 
 -- ============================================================================
@@ -318,10 +331,12 @@ end
 -- Image conversion
 -- ============================================================================
 
+--- Ensure image is in a format the terminal can display natively.
+--- PNG and GIF are passed through. JPEG/WebP are converted to PNG.
 ---@param path string
 ---@return string? png_path, boolean is_temp
 function M.ensure_png(path)
-  if M.is_png(path) then return path, false end
+  if M.is_native_format(path) then return path, false end
   local tmp = os.tmpname() .. ".png"
   local result = vim.system({ "magick", path, "-resize", "2000x2000>", tmp }, { text = true }):wait()
   if result.code ~= 0 then return nil, false end
