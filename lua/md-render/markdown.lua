@@ -703,16 +703,12 @@ local function process_html_tags(text, highlights, links)
   return processed
 end
 
---- Strip remaining HTML tags (tags not handled by process_html_tags)
+--- Keep remaining HTML tags with a dim highlight (tags not handled by process_html_tags)
 --- Skips tags inside backtick-delimited code spans.
 ---@param text string
 ---@param highlights MdRender.Markdown.Highlight[]
----@param links MdRender.Markdown.Link[]
 ---@return string processed
-local function strip_html_tags(text, highlights, links)
-  local pre_hl_count = #highlights
-  local pre_link_count = #links
-  local removals = {}
+local function strip_html_tags(text, highlights)
   local processed = ""
   local i = 1
   local in_backtick = false
@@ -724,7 +720,9 @@ local function strip_html_tags(text, highlights, links)
     elseif not in_backtick and text:sub(i, i) == "<" then
       local tag = text:sub(i):match "^(</?%a[^>]*>)"
       if tag then
-        table.insert(removals, { start = i - 1, count = #tag })
+        local start_col = #processed
+        processed = processed .. tag
+        table.insert(highlights, { col = start_col, end_col = start_col + #tag, hl = "Comment" })
         i = i + #tag
       else
         processed = processed .. text:sub(i, i)
@@ -735,7 +733,6 @@ local function strip_html_tags(text, highlights, links)
       i = i + 1
     end
   end
-  adjust_positions(highlights, links, removals, pre_hl_count, pre_link_count)
   return processed
 end
 
@@ -848,6 +845,9 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
   -- Remove Obsidian inline comments (%%...%%)
   rendered_text = rendered_text:gsub("%%%%(.-)%%%%", "")
 
+  -- Remove inline HTML comments (<!-- ... -->)
+  rendered_text = rendered_text:gsub("<!%-%-.-%-*%-%->", "")
+
   -- Process inline elements (embeds and wikilinks before standard links)
   rendered_text = process_embeds(rendered_text, highlights, links)
   rendered_text = process_wikilinks(rendered_text, highlights, links)
@@ -857,7 +857,7 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
     local prev = rendered_text
     rendered_text = process_html_tags(rendered_text, highlights, links)
   until rendered_text == prev
-  rendered_text = strip_html_tags(rendered_text, highlights, links)
+  rendered_text = strip_html_tags(rendered_text, highlights)
   rendered_text = process_bare_urls(rendered_text, MAX_URL_DISPLAY_WIDTH, highlights, links)
   if repo_base_url then
     rendered_text = process_issue_refs(rendered_text, repo_base_url, highlights, links)

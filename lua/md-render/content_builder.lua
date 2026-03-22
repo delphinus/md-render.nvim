@@ -842,6 +842,7 @@ function ContentBuilder:render_document(lines, opts)
   local callout_code_block_id = nil
   local callout_code_has_truncation = false
   local in_comment_block = false
+  local in_html_comment = false
   local skip_next_line = false
   local in_details = false
   local details_src_idx = nil
@@ -1043,6 +1044,25 @@ function ContentBuilder:render_document(lines, opts)
     end
     if in_comment_block then
       goto continue
+    end
+
+    -- Handle HTML comments (<!-- ... -->) outside code blocks
+    if not in_code_block then
+      if in_html_comment then
+        if line:match "%-%->" then
+          in_html_comment = false
+        end
+        goto continue
+      end
+      -- Single-line HTML comment
+      if line:match "^%s*<!%-%-.*%-%->%s*$" then
+        goto continue
+      end
+      -- Multi-line HTML comment start
+      if line:match "^%s*<!%-%-" then
+        in_html_comment = true
+        goto continue
+      end
     end
 
     -- Handle <details>/<summary> HTML blocks (outside code blocks)

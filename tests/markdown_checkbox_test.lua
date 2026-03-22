@@ -469,14 +469,37 @@ test("html: <img> without alt shows filename", function()
   assert(text:find("image.jpg"), "html img no alt: should show filename")
 end)
 
-test("html: unknown tags are stripped", function()
-  local text = render("<div>content</div>")
-  assert_eq(text, "content", "html unknown: tags should be stripped, content kept")
+test("html: unknown tags are kept with Comment highlight", function()
+  local text, highlights = render("<div>content</div>")
+  assert_eq(text, "<div>content</div>", "html unknown: tags should be kept")
+  local found_open = false
+  local found_close = false
+  for _, h in ipairs(highlights) do
+    if h.hl == "Comment" and text:sub(h.col + 1, h.end_col) == "<div>" then found_open = true end
+    if h.hl == "Comment" and text:sub(h.col + 1, h.end_col) == "</div>" then found_close = true end
+  end
+  assert_eq(found_open, true, "html unknown: <div> should have Comment highlight")
+  assert_eq(found_close, true, "html unknown: </div> should have Comment highlight")
 end)
 
-test("html: self-closing unknown tags are stripped", function()
-  local text = render("before<br/>after")
-  assert_eq(text, "beforeafter", "html br: tag should be stripped")
+test("html: self-closing unknown tags are kept with Comment highlight", function()
+  local text, highlights = render("before<br/>after")
+  assert_eq(text, "before<br/>after", "html br: tag should be kept")
+  local found = false
+  for _, h in ipairs(highlights) do
+    if h.hl == "Comment" and text:sub(h.col + 1, h.end_col) == "<br/>" then found = true end
+  end
+  assert_eq(found, true, "html br: should have Comment highlight")
+end)
+
+test("html: inline comments are stripped", function()
+  local text = render("before<!-- comment -->after")
+  assert_eq(text, "beforeafter", "html comment: inline comment should be removed")
+end)
+
+test("html: standalone comment line is stripped", function()
+  local text = render("<!-- this is a comment -->")
+  assert_eq(text, "", "html comment: standalone comment should be removed")
 end)
 
 test("html: tags inside backticks are preserved", function()
@@ -682,10 +705,12 @@ test("html multiline: block <div> joins and strips tags", function()
     if l:match("line one") and l:match("line two") then found = true end
   end
   assert_eq(found, true, "multiline div: lines should be joined")
+  -- Tags are now kept with Comment highlight, not stripped
+  local has_div = false
   for _, l in ipairs(lines) do
-    assert_eq(l:match("<div>"), nil, "multiline div: should not show <div>")
-    assert_eq(l:match("</div>"), nil, "multiline div: should not show </div>")
+    if l:match("<div>") then has_div = true end
   end
+  assert_eq(has_div, true, "multiline div: <div> tags should be kept with Comment highlight")
 end)
 
 test("html multiline: nested same-type block", function()
@@ -796,9 +821,7 @@ test("html multiline: <div> with attributes", function()
     if l:match("styled content") then found = true end
   end
   assert_eq(found, true, "div attrs: content should show")
-  for _, l in ipairs(lines) do
-    assert_eq(l:match("class="), nil, "div attrs: attributes should not show")
-  end
+  -- Tags are now kept with Comment highlight, not stripped
 end)
 
 test("html multiline: unclosed tag outputs lines as-is", function()
@@ -822,6 +845,45 @@ test("html multiline: <div> content on opening tag line", function()
   end
   assert_eq(has_first, true, "div inline open: first line content")
   assert_eq(has_second, true, "div inline open: second line content")
+end)
+
+test("html block comment: single-line comment is skipped", function()
+  local lines = render_doc({
+    "before",
+    "<!-- this is a comment -->",
+    "after",
+  })
+  for _, l in ipairs(lines) do
+    assert_eq(l:match("comment"), nil, "html block comment: should not show comment")
+  end
+  local has_before, has_after = false, false
+  for _, l in ipairs(lines) do
+    if l:match("before") then has_before = true end
+    if l:match("after") then has_after = true end
+  end
+  assert_eq(has_before, true, "html block comment: before should show")
+  assert_eq(has_after, true, "html block comment: after should show")
+end)
+
+test("html block comment: multi-line comment is skipped", function()
+  local lines = render_doc({
+    "before",
+    "<!-- multi",
+    "line comment",
+    "-->",
+    "after",
+  })
+  for _, l in ipairs(lines) do
+    assert_eq(l:match("multi"), nil, "html multi comment: should not show first line")
+    assert_eq(l:match("line comment"), nil, "html multi comment: should not show middle")
+  end
+  local has_before, has_after = false, false
+  for _, l in ipairs(lines) do
+    if l:match("before") then has_before = true end
+    if l:match("after") then has_after = true end
+  end
+  assert_eq(has_before, true, "html multi comment: before should show")
+  assert_eq(has_after, true, "html multi comment: after should show")
 end)
 
 -- Print summary
