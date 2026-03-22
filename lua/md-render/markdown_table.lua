@@ -25,12 +25,29 @@ local function split_row(line)
   if not inner then
     return nil
   end
-  -- Remove trailing | if present
-  if inner:sub(-1) == "|" then
+  -- Remove trailing | if present (but not escaped \|)
+  if inner:sub(-1) == "|" and inner:sub(-2, -2) ~= "\\" then
     inner = inner:sub(1, -2)
   end
   local cells = {}
-  for cell in (inner .. "|"):gmatch "(.-)|" do
+  local pos = 1
+  while pos <= #inner do
+    local cell_parts = {}
+    while pos <= #inner do
+      local c = inner:sub(pos, pos)
+      if c == "\\" and pos + 1 <= #inner and inner:sub(pos + 1, pos + 1) == "|" then
+        -- Escaped pipe: keep the literal |
+        table.insert(cell_parts, "|")
+        pos = pos + 2
+      elseif c == "|" then
+        pos = pos + 1
+        break
+      else
+        table.insert(cell_parts, c)
+        pos = pos + 1
+      end
+    end
+    local cell = table.concat(cell_parts)
     -- Trim whitespace
     cell = cell:match "^%s*(.-)%s*$"
     table.insert(cells, cell)

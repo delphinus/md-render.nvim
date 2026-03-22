@@ -788,6 +788,93 @@ local HTML_SKIP_TAGS = {
 --- This applies to both block and inline elements per the HTML spec.
 ---@param lines string[]
 ---@return string[]
+--- Check if a line starts a block-level construct (not a paragraph continuation)
+---@param line string
+---@return boolean
+local function is_block_start(line)
+  if line:match "^%s*$" then return true end
+  if line:match "^#+%s" then return true end
+  if line:match "^```" or line:match "^~~~" then return true end
+  if line:match "^%s*|" then return true end
+  if line:match "^%s*[%-%*%+]%s" then return true end
+  if line:match "^%s*%d+[%.)]%s" then return true end
+  if line:match "^>" then return true end
+  if line:match "^%s*[-_*]%s*[-_*]%s*[-_*]" then return true end
+  if line:match "^[=-]+%s*$" then return true end
+  if line:match "^%[.+%]:" then return true end
+  if line:match "^%[%^.+%]:" then return true end
+  if line:match "^%s*<" then return true end
+  if line:match "^%s*!%[" then return true end
+  if line:match "^%$%$$" then return true end
+  if line:match "^%%%%" then return true end
+  return false
+end
+
+--- Join paragraph continuation lines into single lines.
+--- In CommonMark, consecutive lines that don't start block-level constructs
+--- form a single paragraph. This is needed for inline constructs (like links)
+--- that span multiple source lines.
+---@param lines string[]
+---@return string[]
+local function join_paragraph_continuations(lines)
+  local result = {}
+  local para = {}
+  local in_code = false
+  local in_html_comment = false
+
+  for _, line in ipairs(lines) do
+    -- Track code fences
+    if line:match "^```" or line:match "^~~~" then
+      in_code = not in_code
+    end
+
+    -- Track multi-line HTML comments
+    if not in_code then
+      if in_html_comment then
+        -- Flush paragraph, keep comment lines separate
+        if #para > 0 then
+          table.insert(result, table.concat(para, " "))
+          para = {}
+        end
+        table.insert(result, line)
+        if line:match "%-%->" then
+          in_html_comment = false
+        end
+        goto next_line
+      end
+      if line:match "^%s*<!%-%-" and not line:match "%-%->%s*$" then
+        in_html_comment = true
+        if #para > 0 then
+          table.insert(result, table.concat(para, " "))
+          para = {}
+        end
+        table.insert(result, line)
+        goto next_line
+      end
+    end
+
+    if in_code or is_block_start(line) then
+      -- Flush accumulated paragraph
+      if #para > 0 then
+        table.insert(result, table.concat(para, " "))
+        para = {}
+      end
+      table.insert(result, line)
+    else
+      table.insert(para, line)
+    end
+
+    ::next_line::
+  end
+
+  -- Flush remaining
+  if #para > 0 then
+    table.insert(result, table.concat(para, " "))
+  end
+
+  return result
+end
+
 local function preprocess_multiline_html(lines)
   local result = {}
   local accum = nil -- { tag: string, lines: string[], depth: integer }
@@ -864,6 +951,7 @@ function ContentBuilder:render_document(lines, opts)
   local markdown = require "md-render.markdown"
 
   lines = preprocess_multiline_html(lines)
+  lines = join_paragraph_continuations(lines)
   lines = markdown.renumber_ordered_lists(lines)
   local ref_links = markdown.parse_reference_links(lines)
   local footnote_defs, footnote_map = markdown.parse_footnotes(lines)

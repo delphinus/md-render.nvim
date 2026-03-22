@@ -25,6 +25,78 @@ local MAX_URL_DISPLAY_WIDTH = 50
 --- ASCII punctuation characters that can be backslash-escaped (CommonMark spec)
 local ESCAPABLE_CHARS = [[!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~]]
 
+--- Protect code spans by replacing them with placeholders before inline processing.
+--- Code spans take precedence over almost all other inline constructs (CommonMark spec).
+---@param text string
+---@return string protected_text
+---@return {placeholder: string, content: string}[] spans for later restoration
+local function protect_code_spans(text)
+  local spans = {}
+  local result = {}
+  local i = 1
+  local idx = 0
+  while i <= #text do
+    if text:sub(i, i) == "`" then
+      local e = text:find("`", i + 1)
+      if e then
+        idx = idx + 1
+        local content = text:sub(i + 1, e - 1)
+        -- Use U+F1000 range placeholders (private use area, unlikely to collide)
+        local placeholder = string.format("\u{F1000}%d\u{F1001}", idx)
+        table.insert(spans, { placeholder = placeholder, content = content })
+        table.insert(result, placeholder)
+        i = e + 1
+      else
+        table.insert(result, text:sub(i, i))
+        i = i + 1
+      end
+    else
+      table.insert(result, text:sub(i, i))
+      i = i + 1
+    end
+  end
+  return table.concat(result), spans
+end
+
+--- Restore code span placeholders, adding String highlight for each span.
+---@param text string
+---@param spans {placeholder: string, content: string}[]
+---@param hl_group string
+---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
+---@return string
+local function restore_code_spans(text, spans, hl_group, highlights, links)
+  if #spans == 0 then return text end
+  for _, span in ipairs(spans) do
+    local start, finish = text:find(span.placeholder, 1, true)
+    if start then
+      -- Adjust highlights/links that come after this position
+      local placeholder_len = #span.placeholder
+      local content_len = #span.content
+      local delta = content_len - placeholder_len
+      if delta ~= 0 then
+        for _, hl in ipairs(highlights) do
+          if hl.col >= finish then
+            hl.col = hl.col + delta
+            hl.end_col = hl.end_col + delta
+          end
+        end
+        for _, link in ipairs(links) do
+          if link.col_start >= finish then
+            link.col_start = link.col_start + delta
+            link.col_end = link.col_end + delta
+          end
+        end
+      end
+      -- Add code highlight
+      local col = start - 1 -- 0-indexed
+      table.insert(highlights, { col = col, end_col = col + content_len, hl = hl_group })
+      text = text:sub(1, start - 1) .. span.content .. text:sub(finish + 1)
+    end
+  end
+  return text
+end
+
 --- Escape backslash-escaped characters to placeholders before inline processing.
 --- Returns the modified text and a list of {pos, char} for later restoration.
 ---@param text string
@@ -609,6 +681,10 @@ local function process_reference_links(text, ref_links, highlights, links)
           local close2 = text:find("]", close + 2, true)
           if close2 then
             local ref = text:sub(close + 2, close2 - 1)
+            -- Collapsed reference link: [text][] uses label as ref
+            if ref == "" then
+              ref = label
+            end
             local url = ref_links[ref:lower()]
             if url then
               local start_col = #processed
@@ -1262,6 +1338,10 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   -- Remove inline HTML comments (<!-- ... -->)
   rendered_text = rendered_text:gsub("<!%-%-.-%-*%-%->", "")
 
+  -- Protect code spans before any inline processing (code spans take precedence)
+  local code_spans
+  rendered_text, code_spans = protect_code_spans(rendered_text)
+
   -- Escape backslash sequences before inline processing
   local backslash_escapes
   rendered_text, backslash_escapes = escape_backslashes(rendered_text)
@@ -1291,7 +1371,9 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   rendered_text = process_paired_markers(rendered_text, "~~([^~]+)~~", "DiagnosticDeprecated", 2, highlights, links)
   rendered_text = process_paired_markers(rendered_text, "==([^=]+)==", "MdRenderHighlight", 2, highlights, links)
   rendered_text = process_inline_math(rendered_text, "MdRenderMath", highlights, links)
-  rendered_text = process_code_markers(rendered_text, "String", highlights, links)
+
+  -- Restore code spans (adds String highlight for each span)
+  rendered_text = restore_code_spans(rendered_text, code_spans, "String", highlights, links)
 
   -- Restore backslash-escaped characters (adjusts highlight/link positions)
   rendered_text = restore_backslashes(rendered_text, backslash_escapes, highlights, links)
