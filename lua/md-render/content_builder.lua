@@ -1065,10 +1065,24 @@ function ContentBuilder:render_document(lines, opts)
     end
 
     -- Convert HTML headings <h1>-<h6> to markdown format
+    -- If heading contains an <img>, split it into separate image + heading lines
     if not in_code_block then
       local h_level, h_content = line:match "^%s*<h([1-6])[^>]*>(.-)</h%1>%s*$"
       if h_level then
-        line = string.rep("#", tonumber(h_level)) .. " " .. h_content
+        local img_tag = h_content:match "(<img%s[^>]*>)"
+        if img_tag then
+          -- Extract the img tag as a standalone line, render it before the heading
+          local remaining = h_content:gsub("<img%s[^>]*>", ""):gsub("^%s+", ""):gsub("%s+$", "")
+          -- Insert the img tag line (will be processed by subsequent iteration)
+          table.insert(lines, src_idx + 1, img_tag)
+          if remaining ~= "" then
+            line = string.rep("#", tonumber(h_level)) .. " " .. remaining
+          else
+            goto continue
+          end
+        else
+          line = string.rep("#", tonumber(h_level)) .. " " .. h_content
+        end
       end
     end
 
@@ -1506,14 +1520,20 @@ function ContentBuilder:render_document(lines, opts)
           callout_code_lang = nil
         end
 
-        -- Detect standalone image lines: ![alt](path) or <img src="path">
+        -- Detect image lines: ![alt](path), <img src="path">, ![[image]]
         local img_path, img_alt
         if not current_alert_type then
-          -- Markdown image: ![alt](path)
+          -- Markdown image: ![alt](path) (standalone on line)
           img_alt, img_path = line:match "^%s*!%[(.-)%]%((.-)%)%s*$"
-          -- HTML img: <img src="path" alt="alt">
+          -- Also match heading lines that are just an image: # ![alt](path)
+          if not img_path then
+            img_alt, img_path = line:match "^#+%s+!%[(.-)%]%((.-)%)%s*$"
+          end
+          -- HTML img: <img src="path" alt="alt"> as sole content on line
+          -- Also matches inside headings: # <img ...> or ## <img ...>
           if not img_path then
             local img_tag = line:match "^%s*(<img%s[^>]*>)%s*$"
+              or line:match "^#+%s+(<img%s[^>]*>)%s*$"
             if img_tag then
               img_path = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
               img_alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'"
@@ -1535,16 +1555,11 @@ function ContentBuilder:render_document(lines, opts)
 
         if img_path and img_path ~= "" then
           local image = require "md-render.image"
-          -- Resolve relative paths
-          local resolved = vim.fn.expand(img_path)
-          if resolved:sub(1, 1) ~= "/" then
-            -- Try relative to current buffer's directory
-            local buf_dir = vim.fn.expand("%:p:h")
-            resolved = buf_dir .. "/" .. resolved
-          end
+          local buf_dir = vim.fn.expand("%:p:h")
+          local resolved = image.resolve(img_path, buf_dir)
 
           local display_name = (img_alt and img_alt ~= "") and img_alt or (img_path:match "([^/]+)$" or img_path)
-          if image.supports_kitty() and vim.fn.filereadable(resolved) == 1 then
+          if image.supports_kitty() and resolved then
             local img_w, img_h = image.image_dimensions(resolved)
             if img_w and img_h then
               local display_cols, display_rows = image.calc_display_size(img_w, img_h, max_width - 4, 20)

@@ -198,6 +198,92 @@ function M.reset_cache()
 end
 
 -- ============================================================================
+-- URL detection and download with cache
+-- ============================================================================
+
+--- Check if a string is an HTTP(S) URL
+---@param s string
+---@return boolean
+function M.is_url(s)
+  return s:match("^https?://") ~= nil
+end
+
+-- In-memory cache: URL -> local file path
+local _url_cache = {}
+
+--- Get cache directory for downloaded images
+---@return string
+local function get_cache_dir()
+  local dir = vim.fn.stdpath("cache") .. "/md-render/images"
+  vim.fn.mkdir(dir, "p")
+  return dir
+end
+
+--- Generate a cache filename from a URL
+---@param url string
+---@return string
+local function url_to_cache_path(url)
+  -- Use a hash of the URL as filename, preserve extension
+  local hash = vim.fn.sha256(url):sub(1, 16)
+  local ext = url:match("%.(%w+)$") or "png"
+  -- Clean extension (remove query params)
+  ext = ext:match("^(%w+)") or "png"
+  return get_cache_dir() .. "/" .. hash .. "." .. ext
+end
+
+--- Download a URL to a local file (synchronous).
+--- Returns cached path if already downloaded.
+---@param url string
+---@return string? local_path
+function M.download(url)
+  -- Check in-memory cache first
+  if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then
+    return _url_cache[url]
+  end
+
+  -- Check disk cache
+  local cache_path = url_to_cache_path(url)
+  if vim.fn.filereadable(cache_path) == 1 then
+    _url_cache[url] = cache_path
+    return cache_path
+  end
+
+  -- Download with curl
+  local result = vim.system(
+    { "curl", "-sL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url },
+    { text = true }
+  ):wait()
+
+  if result.code ~= 0 or vim.fn.filereadable(cache_path) ~= 1 then
+    return nil
+  end
+
+  _url_cache[url] = cache_path
+  return cache_path
+end
+
+--- Resolve an image source to a local file path.
+--- Handles URLs (with download), absolute paths, ~ expansion, and relative paths.
+---@param src string  image source (URL or path)
+---@param base_dir? string  base directory for resolving relative paths
+---@return string? resolved_path
+function M.resolve(src, base_dir)
+  if M.is_url(src) then
+    return M.download(src)
+  end
+
+  local resolved = vim.fn.expand(src)
+  if resolved:sub(1, 1) ~= "/" and base_dir then
+    resolved = base_dir .. "/" .. resolved
+  end
+
+  if vim.fn.filereadable(resolved) == 1 then
+    return resolved
+  end
+  return nil
+end
+
+-- ============================================================================
 -- Image conversion
 -- ============================================================================
 

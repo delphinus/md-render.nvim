@@ -749,12 +749,11 @@ test("html multiline: <h1> with img and links (neovim-style)", function()
     '  <a href="https://example.com/chat">Chat</a>',
     '</h1>',
   }, { max_width = 80, indent = "" })
-  -- Should be a single heading line with image + links
-  assert_eq(#builder.lines, 1, "h1 multiline: should be 1 line")
-  local line = builder.lines[1]
-  assert(line:find("Neovim"), "h1 multiline: should contain Neovim (from img alt)")
-  assert(line:find("Documentation"), "h1 multiline: should contain Documentation")
-  assert(line:find("Chat"), "h1 multiline: should contain Chat")
+  -- Image is split out from heading: image line(s) + heading line with links
+  local all_text = table.concat(builder.lines, "\n")
+  assert(all_text:find("Neovim"), "h1 multiline: should contain Neovim (from img alt)")
+  assert(all_text:find("Documentation"), "h1 multiline: should contain Documentation")
+  assert(all_text:find("Chat"), "h1 multiline: should contain Chat")
   -- Should have heading highlight
   local has_h1 = false
   for _, hl in ipairs(builder.highlights) do
