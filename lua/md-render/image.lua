@@ -208,6 +208,36 @@ function M.is_url(s)
   return s:match("^https?://") ~= nil
 end
 
+--- URLs that are badges or tiny icons — not worth displaying as block images
+local BADGE_PATTERNS = {
+  "img%.shields%.io",
+  "badge%.fury%.io",
+  "badgen%.net",
+  "badges%.gitter%.im",
+  "coveralls%.io/repos",
+  "travis%-ci%.org",
+  "ci%.appveyor%.com",
+  "codecov%.io",
+  "scan%.coverity%.com",
+  "repology%.org/badge",
+  "badges%.debian%.net",
+  "github%.com/.*badge",
+  "github%.com/.*/workflows/.*/badge",
+  "img%.shields%.io",
+  "flat%-square",
+  "for%-the%-badge",
+}
+
+--- Check if a URL looks like a badge/shield image
+---@param url string
+---@return boolean
+function M.is_badge_url(url)
+  for _, pat in ipairs(BADGE_PATTERNS) do
+    if url:match(pat) then return true end
+  end
+  return false
+end
+
 -- In-memory cache: URL -> local file path
 local _url_cache = {}
 
@@ -250,7 +280,7 @@ function M.download(url)
 
   -- Download with curl
   local result = vim.system(
-    { "curl", "-sL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url },
+    { "curl", "-sL", "--max-time", "5", "--max-filesize", "20000000", "-o", cache_path, url },
     { text = true }
   ):wait()
 
@@ -269,6 +299,7 @@ end
 ---@return string? resolved_path
 function M.resolve(src, base_dir)
   if M.is_url(src) then
+    if M.is_badge_url(src) then return nil end
     return M.download(src)
   end
 
