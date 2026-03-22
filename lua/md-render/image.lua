@@ -162,6 +162,28 @@ local function gif_dimensions(path)
   return le16(h, 7), le16(h, 9)
 end
 
+--- Check if a GIF file has multiple frames (is animated)
+---@param path string
+---@return boolean
+function M.is_animated_gif(path)
+  local f = io.open(path, "rb")
+  if not f then return false end
+  local data = f:read("*a")
+  f:close()
+  if not data or #data < 6 or data:sub(1, 3) ~= "GIF" then return false end
+  -- Count Image Descriptor markers (0x2C)
+  local count = 0
+  local pos = 1
+  while pos <= #data do
+    if data:byte(pos) == 0x2C then
+      count = count + 1
+      if count > 1 then return true end
+    end
+    pos = pos + 1
+  end
+  return false
+end
+
 ---@param path string
 ---@return integer? width, integer? height
 function M.image_dimensions(path)
@@ -400,39 +422,48 @@ function M.transmit_image(path)
   return id
 end
 
---- Display a previously transmitted image at a screen position.
---- This is lightweight and can be called repeatedly after redraws.
+--- Display an image at a screen position.
+--- For static images: uses a=p (lightweight, references previously transmitted data).
+--- For animated GIFs: uses a=T with t=f (retransmits each time to preserve animation).
 ---@param image_id integer  Kitty image ID from transmit_image()
 ---@param win integer  window handle
 ---@param row integer  0-indexed row within window content
 ---@param col integer  0-indexed column within window content
 ---@param display_cols integer
 ---@param display_rows integer
-function M.put_image(image_id, win, row, col, display_cols, display_rows)
+---@param anim_path? string  if set, use a=T for animated GIF display
+function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_path)
   if not M.supports_kitty() then return end
   if not vim.api.nvim_win_is_valid(win) then return end
 
   local win_pos = vim.api.nvim_win_get_position(win)
-  local screen_row = win_pos[1] + row + 2
-  local screen_col = win_pos[2] + col + 2
 
   -- Check if the image row is within visible window area
   local win_height = vim.api.nvim_win_get_height(win)
   local topline = vim.fn.getwininfo(win)[1].topline - 1  -- 0-indexed
-  local visible_start = topline
-  local visible_end = topline + win_height
 
-  if row < visible_start or row >= visible_end then return end
+  if row < topline or row >= topline + win_height then return end
 
   -- Adjust screen position for scroll offset
   local visual_row = row - topline
-  screen_row = win_pos[1] + visual_row + 2
+  local screen_row = win_pos[1] + visual_row + 2
+  local screen_col = win_pos[2] + col + 2
 
-  -- a=p: display (put) a previously transmitted image
-  local message = string.format(
-    "\x1b_Ga=p,i=%d,c=%d,r=%d,C=1,q=2\x1b\\",
-    image_id, display_cols, display_rows
-  )
+  local message
+  if anim_path then
+    -- Animated GIF: transmit and display in one step to preserve animation
+    local b64_path = vim.base64.encode(anim_path)
+    message = string.format(
+      "\x1b_Ga=T,f=100,t=f,i=%d,c=%d,r=%d,C=1,q=2;%s\x1b\\",
+      image_id, display_cols, display_rows, b64_path
+    )
+  else
+    -- Static: put a previously transmitted image
+    message = string.format(
+      "\x1b_Ga=p,i=%d,c=%d,r=%d,C=1,q=2\x1b\\",
+      image_id, display_cols, display_rows
+    )
+  end
 
   term_write("\x1b[s")
   move_cursor(screen_col, screen_row)

@@ -38,6 +38,7 @@
 ---@field col integer 0-indexed column offset
 ---@field rows integer display height in cells
 ---@field cols integer display width in cells
+---@field animated? boolean true if animated GIF
 
 ---@class MdRender.Content
 ---@field lines string[]
@@ -1594,6 +1595,7 @@ function ContentBuilder:render_document(lines, opts)
                 col = #indent,
                 rows = display_rows,
                 cols = display_cols,
+                animated = image.is_animated_gif(resolved),
               })
               lines_shown = lines_shown + 1 + display_rows
               handled = true

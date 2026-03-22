@@ -348,7 +348,8 @@ function M.setup_images(win, content)
     for _, placement in ipairs(state.placements) do
       local id = state.image_ids[placement.path]
       if id then
-        image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
+        local anim_path = placement.animated and placement.path or nil
+        image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, anim_path)
       end
     end
   end
