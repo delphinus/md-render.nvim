@@ -396,7 +396,7 @@ local function process_bare_urls(text, max_url_width, highlights, links)
       processed = processed .. "`"
       i = i + 1
     elseif not in_backtick then
-      local s, e = text:find("https?://[^%s%)<>]+", i)
+      local s, e = text:find("https?://[^%s%)<>\"']+", i)
       if s == i then
         local url_match = text:sub(s, e)
         -- Strip trailing punctuation (including markdown markers)
@@ -571,6 +571,163 @@ local function apply_blockquote_prefix(text, quote_prefix, highlights, links)
   return text
 end
 
+--- HTML inline tag definitions: tag names -> highlight group (false = strip tags only)
+local HTML_TAG_HIGHLIGHTS = {
+  b = "Bold",
+  strong = "Bold",
+  i = "Italic",
+  em = "Italic",
+  code = "String",
+  s = "DiagnosticDeprecated",
+  del = "DiagnosticDeprecated",
+  strike = "DiagnosticDeprecated",
+  u = "Underlined",
+  mark = "MdRenderHighlight",
+  kbd = "Special",
+  sub = false,
+  sup = false,
+}
+
+--- Process HTML tags: <a href> links, <img> images, and paired inline tags
+--- Skips tags inside backtick-delimited code spans.
+---@param text string
+---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
+---@return string processed
+local function process_html_tags(text, highlights, links)
+  local pre_hl_count = #highlights
+  local pre_link_count = #links
+  local removals = {}
+  local processed = ""
+  local i = 1
+  local in_backtick = false
+  while i <= #text do
+    if text:sub(i, i) == "`" then
+      in_backtick = not in_backtick
+      processed = processed .. "`"
+      i = i + 1
+    elseif not in_backtick and text:sub(i, i) == "<" then
+      local rest = text:sub(i)
+      local matched = false
+
+      -- Try <a href="...">text</a>
+      local a_tag = rest:match "^(<a%s[^>]*>)"
+      if a_tag then
+        local href = a_tag:match 'href="([^"]*)"' or a_tag:match "href='([^']*)'"
+        local close_start, close_end = text:find("</a>", i + #a_tag, true)
+        if href and close_start then
+          local content = text:sub(i + #a_tag, close_start - 1)
+          table.insert(removals, { start = i - 1, count = #a_tag })
+          table.insert(removals, { start = close_start - 1, count = 4 })
+          local start_col = #processed
+          processed = processed .. content
+          table.insert(highlights, { col = start_col, end_col = start_col + #content, hl = "Underlined" })
+          table.insert(links, { col_start = start_col, col_end = start_col + #content, url = href })
+          i = close_end + 1
+          matched = true
+        end
+      end
+
+      -- Try <img src="..." alt="...">
+      if not matched then
+        local img_tag = rest:match "^(<img%s[^>]*>)"
+        if img_tag then
+          local src = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
+          if src then
+            local alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'"
+            local display = (alt and alt ~= "") and ("🖼 " .. alt) or ("🖼 " .. (src:match "([^/]+)$" or src))
+            table.insert(removals, { start = i - 1, count = #img_tag })
+            local start_col = #processed
+            processed = processed .. display
+            table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "Underlined" })
+            table.insert(links, { col_start = start_col, col_end = start_col + #display, url = src })
+            i = i + #img_tag
+            matched = true
+          end
+        end
+      end
+
+      -- Try paired HTML tags (<b>, <strong>, <em>, etc.)
+      if not matched then
+        local tag_name = rest:match "^<(%a+)[%s>]"
+        if tag_name then
+          local lower_tag = tag_name:lower()
+          local hl = HTML_TAG_HIGHLIGHTS[lower_tag]
+          if hl ~= nil then
+            local open_tag = rest:match("^(<" .. tag_name .. "[^>]*>)")
+            if open_tag then
+              local close_tag = "</" .. tag_name .. ">"
+              local close_start = text:find(close_tag, i + #open_tag, true)
+              if not close_start and tag_name ~= lower_tag then
+                close_tag = "</" .. lower_tag .. ">"
+                close_start = text:find(close_tag, i + #open_tag, true)
+              end
+              if close_start then
+                local content = text:sub(i + #open_tag, close_start - 1)
+                table.insert(removals, { start = i - 1, count = #open_tag })
+                table.insert(removals, { start = close_start - 1, count = #close_tag })
+                local start_col = #processed
+                processed = processed .. content
+                if hl then
+                  table.insert(highlights, { col = start_col, end_col = start_col + #content, hl = hl })
+                end
+                i = close_start + #close_tag
+                matched = true
+              end
+            end
+          end
+        end
+      end
+
+      if not matched then
+        processed = processed .. text:sub(i, i)
+        i = i + 1
+      end
+    else
+      processed = processed .. text:sub(i, i)
+      i = i + 1
+    end
+  end
+  adjust_positions(highlights, links, removals, pre_hl_count, pre_link_count)
+  return processed
+end
+
+--- Strip remaining HTML tags (tags not handled by process_html_tags)
+--- Skips tags inside backtick-delimited code spans.
+---@param text string
+---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
+---@return string processed
+local function strip_html_tags(text, highlights, links)
+  local pre_hl_count = #highlights
+  local pre_link_count = #links
+  local removals = {}
+  local processed = ""
+  local i = 1
+  local in_backtick = false
+  while i <= #text do
+    if text:sub(i, i) == "`" then
+      in_backtick = not in_backtick
+      processed = processed .. "`"
+      i = i + 1
+    elseif not in_backtick and text:sub(i, i) == "<" then
+      local tag = text:sub(i):match "^(</?%a[^>]*>)"
+      if tag then
+        table.insert(removals, { start = i - 1, count = #tag })
+        i = i + #tag
+      else
+        processed = processed .. text:sub(i, i)
+        i = i + 1
+      end
+    else
+      processed = processed .. text:sub(i, i)
+      i = i + 1
+    end
+  end
+  adjust_positions(highlights, links, removals, pre_hl_count, pre_link_count)
+  return processed
+end
+
 --- Render markdown text to plain text with highlight and link metadata
 ---@param text string The markdown text to render
 ---@param repo_base_url? string Optional repository base URL for issue/PR references
@@ -684,6 +841,11 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
   rendered_text = process_wikilinks(rendered_text, highlights, links)
   rendered_text = process_links(rendered_text, highlights, links)
   rendered_text = process_reference_links(rendered_text, ref_links, highlights, links)
+  repeat
+    local prev = rendered_text
+    rendered_text = process_html_tags(rendered_text, highlights, links)
+  until rendered_text == prev
+  rendered_text = strip_html_tags(rendered_text, highlights, links)
   rendered_text = process_bare_urls(rendered_text, MAX_URL_DISPLAY_WIDTH, highlights, links)
   if repo_base_url then
     rendered_text = process_issue_refs(rendered_text, repo_base_url, highlights, links)

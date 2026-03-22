@@ -711,10 +711,93 @@ end
 ---@param self MdRender.ContentBuilder
 ---@param lines string[] Pre-processed lines (already renumbered and cleaned)
 ---@param opts? MdRender.RenderDocumentOpts
+--- Tags already handled by render_document's main loop (skip in preprocessing)
+local HTML_SKIP_TAGS = {
+  details = true, summary = true,
+  hr = true,
+}
+
+--- Preprocess lines to handle multi-line HTML tags.
+--- HTML collapses whitespace: all lines within a tag are joined with spaces.
+--- This applies to both block and inline elements per the HTML spec.
+---@param lines string[]
+---@return string[]
+local function preprocess_multiline_html(lines)
+  local result = {}
+  local accum = nil -- { tag: string, lines: string[], depth: integer }
+  local in_code = false
+
+  for _, l in ipairs(lines) do
+    if accum then
+      table.insert(accum.lines, l)
+      local ll = l:lower()
+      for _ in ll:gmatch("<" .. accum.tag .. "[%s>]") do
+        accum.depth = accum.depth + 1
+      end
+      for _ in ll:gmatch("</" .. accum.tag .. "[%s>]") do
+        accum.depth = accum.depth - 1
+      end
+      if accum.depth <= 0 then
+        -- Join all lines with spaces (HTML whitespace collapsing)
+        local joined = table.concat(accum.lines, " ")
+        joined = joined:gsub("  +", " ")
+        table.insert(result, joined)
+        accum = nil
+      end
+    else
+      if l:match "^```" then
+        in_code = not in_code
+      end
+      if not in_code then
+        local tag_name = l:match "^%s*<(%a%w*)[%s>]"
+        if tag_name then
+          local lower_tag = tag_name:lower()
+          if not HTML_SKIP_TAGS[lower_tag] and not l:match "/>%s*$" then
+            local ll = l:lower()
+            local open_count = 0
+            for _ in ll:gmatch("<" .. lower_tag .. "[%s>]") do
+              open_count = open_count + 1
+            end
+            local close_count = 0
+            for _ in ll:gmatch("</" .. lower_tag .. "[%s>]") do
+              close_count = close_count + 1
+            end
+            if open_count > close_count then
+              accum = {
+                tag = lower_tag,
+                lines = { l },
+                depth = open_count - close_count,
+              }
+            else
+              table.insert(result, l)
+            end
+          else
+            table.insert(result, l)
+          end
+        else
+          table.insert(result, l)
+        end
+      else
+        table.insert(result, l)
+      end
+    end
+  end
+
+  -- Unclosed accumulation: output lines as-is
+  if accum then
+    for _, l in ipairs(accum.lines) do
+      table.insert(result, l)
+    end
+  end
+
+  return result
+end
+
 function ContentBuilder:render_document(lines, opts)
   opts = opts or {}
   local markdown = require "md-render.markdown"
 
+  lines = preprocess_multiline_html(lines)
   lines = markdown.renumber_ordered_lists(lines)
   local ref_links = markdown.parse_reference_links(lines)
 
@@ -920,6 +1003,14 @@ function ContentBuilder:render_document(lines, opts)
       end
     end
 
+    -- Convert HTML headings <h1>-<h6> to markdown format
+    if not in_code_block then
+      local h_level, h_content = line:match "^%s*<h([1-6])[^>]*>(.-)</h%1>%s*$"
+      if h_level then
+        line = string.rep("#", tonumber(h_level)) .. " " .. h_content
+      end
+    end
+
     local is_blank = line:match "^%s*$" ~= nil
     local is_heading = (not in_code_block) and line:match "^#+%s+" ~= nil
     local is_table_line = (not in_code_block) and line:match "^%s*|" ~= nil
@@ -1036,6 +1127,21 @@ function ContentBuilder:render_document(lines, opts)
           -- Fall through to render this line as body content
         end
       end
+    end
+
+    -- Handle <hr> as horizontal rule
+    if not in_code_block and line:match "^%s*<hr[^>]*>%s*$" then
+      flush_table()
+      local hr_lines_before = #self.lines
+      local rule = indent .. string.rep("─", max_width)
+      self:add_line(rule, { { col = 0, end_col = #rule, hl = "FloatBorder" } })
+      if in_details and details_summary_rendered and not skip_details_body then
+        apply_details_body_prefix(hr_lines_before, #self.lines)
+      end
+      lines_shown = lines_shown + 1
+      prev_was_heading = false
+      prev_list_marker_type = nil
+      goto continue
     end
 
     -- Accumulate table lines
