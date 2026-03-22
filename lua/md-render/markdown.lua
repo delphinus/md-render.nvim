@@ -22,6 +22,17 @@ local Markdown = {}
 
 local MAX_URL_DISPLAY_WIDTH = 50
 
+--- Pad a Nerd Font icon glyph so it always occupies 2 display cells.
+--- When setcellwidths makes the glyph width 1, an extra space is appended.
+---@param icon string single icon character
+---@return string
+local function pad_icon(icon)
+  if vim.fn.strdisplaywidth(icon) == 1 then
+    return icon .. " "
+  end
+  return icon
+end
+
 --- GitHub Flavored Markdown + Obsidian alert/callout types
 local ALERT_TYPES = {
   -- GitHub Alerts
@@ -796,10 +807,11 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
         -- Capitalize: first letter upper, rest lower
         label = alert_key:sub(1, 1) .. alert_key:sub(2):lower()
       end
+      local padded_icon = pad_icon(icon)
       if custom_title then
-        rendered_text = icon .. " " .. custom_title
+        rendered_text = padded_icon .. " " .. custom_title
       else
-        rendered_text = icon .. " " .. label
+        rendered_text = padded_icon .. " " .. label
       end
       rendered_text = apply_blockquote_prefix(rendered_text, quote_prefix, highlights, links)
       return rendered_text, highlights, links, "blockquote", nil, style_key, fold_mod
@@ -818,13 +830,13 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
     if cb_match then
       local icon
       if cb_char == " " then
-        icon = "󰄱 "
+        icon = pad_icon("󰄱") .. " "
         checkbox_hl = "Comment"
       elseif cb_char == "-" then
-        icon = "󰡖 "
+        icon = pad_icon("󰡖") .. " "
         checkbox_hl = "DiagnosticWarn"
       else
-        icon = "󰄲 "
+        icon = pad_icon("󰄲") .. " "
         checkbox_hl = "DiagnosticOk"
       end
       local indent_part = list_marker:match "^(%s*)" or ""
@@ -860,8 +872,8 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
 
   -- Add heading icon and highlight
   if heading_level then
-    local icons = { "󰉫 ", "󰉬 ", "󰉭 ", "󰉮 ", "󰉯 ", "󰉰 " }
-    local icon = icons[heading_level]
+    local raw_icons = { "󰉫", "󰉬", "󰉭", "󰉮", "󰉯", "󰉰" }
+    local icon = pad_icon(raw_icons[heading_level]) .. " "
     local icon_len = #icon
     -- Shift all existing highlights and links by the icon length
     for _, hl in ipairs(highlights) do

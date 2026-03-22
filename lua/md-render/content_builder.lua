@@ -691,12 +691,23 @@ function ContentBuilder:apply_alert_styling(lines_before, lines_after, alert_typ
   end
 end
 
+--- Pad a Nerd Font icon glyph so it always occupies 2 display cells.
+--- When setcellwidths makes the glyph width 1, an extra space is appended.
+---@param icon string single icon character
+---@return string
+local function pad_icon(icon)
+  if vim.fn.strdisplaywidth(icon) == 1 then
+    return icon .. " "
+  end
+  return icon
+end
+
 --- Append a fold indicator (›/∨) to the end of a callout header line
 ---@param self MdRender.ContentBuilder
 ---@param line_idx integer 0-indexed rendered line
 ---@param is_collapsed boolean
 function ContentBuilder:add_fold_indicator(line_idx, is_collapsed)
-  local indicator = is_collapsed and " 󰅂" or " 󰅀"
+  local indicator = is_collapsed and (" " .. pad_icon("󰅂")) or (" " .. pad_icon("󰅀"))
   local line = self.lines[line_idx + 1]
   if not line then
     return
