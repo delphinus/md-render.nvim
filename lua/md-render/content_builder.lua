@@ -33,12 +33,13 @@
 ---@field expanded boolean current state
 
 ---@class MdRender.ImagePlacement
----@field path string absolute path to image file
+---@field path string? absolute path to image file (nil if not yet downloaded)
 ---@field line integer 0-indexed rendered line where image starts
 ---@field col integer 0-indexed column offset
 ---@field rows integer display height in cells
 ---@field cols integer display width in cells
 ---@field animated? boolean true if animated GIF
+---@field src_url? string original URL for async download
 
 ---@class MdRender.Content
 ---@field lines string[]
@@ -1574,28 +1575,40 @@ function ContentBuilder:render_document(lines, opts)
           local resolved = image.resolve(img_path, buf_dir)
 
           local display_name = (img_alt and img_alt ~= "") and img_alt or (img_path:match "([^/]+)$" or img_path)
-          if image.supports_kitty() and resolved then
-            local img_w, img_h = image.image_dimensions(resolved)
-            if img_w and img_h then
-              local display_cols, display_rows = image.calc_display_size(img_w, img_h, max_width - 4, 20)
-              -- Header line with image info
+          if image.supports_kitty() then
+            local display_cols, display_rows
+            local is_animated = false
+            local src_url = image.is_url(img_path) and img_path or nil
+
+            if resolved then
+              local img_w, img_h = image.image_dimensions(resolved)
+              if img_w and img_h then
+                display_cols, display_rows = image.calc_display_size(img_w, img_h, max_width - 4, 20)
+                is_animated = image.is_animated_gif(resolved)
+              end
+            elseif src_url then
+              -- URL not yet cached: use estimated placeholder size
+              display_cols = math.floor((max_width - 4) * 0.8)
+              display_rows = 12
+            end
+
+            if display_cols and display_rows then
               local header = indent .. "🖼 " .. display_name
               self:add_line(header, {
                 { col = 0, end_col = #header, hl = "Comment" },
               })
-              -- Placeholder lines for image
               local img_start_line = #self.lines
               for _ = 1, display_rows do
                 self:add_line(indent)
               end
-              -- Record placement
               table.insert(self.image_placements, {
                 path = resolved,
                 line = img_start_line,
                 col = #indent,
                 rows = display_rows,
                 cols = display_cols,
-                animated = image.is_animated_gif(resolved),
+                animated = is_animated,
+                src_url = src_url,  -- for async download
               })
               lines_shown = lines_shown + 1 + display_rows
               handled = true

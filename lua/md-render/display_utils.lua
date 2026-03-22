@@ -341,27 +341,69 @@ function M.setup_images(win, content)
     autocmd_ids = {},
   }
 
-  -- Phase 1: Transmit all images (store in terminal memory)
-  for _, placement in ipairs(state.placements) do
-    if not state.image_ids[placement.path] then
+  --- Process a single placement: download (if URL), convert, transmit, and display.
+  ---@param placement MdRender.ImagePlacement
+  local function process_placement(placement)
+    local function on_path_ready(path)
+      if not path then return end
+      if not vim.api.nvim_win_is_valid(state.win) then return end
+
+      placement.path = path
+      placement.animated = image.is_animated_gif(path)
+
+      -- Recalculate display size with real dimensions
+      local img_w, img_h = image.image_dimensions(path)
+      if img_w and img_h then
+        placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
+      end
+
       if placement.animated then
-        -- Animated GIF: extract frames and transmit each
-        local frame_ids, tmp_dir = image.transmit_animated(placement.path)
-        if frame_ids and #frame_ids > 0 then
-          state.image_ids[placement.path] = frame_ids[1]
-          state.anims[placement.path] = {
+        image.transmit_animated_async(path, function(frame_ids, tmp_dir)
+          if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
+          state.image_ids[path] = frame_ids[1]
+          local anim = {
             frame_ids = frame_ids,
             current = 1,
             tmp_dir = tmp_dir,
           }
-        end
+          state.anims[path] = anim
+          -- Start animation timer
+          local timer = (vim.uv or vim.loop).new_timer()
+          anim.timer = timer
+          timer:start(0, 200, vim.schedule_wrap(function()
+            if not vim.api.nvim_win_is_valid(state.win) then
+              timer:stop()
+              return
+            end
+            anim.current = anim.current % #anim.frame_ids + 1
+            image.put_image(anim.frame_ids[anim.current], state.win,
+              placement.line, placement.col, placement.cols, placement.rows)
+          end))
+        end)
       else
-        local id = image.transmit_image(placement.path)
-        if id then
-          state.image_ids[placement.path] = id
-        end
+        image.transmit_image_async(path, function(id)
+          if not id or not vim.api.nvim_win_is_valid(state.win) then return end
+          state.image_ids[path] = id
+          vim.cmd("redraw!")
+          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
+        end)
       end
     end
+
+    if placement.path then
+      -- Local file or already cached URL
+      on_path_ready(placement.path)
+    elseif placement.src_url then
+      -- URL not yet cached: download asynchronously
+      image.download_async(placement.src_url, function(path)
+        on_path_ready(path)
+      end)
+    end
+  end
+
+  -- Phase 1: Kick off async processing for all placements
+  for _, placement in ipairs(state.placements) do
+    process_placement(placement)
   end
 
   -- Phase 2: Display after a short delay to let TUI settle
@@ -394,29 +436,7 @@ function M.setup_images(win, content)
     end, 50)
   end
 
-  -- Start animation timers for animated GIFs
-  for path, anim in pairs(state.anims) do
-    local timer = uv.new_timer()
-    anim.timer = timer
-    timer:start(200, 200, vim.schedule_wrap(function()
-      if not vim.api.nvim_win_is_valid(state.win) then
-        timer:stop()
-        return
-      end
-      anim.current = anim.current % #anim.frame_ids + 1
-      -- Find placements for this path and redraw them
-      for _, placement in ipairs(state.placements) do
-        if placement.path == path then
-          local id = anim.frame_ids[anim.current]
-          if id then
-            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
-          end
-        end
-      end
-    end))
-  end
-
-  -- Initial display
+  -- Initial display of already-cached images
   schedule_redraw()
 
   -- Re-display on scroll and cursor movement

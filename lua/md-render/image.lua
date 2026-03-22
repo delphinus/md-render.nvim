@@ -296,46 +296,58 @@ local function url_to_cache_path(url)
   return get_cache_dir() .. "/" .. hash .. "." .. ext
 end
 
---- Download a URL to a local file (synchronous).
---- Returns cached path if already downloaded.
+--- Check if a URL is already cached (in-memory or on disk).
 ---@param url string
----@return string? local_path
-function M.download(url)
-  -- Check in-memory cache first
+---@return string? cached_path
+function M.get_cached(url)
   if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then
     return _url_cache[url]
   end
-
-  -- Check disk cache
   local cache_path = url_to_cache_path(url)
   if vim.fn.filereadable(cache_path) == 1 then
     _url_cache[url] = cache_path
     return cache_path
   end
-
-  -- Download with curl
-  local result = vim.system(
-    { "curl", "-sL", "--max-time", "5", "--max-filesize", "20000000", "-o", cache_path, url },
-    { text = true }
-  ):wait()
-
-  if result.code ~= 0 or vim.fn.filereadable(cache_path) ~= 1 then
-    return nil
-  end
-
-  _url_cache[url] = cache_path
-  return cache_path
+  return nil
 end
 
---- Resolve an image source to a local file path.
---- Handles URLs (with download), absolute paths, ~ expansion, and relative paths.
+--- Download a URL to a local file asynchronously.
+---@param url string
+---@param callback fun(path: string?)  called with local path on success, nil on failure
+function M.download_async(url, callback)
+  local cached = M.get_cached(url)
+  if cached then
+    callback(cached)
+    return
+  end
+
+  local cache_path = url_to_cache_path(url)
+  vim.system(
+    { "curl", "-sL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url },
+    { text = true },
+    function(result)
+      vim.schedule(function()
+        if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
+          _url_cache[url] = cache_path
+          callback(cache_path)
+        else
+          callback(nil)
+        end
+      end)
+    end
+  )
+end
+
+--- Resolve an image source to a local file path (cache-only for URLs).
+--- For URLs: returns cached path or nil (no download).
+--- For local files: resolves path immediately.
 ---@param src string  image source (URL or path)
 ---@param base_dir? string  base directory for resolving relative paths
 ---@return string? resolved_path
 function M.resolve(src, base_dir)
   if M.is_url(src) then
     if M.is_badge_url(src) then return nil end
-    return M.download(src)
+    return M.get_cached(src)
   end
 
   local resolved = vim.fn.expand(src)
@@ -353,7 +365,7 @@ end
 -- Image conversion
 -- ============================================================================
 
---- Ensure image is in a format the terminal can display natively.
+--- Ensure image is in a format the terminal can display natively (synchronous).
 --- PNG and GIF are passed through. JPEG/WebP are converted to PNG.
 ---@param path string
 ---@return string? png_path, boolean is_temp
@@ -363,6 +375,30 @@ function M.ensure_png(path)
   local result = vim.system({ "magick", path, "-resize", "2000x2000>", tmp }, { text = true }):wait()
   if result.code ~= 0 then return nil, false end
   return tmp, true
+end
+
+--- Ensure image is in a native format (asynchronous).
+---@param path string
+---@param callback fun(png_path: string?, is_temp: boolean)
+function M.ensure_png_async(path, callback)
+  if M.is_native_format(path) then
+    callback(path, false)
+    return
+  end
+  local tmp = os.tmpname() .. ".png"
+  vim.system(
+    { "magick", path, "-resize", "2000x2000>", tmp },
+    { text = true },
+    function(result)
+      vim.schedule(function()
+        if result.code == 0 then
+          callback(tmp, true)
+        else
+          callback(nil, false)
+        end
+      end)
+    end
+  )
 end
 
 ---@param img_w integer
@@ -516,9 +552,117 @@ function M.transmit_animated(path)
   return frame_ids, tmp_dir
 end
 
+--- Transmit image asynchronously (converts to PNG if needed, then transmits).
+---@param path string absolute path to image file
+---@param callback fun(image_id: integer?)
+function M.transmit_image_async(path, callback)
+  if not M.supports_kitty() or not get_tty_path() then
+    callback(nil)
+    return
+  end
+  M.ensure_png_async(path, function(png_path, is_temp)
+    if not png_path then
+      callback(nil)
+      return
+    end
+    _image_id = _image_id + 1
+    local id = _image_id
+    local b64_path = vim.base64.encode(png_path)
+    local t = is_temp and "t" or "f"
+    term_write(string.format(
+      "\x1b_Ga=t,f=100,t=%s,i=%d,q=2;%s\x1b\\",
+      t, id, b64_path
+    ))
+    callback(id)
+  end)
+end
+
+--- Extract GIF frames and transmit asynchronously.
+---@param path string absolute path to animated GIF
+---@param callback fun(frame_ids: integer[]?, tmp_dir: string?)
+function M.transmit_animated_async(path, callback)
+  if not M.supports_kitty() or not get_tty_path() then
+    callback(nil)
+    return
+  end
+
+  -- Count frames first
+  vim.system(
+    { "magick", "identify", "-format", "%n\n", path },
+    { text = true },
+    function(count_result)
+      vim.schedule(function()
+        local total_frames = 1
+        if count_result.code == 0 and count_result.stdout then
+          total_frames = tonumber(count_result.stdout:match("%d+")) or 1
+        end
+
+        local tmp_dir = os.tmpname() .. "_frames"
+        vim.fn.mkdir(tmp_dir, "p")
+
+        local cmd = { "magick", path, "-coalesce", "-resize", "800x800>" }
+        if total_frames > MAX_ANIM_FRAMES then
+          table.insert(cmd, "-set")
+          table.insert(cmd, "dispose")
+          table.insert(cmd, "background")
+        end
+        table.insert(cmd, tmp_dir .. "/frame_%04d.png")
+
+        vim.system(cmd, { text = true, timeout = 15000 }, function(result)
+          vim.schedule(function()
+            if result.code ~= 0 then
+              vim.fn.delete(tmp_dir, "rf")
+              callback(nil)
+              return
+            end
+
+            local frames = vim.fn.glob(tmp_dir .. "/frame_*.png", false, true)
+            table.sort(frames)
+            if #frames == 0 then
+              vim.fn.delete(tmp_dir, "rf")
+              callback(nil)
+              return
+            end
+
+            -- Sample if too many
+            if #frames > MAX_ANIM_FRAMES then
+              local step = math.ceil(#frames / MAX_ANIM_FRAMES)
+              local sampled = {}
+              for i = 1, #frames, step do
+                table.insert(sampled, frames[i])
+              end
+              for i = 1, #frames do
+                local keep = false
+                for _, s in ipairs(sampled) do
+                  if frames[i] == s then keep = true; break end
+                end
+                if not keep then os.remove(frames[i]) end
+              end
+              frames = sampled
+            end
+
+            local frame_ids = {}
+            for _, frame_path in ipairs(frames) do
+              _image_id = _image_id + 1
+              local id = _image_id
+              local b64_path = vim.base64.encode(frame_path)
+              term_write(string.format(
+                "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+                id, b64_path
+              ))
+              table.insert(frame_ids, id)
+            end
+
+            callback(frame_ids, tmp_dir)
+          end)
+        end)
+      end)
+    end
+  )
+end
+
 --- Display an image at a screen position.
 --- For static images: uses a=p (lightweight, references previously transmitted data).
---- For animated GIFs: uses a=T with t=f (retransmits each time to preserve animation).
 ---@param image_id integer  Kitty image ID from transmit_image()
 ---@param win integer  window handle
 ---@param row integer  0-indexed row within window content
