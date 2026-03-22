@@ -421,7 +421,10 @@ function M.transmit_image(path)
   return id
 end
 
+local MAX_ANIM_FRAMES = 60  -- max frames to extract from animated GIFs
+
 --- Extract frames from an animated GIF and transmit each as a separate image.
+--- Large GIFs are resized and frames are sampled to stay under MAX_ANIM_FRAMES.
 --- Returns array of frame IDs and a temp directory to clean up.
 ---@param path string absolute path to animated GIF
 ---@return integer[]? frame_ids
@@ -430,11 +433,43 @@ function M.transmit_animated(path)
   if not M.supports_kitty() then return nil end
   if not get_tty_path() then return nil end
 
+  -- Count total frames first (lightweight identify)
+  local count_result = vim.system({
+    "magick", "identify", "-format", "%n\n", path,
+  }, { text = true }):wait()
+  local total_frames = 1
+  if count_result.code == 0 and count_result.stdout then
+    total_frames = tonumber(count_result.stdout:match("%d+")) or 1
+  end
+
+  -- Build magick command with sampling and resize for large GIFs
   local tmp_dir = os.tmpname() .. "_frames"
   vim.fn.mkdir(tmp_dir, "p")
-  local result = vim.system({
-    "magick", path, "-coalesce", tmp_dir .. "/frame_%03d.png",
-  }, { text = true }):wait()
+
+  local cmd = { "magick", path, "-coalesce" }
+  -- Sample frames if too many (e.g., take every Nth frame)
+  if total_frames > MAX_ANIM_FRAMES then
+    local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
+    -- Select every Nth frame using -delete to remove intermediate frames
+    -- Simpler: use -resize to shrink and only write sampled frames
+    local keep = {}
+    for i = 0, total_frames - 1, step do
+      table.insert(keep, tostring(i))
+    end
+    -- magick input -coalesce -delete '!0,N,2N,...' means delete all except listed
+    -- Unfortunately magick delete syntax is complex. Use sampling via shell.
+    cmd = {
+      "magick", path, "-coalesce",
+      "-resize", "800x800>",
+      "-set", "dispose", "background",
+    }
+  else
+    table.insert(cmd, "-resize")
+    table.insert(cmd, "800x800>")
+  end
+  table.insert(cmd, tmp_dir .. "/frame_%04d.png")
+
+  local result = vim.system(cmd, { text = true, timeout = 15000 }):wait()
 
   if result.code ~= 0 then
     vim.fn.delete(tmp_dir, "rf")
@@ -446,6 +481,24 @@ function M.transmit_animated(path)
   if #frames == 0 then
     vim.fn.delete(tmp_dir, "rf")
     return nil
+  end
+
+  -- Sample frames if still too many after extraction
+  if #frames > MAX_ANIM_FRAMES then
+    local step = math.ceil(#frames / MAX_ANIM_FRAMES)
+    local sampled = {}
+    for i = 1, #frames, step do
+      table.insert(sampled, frames[i])
+    end
+    -- Delete unused frame files
+    for i = 1, #frames do
+      local keep = false
+      for _, s in ipairs(sampled) do
+        if frames[i] == s then keep = true; break end
+      end
+      if not keep then os.remove(frames[i]) end
+    end
+    frames = sampled
   end
 
   local frame_ids = {}
