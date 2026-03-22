@@ -549,7 +549,7 @@ test("html: <hr> renders as horizontal rule", function()
     if l:match("─") then has_rule = true end
   end
   assert_eq(has_rule, true, "html hr: should have horizontal rule")
-  assert_eq(#lines, 3, "html hr: should have 3 lines (text + rule + text)")
+  assert_eq(#lines, 5, "html hr: should have 5 lines (text + blank + rule + blank + text)")
 end)
 
 test("html: <hr/> self-closing renders as rule", function()

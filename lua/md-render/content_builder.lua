@@ -722,6 +722,17 @@ end
 ---@param self MdRender.ContentBuilder
 ---@param lines string[] Pre-processed lines (already renumbered and cleaned)
 ---@param opts? MdRender.RenderDocumentOpts
+--- Check if a line is a Markdown thematic break (---, ***, ___, etc.)
+---@param line string
+---@return boolean
+local function is_thematic_break(line)
+  local stripped = line:gsub("%s", "")
+  if #stripped < 3 then return false end
+  local ch = stripped:sub(1, 1)
+  if ch ~= "-" and ch ~= "*" and ch ~= "_" then return false end
+  return stripped == string.rep(ch, #stripped)
+end
+
 --- Tags already handled by render_document's main loop (skip in preprocessing)
 local HTML_SKIP_TAGS = {
   details = true, summary = true,
@@ -827,6 +838,7 @@ function ContentBuilder:render_document(lines, opts)
   local code_block_id = nil
   local code_block_has_truncation = false
   local prev_was_heading = false
+  local prev_was_hr = false
   local prev_list_marker_type = nil
   local lines_shown = 0
   local table_buf = {}
@@ -1163,6 +1175,10 @@ function ContentBuilder:render_document(lines, opts)
     -- Handle <hr> as horizontal rule
     if not in_code_block and line:match "^%s*<hr[^>]*>%s*$" then
       flush_table()
+      if lines_shown > 0 and not prev_was_hr then
+        self:add_line(indent)
+        lines_shown = lines_shown + 1
+      end
       local hr_lines_before = #self.lines
       local rule = indent .. string.rep("─", max_width)
       self:add_line(rule, { { col = 0, end_col = #rule, hl = "FloatBorder" } })
@@ -1171,8 +1187,39 @@ function ContentBuilder:render_document(lines, opts)
       end
       lines_shown = lines_shown + 1
       prev_was_heading = false
+      prev_was_hr = true
       prev_list_marker_type = nil
       goto continue
+    end
+
+    -- Handle markdown thematic breaks (---, ***, ___, etc.)
+    if not in_code_block and is_thematic_break(line) then
+      flush_table()
+      if lines_shown > 0 and not prev_was_hr then
+        self:add_line(indent)
+        lines_shown = lines_shown + 1
+      end
+      local hr_lines_before = #self.lines
+      local rule = indent .. string.rep("─", max_width)
+      self:add_line(rule, { { col = 0, end_col = #rule, hl = "FloatBorder" } })
+      if in_details and details_summary_rendered and not skip_details_body then
+        apply_details_body_prefix(hr_lines_before, #self.lines)
+      end
+      lines_shown = lines_shown + 1
+      prev_was_heading = false
+      prev_was_hr = true
+      prev_list_marker_type = nil
+      goto continue
+    end
+
+    -- Add blank line after HR for regular content (not heading, not HR)
+    -- Headings already add their own blank line before them.
+    if prev_was_hr and not is_blank and not is_heading then
+      self:add_line(indent)
+      lines_shown = lines_shown + 1
+    end
+    if prev_was_hr and not is_blank then
+      prev_was_hr = false
     end
 
     -- Accumulate table lines
@@ -1196,12 +1243,15 @@ function ContentBuilder:render_document(lines, opts)
 
     -- Skip blank lines adjacent to headings (outside code blocks)
     if not in_code_block and is_blank then
-      local skip = prev_was_heading
+      local skip = prev_was_heading or prev_was_hr
       if not skip then
         for k = src_idx + 1, #lines do
           if not lines[k]:match "^%s*$" then
             -- Check ATX heading or setext heading (text followed by === or ---)
             skip = lines[k]:match "^#+%s+" ~= nil
+            if not skip then
+              skip = is_thematic_break(lines[k])
+            end
             if not skip and not lines[k]:match "^[#>%-%*`|%d]" then
               local kk = lines[k + 1]
               if kk and (kk:match "^=+%s*$" or kk:match "^%-+%s*$") then
