@@ -303,4 +303,137 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
   end, { buffer = buf, noremap = true, silent = true })
 end
 
+---@class MdRender.ImageState
+---@field placements MdRender.ImagePlacement[]
+---@field image_ids table<string, integer>  path -> Kitty image ID (transmitted)
+---@field win integer
+---@field redraw_timer any?
+---@field autocmd_ids integer[]
+
+--- Transmit all images and display them. Returns state for re-display and cleanup.
+---@param win integer
+---@param content MdRender.Content
+---@return MdRender.ImageState?
+function M.setup_images(win, content)
+  if not content.image_placements or #content.image_placements == 0 then
+    return nil
+  end
+
+  local image = require "md-render.image"
+  if not image.supports_kitty() then return nil end
+
+  ---@type MdRender.ImageState
+  local state = {
+    placements = content.image_placements,
+    image_ids = {},
+    win = win,
+    redraw_timer = nil,
+    autocmd_ids = {},
+  }
+
+  -- Phase 1: Transmit all images (store in terminal memory)
+  for _, placement in ipairs(state.placements) do
+    if not state.image_ids[placement.path] then
+      local id = image.transmit_image(placement.path)
+      if id then
+        state.image_ids[placement.path] = id
+      end
+    end
+  end
+
+  -- Phase 2: Display after a short delay to let TUI settle
+  local function redraw_images()
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+    vim.cmd("redraw!")
+    for _, placement in ipairs(state.placements) do
+      local id = state.image_ids[placement.path]
+      if id then
+        image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
+      end
+    end
+  end
+
+  local function schedule_redraw()
+    if state.redraw_timer then
+      state.redraw_timer:stop()
+    end
+    state.redraw_timer = vim.defer_fn(function()
+      redraw_images()
+    end, 50)
+  end
+
+  -- Initial display
+  schedule_redraw()
+
+  -- Re-display on scroll and cursor movement
+  local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
+  for _, event in ipairs({ "WinScrolled", "CursorMoved", "CursorMovedI" }) do
+    local id = vim.api.nvim_create_autocmd(event, {
+      group = augroup,
+      callback = function(ev)
+        -- WinScrolled: check if it's our window
+        if event == "WinScrolled" then
+          if tostring(ev.match) ~= tostring(state.win) then return end
+        else
+          -- CursorMoved: check if cursor is in our window
+          if vim.api.nvim_get_current_win() ~= state.win then return end
+        end
+        schedule_redraw()
+      end,
+    })
+    table.insert(state.autocmd_ids, id)
+  end
+
+  return state
+end
+
+--- Update image state with new content (after fold/expand toggle)
+---@param state MdRender.ImageState?
+---@param win integer
+---@param content MdRender.Content
+---@return MdRender.ImageState?
+function M.update_images(state, win, content)
+  -- Clean up old images that are no longer in placements
+  if state then
+    local image = require "md-render.image"
+    local new_paths = {}
+    if content.image_placements then
+      for _, p in ipairs(content.image_placements) do
+        new_paths[p.path] = true
+      end
+    end
+    for path, id in pairs(state.image_ids) do
+      if not new_paths[path] then
+        image.delete_image(id)
+        state.image_ids[path] = nil
+      end
+    end
+  end
+
+  M.cleanup_images(state)
+  return M.setup_images(win, content)
+end
+
+--- Clean up all images and autocmds
+---@param state MdRender.ImageState?
+function M.cleanup_images(state)
+  if not state then return end
+  local image = require "md-render.image"
+
+  -- Delete images from terminal
+  local ids = {}
+  for _, id in pairs(state.image_ids) do
+    table.insert(ids, id)
+  end
+  image.delete_images(ids)
+
+  -- Stop timer
+  if state.redraw_timer then
+    state.redraw_timer:stop()
+  end
+
+  -- Remove autocmds
+  pcall(vim.api.nvim_del_augroup_by_name, "md_render_images_" .. state.win)
+end
+
 return M

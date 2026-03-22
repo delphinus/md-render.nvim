@@ -183,6 +183,18 @@ MdPreview.show = function(opts)
     fold_state[fold.source_line] = fold.collapsed
   end
 
+  -- Display images (transmit + put with auto-redraw on scroll)
+  local image_state = display_utils.setup_images(win, content)
+
+  -- Clean up images when window closes
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern = tostring(win),
+    once = true,
+    callback = function()
+      display_utils.cleanup_images(image_state)
+    end,
+  })
+
   display_utils.setup_float_keymaps(buf, ns, win, content, float_win, {
     get_content = function()
       return content
@@ -190,10 +202,12 @@ MdPreview.show = function(opts)
     on_fold_toggle = function(source_line, collapsed)
       fold_state[source_line] = collapsed
       rebuild()
+      image_state = display_utils.update_images(image_state, win, content)
     end,
     on_expand_toggle = function(block_id, expanded)
       expand_state[block_id] = expanded
       rebuild()
+      image_state = display_utils.update_images(image_state, win, content)
     end,
   })
 end

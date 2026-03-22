@@ -32,6 +32,13 @@
 ---@field block_id integer unique identifier for expand_state lookup
 ---@field expanded boolean current state
 
+---@class MdRender.ImagePlacement
+---@field path string absolute path to image file
+---@field line integer 0-indexed rendered line where image starts
+---@field col integer 0-indexed column offset
+---@field rows integer display height in cells
+---@field cols integer display width in cells
+
 ---@class MdRender.Content
 ---@field lines string[]
 ---@field highlights MdRender.LineHighlight[]
@@ -39,6 +46,7 @@
 ---@field code_blocks MdRender.CodeBlock[]
 ---@field callout_folds MdRender.CalloutFold[]
 ---@field expandable_regions MdRender.ExpandableRegion[]
+---@field image_placements MdRender.ImagePlacement[]
 ---@field title_line? integer
 ---@field title_text? string
 ---@field close_line_idx? integer
@@ -50,6 +58,7 @@
 ---@field code_blocks MdRender.CodeBlock[]
 ---@field callout_folds MdRender.CalloutFold[]
 ---@field expandable_regions MdRender.ExpandableRegion[]
+---@field image_placements MdRender.ImagePlacement[]
 local ContentBuilder = {}
 
 ---@return MdRender.ContentBuilder
@@ -61,6 +70,7 @@ function ContentBuilder.new()
     code_blocks = {},
     callout_folds = {},
     expandable_regions = {},
+    image_placements = {},
   }, { __index = ContentBuilder })
 end
 
@@ -93,6 +103,7 @@ function ContentBuilder:result()
     code_blocks = self.code_blocks,
     callout_folds = self.callout_folds,
     expandable_regions = self.expandable_regions,
+    image_placements = self.image_placements,
   }
 end
 
@@ -1495,34 +1506,112 @@ function ContentBuilder:render_document(lines, opts)
           callout_code_lang = nil
         end
 
-        local alert_type, fold_mod = self:add_markdown_line(line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
-        local lines_after = #self.lines
-        if alert_type then
-          current_alert_type = alert_type
-
-          if fold_mod then
-            local is_collapsed
-            if fold_state[src_idx] ~= nil then
-              is_collapsed = fold_state[src_idx]
-            else
-              is_collapsed = (fold_mod == "-")
+        -- Detect standalone image lines: ![alt](path) or <img src="path">
+        local img_path, img_alt
+        if not current_alert_type then
+          -- Markdown image: ![alt](path)
+          img_alt, img_path = line:match "^%s*!%[(.-)%]%((.-)%)%s*$"
+          -- HTML img: <img src="path" alt="alt">
+          if not img_path then
+            local img_tag = line:match "^%s*(<img%s[^>]*>)%s*$"
+            if img_tag then
+              img_path = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
+              img_alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'"
             end
-            self:add_fold_indicator(lines_before, is_collapsed)
-            table.insert(self.callout_folds, {
-              header_line = lines_before,
-              source_line = src_idx,
-              collapsed = is_collapsed,
-            })
-            if is_collapsed then
-              skip_callout_body = true
+          end
+          -- Obsidian embed: ![[file]]
+          if not img_path then
+            local embed = line:match "^%s*!%[%[(.-)%]%]%s*$"
+            if embed then
+              local ext = embed:match "%.(%w+)$"
+              local img_exts = { png = true, jpg = true, jpeg = true, gif = true, webp = true, bmp = true, svg = true }
+              if ext and img_exts[ext:lower()] then
+                img_path = embed
+                img_alt = embed:match "([^/]+)$"
+              end
+            end
+          end
+        end
+
+        if img_path and img_path ~= "" then
+          local image = require "md-render.image"
+          -- Resolve relative paths
+          local resolved = vim.fn.expand(img_path)
+          if resolved:sub(1, 1) ~= "/" then
+            -- Try relative to current buffer's directory
+            local buf_dir = vim.fn.expand("%:p:h")
+            resolved = buf_dir .. "/" .. resolved
+          end
+
+          local display_name = (img_alt and img_alt ~= "") and img_alt or (img_path:match "([^/]+)$" or img_path)
+          if image.supports_kitty() and vim.fn.filereadable(resolved) == 1 then
+            local img_w, img_h = image.image_dimensions(resolved)
+            if img_w and img_h then
+              local display_cols, display_rows = image.calc_display_size(img_w, img_h, max_width - 4, 20)
+              -- Header line with image info
+              local header = indent .. "🖼 " .. display_name
+              self:add_line(header, {
+                { col = 0, end_col = #header, hl = "Comment" },
+              })
+              -- Placeholder lines for image
+              local img_start_line = #self.lines
+              for _ = 1, display_rows do
+                self:add_line(indent)
+              end
+              -- Record placement
+              table.insert(self.image_placements, {
+                path = resolved,
+                line = img_start_line,
+                col = #indent,
+                rows = display_rows,
+                cols = display_cols,
+              })
+              lines_shown = lines_shown + 1 + display_rows
+              handled = true
             end
           end
 
-          self:apply_alert_styling(lines_before, #self.lines, current_alert_type, true)
-        elseif current_alert_type and line:match "^>" then
-          self:apply_alert_styling(lines_before, lines_after, current_alert_type, false)
-        else
-          current_alert_type = nil
+          if not handled then
+            -- Fallback: text-only display
+            local fallback = indent .. "🖼 " .. display_name
+            self:add_line(fallback, {
+              { col = 0, end_col = #fallback, hl = "Underlined" },
+            })
+            lines_shown = lines_shown + 1
+            handled = true
+          end
+        end
+
+        if not handled then
+          local alert_type, fold_mod = self:add_markdown_line(line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
+          local lines_after = #self.lines
+          if alert_type then
+            current_alert_type = alert_type
+
+            if fold_mod then
+              local is_collapsed
+              if fold_state[src_idx] ~= nil then
+                is_collapsed = fold_state[src_idx]
+              else
+                is_collapsed = (fold_mod == "-")
+              end
+              self:add_fold_indicator(lines_before, is_collapsed)
+              table.insert(self.callout_folds, {
+                header_line = lines_before,
+                source_line = src_idx,
+                collapsed = is_collapsed,
+              })
+              if is_collapsed then
+                skip_callout_body = true
+              end
+            end
+
+            self:apply_alert_styling(lines_before, #self.lines, current_alert_type, true)
+          elseif current_alert_type and line:match "^>" then
+            self:apply_alert_styling(lines_before, lines_after, current_alert_type, false)
+          else
+            current_alert_type = nil
+          end
         end
       end
     end
