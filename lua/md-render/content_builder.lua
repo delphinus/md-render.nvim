@@ -622,6 +622,49 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
       })
     end
   end
+
+  -- Extract images from table cells and display as gallery below the table
+  local image = require "md-render.image"
+  if image.supports_kitty() then
+    local gallery_images = {}
+    for _, tl in ipairs(table_lines) do
+      -- Skip separator lines
+      if tl:match "^%s*|%s*[-:|]" then goto next_line end
+      -- Find all ![alt](url) in the line
+      for alt, url in tl:gmatch "!%[(.-)%]%((.-)%)" do
+        if not image.is_url(url) or not image.is_badge_url(url) then
+          table.insert(gallery_images, { alt = alt, url = url })
+        end
+      end
+      ::next_line::
+    end
+
+    if #gallery_images > 0 then
+      local buf_dir = vim.fn.expand("%:p:h")
+      for _, img in ipairs(gallery_images) do
+        local resolved = image.resolve(img.url, buf_dir)
+        if resolved then
+          local img_w, img_h = image.image_dimensions(resolved)
+          if img_w and img_h then
+            local display_cols, display_rows = image.calc_display_size(img_w, img_h, max_width - 4, 15)
+            local header = indent .. "🖼 " .. ((img.alt ~= "") and img.alt or (img.url:match "([^/]+)$" or img.url))
+            self:add_line(header, { { col = 0, end_col = #header, hl = "Comment" } })
+            local img_start_line = #self.lines
+            for _ = 1, display_rows do
+              self:add_line(indent)
+            end
+            table.insert(self.image_placements, {
+              path = resolved,
+              line = img_start_line,
+              col = #indent,
+              rows = display_rows,
+              cols = display_cols,
+            })
+          end
+        end
+      end
+    end
+  end
 end
 
 --- Add a markdown-rendered line with wrapping support
