@@ -123,6 +123,22 @@ local function detect_urls_in_code_line(self, raw_line, prefix_len, content_byte
   end
 end
 
+--- Unicode superscript digit characters for footnote numbering
+local SUPERSCRIPT_DIGITS = { "⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹" }
+
+--- Convert a number to superscript Unicode string
+---@param n integer
+---@return string
+local function to_superscript(n)
+  local s = tostring(n)
+  local result = {}
+  for i = 1, #s do
+    local d = tonumber(s:sub(i, i))
+    table.insert(result, SUPERSCRIPT_DIGITS[d + 1])
+  end
+  return table.concat(result)
+end
+
 --- Characters that must not appear at the start of a line (JIS X 4051 行頭禁則文字).
 ---@type table<string, true>
 local NO_BREAK_START = {}
@@ -607,10 +623,10 @@ end
 ---@param ref_links? table<string, string>
 ---@return string? alert_type Alert type if this line is an alert header
 ---@return string? fold_mod Fold modifier ("+" or "-") if this is a foldable callout
-function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url, autolinks, ref_links)
+function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
   local markdown = require "md-render.markdown"
   local rendered_text, md_highlights, md_links, special_type, list_marker, alert_type, fold_mod =
-    markdown.render(text, repo_base_url, autolinks, ref_links)
+    markdown.render(text, repo_base_url, autolinks, ref_links, footnote_map)
 
   local quote_prefix = ""
   if special_type == "blockquote" then
@@ -822,6 +838,7 @@ function ContentBuilder:render_document(lines, opts)
   lines = preprocess_multiline_html(lines)
   lines = markdown.renumber_ordered_lists(lines)
   local ref_links = markdown.parse_reference_links(lines)
+  local footnote_defs, footnote_map = markdown.parse_footnotes(lines)
 
   local max_width = opts.max_width or 80
   local indent = opts.indent or "  "
@@ -853,6 +870,10 @@ function ContentBuilder:render_document(lines, opts)
   local callout_code_source_lines = nil
   local callout_code_block_id = nil
   local callout_code_has_truncation = false
+  local in_math_block = false
+  local math_block_start = nil
+  local math_block_id = nil
+  local in_indented_code = false
   local in_comment_block = false
   local in_html_comment = false
   local skip_next_line = false
@@ -1010,6 +1031,11 @@ function ContentBuilder:render_document(lines, opts)
 
     -- Skip reference link definition lines
     if not in_code_block and markdown.is_reference_link_def(line) then
+      goto continue
+    end
+
+    -- Skip footnote definition lines (rendered in footnote section at end)
+    if not in_code_block and markdown.is_footnote_def(line) then
       goto continue
     end
 
@@ -1292,9 +1318,40 @@ function ContentBuilder:render_document(lines, opts)
       end
     end
 
+    -- Indented code block: 4+ spaces, not in a list/blockquote/etc context
+    if not in_code_block and not in_math_block and not current_alert_type
+        and line:match "^    " and not line:match "^    [%-*+]%s" and not line:match "^    %d+%.%s"
+        and (in_indented_code or not prev_list_marker_type) then
+      in_indented_code = true
+      local code_content = line:sub(5) -- strip 4-space indent
+      local indented_line = indent .. code_content
+      local ib_lines_before = #self.lines
+      self:add_line(indented_line, { { col = 0, end_col = -1, hl = "String" } })
+      detect_urls_in_code_line(self, code_content, #indent, #indented_line)
+      if in_details and details_summary_rendered and not skip_details_body then
+        apply_details_body_prefix(ib_lines_before, #self.lines)
+      end
+      lines_shown = lines_shown + 1
+      goto continue
+    end
+    in_indented_code = false
+
     local lines_before = #self.lines
 
-    if line:match "^```" then
+    if not in_code_block and line:match "^%$%$$" then
+      if not in_math_block then
+        in_math_block = true
+        math_block_start = #self.lines
+        math_block_id = src_idx
+      else
+        in_math_block = false
+        math_block_start = nil
+        math_block_id = nil
+      end
+    elseif in_math_block then
+      local indented = indent .. line
+      self:add_line(indented, { { col = 0, end_col = -1, hl = "MdRenderMath" } })
+    elseif line:match "^```" then
       if not in_code_block then
         in_code_block = true
         code_block_lang = line:match "^```(%S+)" or nil
@@ -1438,7 +1495,7 @@ function ContentBuilder:render_document(lines, opts)
           callout_code_lang = nil
         end
 
-        local alert_type, fold_mod = self:add_markdown_line(line, indent, max_width, repo_base_url, autolinks, ref_links)
+        local alert_type, fold_mod = self:add_markdown_line(line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
         local lines_after = #self.lines
         if alert_type then
           current_alert_type = alert_type
@@ -1500,6 +1557,52 @@ function ContentBuilder:render_document(lines, opts)
     flush_table()
     if lines_shown >= max_lines then
       self:add_line(indent .. "... (truncated)", { { col = 0, end_col = -1, hl = "Comment" } })
+    end
+  end
+
+  -- Render footnote section at end of document
+  if not truncated and #footnote_defs > 0 then
+    -- Separator
+    self:add_line(indent)
+    local rule = indent .. string.rep("─", max_width)
+    self:add_line(rule, { { col = 0, end_col = #rule, hl = "FloatBorder" } })
+
+    for _, def in ipairs(footnote_defs) do
+      local num = footnote_map[def.label]
+      local prefix = indent .. to_superscript(num) .. " "
+      local rendered_text, md_highlights, md_links =
+        markdown.render(def.text, repo_base_url, autolinks, ref_links, footnote_map)
+
+      -- Shift highlights/links by prefix length
+      local prefix_len = #prefix
+      for _, hl in ipairs(md_highlights) do
+        hl.col = hl.col + prefix_len
+        hl.end_col = hl.end_col + prefix_len
+      end
+      for _, link in ipairs(md_links) do
+        link.col_start = link.col_start + prefix_len
+        link.col_end = link.col_end + prefix_len
+      end
+
+      local full_text = prefix .. rendered_text
+      local line_hls = {}
+      table.insert(line_hls, { col = #indent, end_col = #prefix, hl = "Special" })
+      for _, hl in ipairs(md_highlights) do
+        table.insert(line_hls, hl)
+      end
+      table.insert(line_hls, { col = 0, end_col = -1, hl = "Comment" })
+
+      self:add_line(full_text, line_hls)
+
+      local base_line = #self.lines - 1
+      for _, link in ipairs(md_links) do
+        table.insert(self.link_metadata, {
+          line = base_line,
+          col_start = link.col_start,
+          col_end = link.col_end,
+          url = link.url,
+        })
+      end
     end
   end
 end

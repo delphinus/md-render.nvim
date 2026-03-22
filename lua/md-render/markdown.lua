@@ -22,6 +22,218 @@ local Markdown = {}
 
 local MAX_URL_DISPLAY_WIDTH = 50
 
+--- ASCII punctuation characters that can be backslash-escaped (CommonMark spec)
+local ESCAPABLE_CHARS = [[!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~]]
+
+--- Escape backslash-escaped characters to placeholders before inline processing.
+--- Returns the modified text and a list of {pos, char} for later restoration.
+---@param text string
+---@return string escaped_text
+---@return {pos: integer, char: string}[] escapes
+local function escape_backslashes(text)
+  local escapes = {}
+  local result = {}
+  local i = 1
+  while i <= #text do
+    if text:sub(i, i) == "\\" and i < #text then
+      local next_ch = text:sub(i + 1, i + 1)
+      if ESCAPABLE_CHARS:find(next_ch, 1, true) then
+        -- Use a private-use Unicode character as placeholder (U+F0000 + byte value)
+        local placeholder = string.char(0xEF, 0x80, 0x80 + next_ch:byte())
+        table.insert(escapes, { pos = #table.concat(result), char = next_ch })
+        table.insert(result, placeholder)
+        i = i + 2
+      else
+        table.insert(result, "\\")
+        i = i + 1
+      end
+    else
+      table.insert(result, text:sub(i, i))
+      i = i + 1
+    end
+  end
+  return table.concat(result), escapes
+end
+
+--- Restore placeholders back to their original characters, adjusting highlight/link positions.
+---@param text string
+---@param escapes {pos: integer, char: string}[]
+---@param highlights? MdRender.Markdown.Highlight[]
+---@param links? MdRender.Markdown.Link[]
+---@return string
+local function restore_backslashes(text, escapes, highlights, links)
+  if #escapes == 0 then return text end
+  local result = {}
+  local byte_offset = 0  -- cumulative byte shift (3-byte placeholder → 1-byte char = -2 each)
+  local offsets = {}      -- {pos_in_output, delta} for position adjustments
+  local i = 1
+  while i <= #text do
+    local b1 = text:byte(i)
+    if b1 == 0xEF and i + 2 <= #text and text:byte(i + 1) == 0x80 then
+      local b3 = text:byte(i + 2)
+      if b3 >= 0x80 then
+        local orig_byte = b3 - 0x80
+        local out_pos = #table.concat(result)
+        table.insert(offsets, { pos = out_pos, delta = 2 })
+        table.insert(result, string.char(orig_byte))
+        byte_offset = byte_offset + 2
+        i = i + 3
+      else
+        table.insert(result, text:sub(i, i))
+        i = i + 1
+      end
+    else
+      table.insert(result, text:sub(i, i))
+      i = i + 1
+    end
+  end
+
+  if byte_offset > 0 and (highlights or links) then
+    local function adjust(pos)
+      local shift = 0
+      for _, o in ipairs(offsets) do
+        if pos > o.pos then
+          shift = shift + o.delta
+        end
+      end
+      return pos - shift
+    end
+    if highlights then
+      for _, hl in ipairs(highlights) do
+        hl.col = adjust(hl.col)
+        hl.end_col = adjust(hl.end_col)
+      end
+    end
+    if links then
+      for _, link in ipairs(links) do
+        link.col_start = adjust(link.col_start)
+        link.col_end = adjust(link.col_end)
+      end
+    end
+  end
+
+  return table.concat(result)
+end
+
+--- Common HTML named character references
+local HTML_ENTITIES = {
+  amp = "&", lt = "<", gt = ">", quot = '"', apos = "'",
+  nbsp = "\194\160", -- U+00A0
+  ndash = "–", mdash = "—", lsquo = "\226\128\152", rsquo = "\226\128\153",
+  ldquo = "\226\128\156", rdquo = "\226\128\157", bull = "•",
+  hellip = "…", copy = "©", reg = "®", trade = "™",
+  laquo = "«", raquo = "»", middot = "·", times = "×", divide = "÷",
+  plusmn = "±", micro = "µ", para = "¶", sect = "§", deg = "°",
+  frac14 = "¼", frac12 = "½", frac34 = "¾",
+  larr = "←", rarr = "→", uarr = "↑", darr = "↓",
+  hearts = "♥", diams = "♦", clubs = "♣", spades = "♠",
+  checkmark = "✓", cross = "✗",
+}
+
+--- Encode a Unicode codepoint as a UTF-8 string
+---@param cp integer Unicode codepoint
+---@return string
+local function utf8_char(cp)
+  if cp < 0x80 then
+    return string.char(cp)
+  elseif cp < 0x800 then
+    return string.char(0xC0 + math.floor(cp / 64), 0x80 + cp % 64)
+  elseif cp < 0x10000 then
+    return string.char(0xE0 + math.floor(cp / 4096), 0x80 + math.floor(cp / 64) % 64, 0x80 + cp % 64)
+  elseif cp < 0x110000 then
+    return string.char(
+      0xF0 + math.floor(cp / 262144),
+      0x80 + math.floor(cp / 4096) % 64,
+      0x80 + math.floor(cp / 64) % 64,
+      0x80 + cp % 64
+    )
+  end
+  return ""
+end
+
+--- Decode HTML character references (named, decimal, hex) in text.
+--- Adjusts highlight and link positions for byte-length changes.
+---@param text string
+---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
+---@return string
+local function decode_html_entities(text, highlights, links)
+  local result = {}
+  local offsets = {}
+  local i = 1
+  while i <= #text do
+    if text:sub(i, i) == "&" then
+      -- Try numeric reference &#123; or &#x1F;
+      local num_match, num_end = text:match("^(&#(%d+);)", i)
+      if not num_match then
+        num_match, num_end = text:match("^(&#[xX](%x+);)", i)
+        if num_match then
+          num_end = tonumber(num_end, 16)
+        end
+      else
+        num_end = tonumber(num_end)
+      end
+      if num_match and num_end then
+        local replacement = utf8_char(num_end)
+        local out_pos = #table.concat(result)
+        local delta = #num_match - #replacement
+        if delta ~= 0 then
+          table.insert(offsets, { pos = out_pos, delta = delta })
+        end
+        table.insert(result, replacement)
+        i = i + #num_match
+      else
+        -- Try named reference &amp;
+        local name, named_match = text:match("^&(%a+)(;)", i)
+        if name and named_match then
+          local replacement = HTML_ENTITIES[name] or HTML_ENTITIES[name:lower()]
+          if replacement then
+            local full = "&" .. name .. ";"
+            local out_pos = #table.concat(result)
+            local delta = #full - #replacement
+            if delta ~= 0 then
+              table.insert(offsets, { pos = out_pos, delta = delta })
+            end
+            table.insert(result, replacement)
+            i = i + #full
+          else
+            table.insert(result, "&")
+            i = i + 1
+          end
+        else
+          table.insert(result, "&")
+          i = i + 1
+        end
+      end
+    else
+      table.insert(result, text:sub(i, i))
+      i = i + 1
+    end
+  end
+
+  if #offsets > 0 then
+    local function adjust(pos)
+      local shift = 0
+      for _, o in ipairs(offsets) do
+        if pos > o.pos then
+          shift = shift + o.delta
+        end
+      end
+      return pos - shift
+    end
+    for _, hl in ipairs(highlights) do
+      hl.col = adjust(hl.col)
+      hl.end_col = adjust(hl.end_col)
+    end
+    for _, link in ipairs(links) do
+      link.col_start = adjust(link.col_start)
+      link.col_end = adjust(link.col_end)
+    end
+  end
+
+  return table.concat(result)
+end
+
 --- Pad a Nerd Font icon glyph so it always occupies 2 display cells.
 --- When setcellwidths makes the glyph width 1, an extra space is appended.
 ---@param icon string single icon character
@@ -119,6 +331,62 @@ local function process_paired_markers(text, pattern, hl_group, marker_len, highl
       processed = processed .. content
       table.insert(highlights, { col = start_col, end_col = start_col + #content, hl = hl_group })
       i = e + 1
+    else
+      processed = processed .. text:sub(i, i)
+      i = i + 1
+    end
+  end
+  adjust_positions(highlights, links, removals, pre_hl_count, pre_link_count)
+  return processed
+end
+
+--- Process _underscore_ emphasis with word-boundary checking (CommonMark rules).
+--- Only matches when _ is at a word boundary to avoid false positives with snake_case.
+---@param text string
+---@param hl_group string
+---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
+---@return string processed
+local function process_underscore_emphasis(text, hl_group, highlights, links)
+  local pre_hl_count = #highlights
+  local pre_link_count = #links
+  local removals = {}
+  local processed = ""
+  local i = 1
+  while i <= #text do
+    if text:sub(i, i) == "_" then
+      local prev_char = i > 1 and text:sub(i - 1, i - 1) or ""
+      local at_word_boundary = prev_char == "" or prev_char:match "[%s%p]"
+      if at_word_boundary then
+        local e = text:find("_", i + 1)
+        if e then
+          local next_char = e < #text and text:sub(e + 1, e + 1) or ""
+          local end_boundary = next_char == "" or next_char:match "[%s%p]"
+          if end_boundary then
+            local content = text:sub(i + 1, e - 1)
+            if #content > 0 then
+              table.insert(removals, { start = i - 1, count = 1 })
+              table.insert(removals, { start = e - 1, count = 1 })
+              local start_col = #processed
+              processed = processed .. content
+              table.insert(highlights, { col = start_col, end_col = start_col + #content, hl = hl_group })
+              i = e + 1
+            else
+              processed = processed .. "_"
+              i = i + 1
+            end
+          else
+            processed = processed .. "_"
+            i = i + 1
+          end
+        else
+          processed = processed .. "_"
+          i = i + 1
+        end
+      else
+        processed = processed .. "_"
+        i = i + 1
+      end
     else
       processed = processed .. text:sub(i, i)
       i = i + 1
@@ -703,6 +971,149 @@ local function process_html_tags(text, highlights, links)
   return processed
 end
 
+--- Process Obsidian-style #tags: highlight tag text (skip inside backticks).
+--- Tags must contain at least one non-digit character to avoid confusion with issue refs.
+---@param text string
+---@param highlights MdRender.Markdown.Highlight[]
+---@return string processed
+local function process_tags(text, highlights)
+  local processed = ""
+  local i = 1
+  local in_backtick = false
+  while i <= #text do
+    if text:sub(i, i) == "`" then
+      in_backtick = not in_backtick
+      processed = processed .. "`"
+      i = i + 1
+    elseif not in_backtick and text:sub(i, i) == "#" then
+      local prev_char = i > 1 and text:sub(i - 1, i - 1) or ""
+      local at_boundary = prev_char == "" or prev_char:match "%s"
+      if at_boundary then
+        local tag = text:match("^#([%w_/-][%w_/%-]*)", i)
+        if tag and tag:match "%a" then
+          local full = "#" .. tag
+          local start_col = #processed
+          processed = processed .. full
+          table.insert(highlights, { col = start_col, end_col = start_col + #full, hl = "MdRenderTag" })
+          i = i + #full
+        else
+          processed = processed .. "#"
+          i = i + 1
+        end
+      else
+        processed = processed .. "#"
+        i = i + 1
+      end
+    else
+      processed = processed .. text:sub(i, i)
+      i = i + 1
+    end
+  end
+  return processed
+end
+
+--- Unicode superscript digit characters
+local SUPERSCRIPT_DIGITS = { "⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹" }
+
+--- Convert a number to superscript Unicode string
+---@param n integer
+---@return string
+local function to_superscript(n)
+  local s = tostring(n)
+  local result = {}
+  for i = 1, #s do
+    local d = tonumber(s:sub(i, i))
+    table.insert(result, SUPERSCRIPT_DIGITS[d + 1])
+  end
+  return table.concat(result)
+end
+
+--- Process footnote references [^id] → superscript number with highlight
+---@param text string
+---@param footnote_map table<string, integer> footnote label → number mapping
+---@param highlights MdRender.Markdown.Highlight[]
+---@return string processed
+local function process_footnote_refs(text, footnote_map, highlights)
+  if not footnote_map or not next(footnote_map) then
+    return text
+  end
+  local processed = ""
+  local i = 1
+  while i <= #text do
+    if text:sub(i, i + 1) == "[^" then
+      local close = text:find("]", i + 2, true)
+      if close then
+        local label = text:sub(i + 2, close - 1)
+        local num = footnote_map[label]
+        if num then
+          local display = to_superscript(num)
+          local start_col = #processed
+          processed = processed .. display
+          table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "Special" })
+          i = close + 1
+        else
+          processed = processed .. text:sub(i, i)
+          i = i + 1
+        end
+      else
+        processed = processed .. text:sub(i, i)
+        i = i + 1
+      end
+    else
+      processed = processed .. text:sub(i, i)
+      i = i + 1
+    end
+  end
+  return processed
+end
+
+--- Process inline math $...$ by removing dollar signs and adding highlights.
+--- Skips $$ (display math) and content inside backticks.
+---@param text string
+---@param hl_group string
+---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
+---@return string processed
+local function process_inline_math(text, hl_group, highlights, links)
+  local pre_hl_count = #highlights
+  local pre_link_count = #links
+  local removals = {}
+  local processed = ""
+  local i = 1
+  local in_backtick = false
+  while i <= #text do
+    if text:sub(i, i) == "`" then
+      in_backtick = not in_backtick
+      processed = processed .. "`"
+      i = i + 1
+    elseif not in_backtick and text:sub(i, i) == "$" and text:sub(i, i + 1) ~= "$$" then
+      local e = text:find("%$", i + 1)
+      if e and e > i + 1 then
+        local content = text:sub(i + 1, e - 1)
+        if not content:match "^%s" and not content:match "%s$" then
+          table.insert(removals, { start = i - 1, count = 1 })
+          table.insert(removals, { start = e - 1, count = 1 })
+          local start_col = #processed
+          processed = processed .. content
+          table.insert(highlights, { col = start_col, end_col = start_col + #content, hl = hl_group })
+          i = e + 1
+        else
+          processed = processed .. "$"
+          i = i + 1
+        end
+      else
+        processed = processed .. "$"
+        i = i + 1
+      end
+    else
+      processed = processed .. text:sub(i, i)
+      i = i + 1
+    end
+  end
+  adjust_positions(highlights, links, removals, pre_hl_count, pre_link_count)
+  return processed
+end
+
 --- Keep remaining HTML tags with a dim highlight (tags not handled by process_html_tags)
 --- Skips tags inside backtick-delimited code spans.
 ---@param text string
@@ -747,7 +1158,7 @@ end
 ---@return string? special_type Special type like "heading" if applicable
 ---@return string? list_marker List marker if applicable
 ---@return string? alert_type Alert type (NOTE, TIP, etc.) if applicable
-Markdown.render = function(text, repo_base_url, autolinks, ref_links)
+Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_map)
   local rendered_text = text:gsub("\r", "")
   -- Collapse multiple consecutive spaces (preserve leading whitespace)
   local leading_ws = rendered_text:match "^(%s*)" or ""
@@ -842,15 +1253,23 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
     end
   end
 
+  -- Strip hard line break marker (trailing backslash)
+  rendered_text = rendered_text:gsub("\\%s*$", "")
+
   -- Remove Obsidian inline comments (%%...%%)
   rendered_text = rendered_text:gsub("%%%%(.-)%%%%", "")
 
   -- Remove inline HTML comments (<!-- ... -->)
   rendered_text = rendered_text:gsub("<!%-%-.-%-*%-%->", "")
 
+  -- Escape backslash sequences before inline processing
+  local backslash_escapes
+  rendered_text, backslash_escapes = escape_backslashes(rendered_text)
+
   -- Process inline elements (embeds and wikilinks before standard links)
   rendered_text = process_embeds(rendered_text, highlights, links)
   rendered_text = process_wikilinks(rendered_text, highlights, links)
+  rendered_text = process_footnote_refs(rendered_text, footnote_map, highlights)
   rendered_text = process_links(rendered_text, highlights, links)
   rendered_text = process_reference_links(rendered_text, ref_links, highlights, links)
   repeat
@@ -865,10 +1284,20 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
   if autolinks and #autolinks > 0 then
     rendered_text = process_autolink_refs(rendered_text, autolinks, highlights, links)
   end
+  rendered_text = process_tags(rendered_text, highlights)
   rendered_text = process_paired_markers(rendered_text, "%*%*([^*]+)%*%*", "Bold", 2, highlights, links)
+  rendered_text = process_paired_markers(rendered_text, "%*([^*]+)%*", "Italic", 1, highlights, links)
+  rendered_text = process_underscore_emphasis(rendered_text, "Italic", highlights, links)
   rendered_text = process_paired_markers(rendered_text, "~~([^~]+)~~", "DiagnosticDeprecated", 2, highlights, links)
   rendered_text = process_paired_markers(rendered_text, "==([^=]+)==", "MdRenderHighlight", 2, highlights, links)
+  rendered_text = process_inline_math(rendered_text, "MdRenderMath", highlights, links)
   rendered_text = process_code_markers(rendered_text, "String", highlights, links)
+
+  -- Restore backslash-escaped characters (adjusts highlight/link positions)
+  rendered_text = restore_backslashes(rendered_text, backslash_escapes, highlights, links)
+
+  -- Decode HTML character references (&amp; &#123; &#x1F; etc.)
+  rendered_text = decode_html_entities(rendered_text, highlights, links)
 
   -- Add heading icon and highlight
   if heading_level then
@@ -907,6 +1336,60 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links)
   end
 
   return rendered_text, highlights, links, nil, list_marker
+end
+
+--- Parse footnote definitions from document lines.
+--- Returns ordered list of {label, text} and a label→number mapping.
+---@param lines string[]
+---@return {label: string, text: string}[] definitions
+---@return table<string, integer> label_to_number
+Markdown.parse_footnotes = function(lines)
+  local defs = {}
+  local label_to_num = {}
+  local current_label = nil
+  local current_parts = {}
+  local in_code = false
+
+  local function flush()
+    if current_label then
+      if not label_to_num[current_label] then
+        table.insert(defs, { label = current_label, text = table.concat(current_parts, " ") })
+        label_to_num[current_label] = #defs
+      end
+      current_label = nil
+      current_parts = {}
+    end
+  end
+
+  for _, line in ipairs(lines) do
+    if line:match "^```" then
+      in_code = not in_code
+    end
+    if in_code then goto continue end
+
+    local label, text = line:match "^%[%^([^%]]+)%]:%s+(.+)$"
+    if label then
+      flush()
+      current_label = label
+      current_parts = { text }
+    elseif current_label and line:match "^%s%s+" then
+      -- Continuation line (indented)
+      table.insert(current_parts, line:match "^%s+(.+)$" or "")
+    else
+      flush()
+    end
+    ::continue::
+  end
+  flush()
+
+  return defs, label_to_num
+end
+
+--- Check if a line is a footnote definition
+---@param line string
+---@return boolean
+Markdown.is_footnote_def = function(line)
+  return line:match "^%[%^[^%]]+%]:%s+" ~= nil
 end
 
 --- Parse reference link definitions from document lines

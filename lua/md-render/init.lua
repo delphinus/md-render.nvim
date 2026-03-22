@@ -80,6 +80,10 @@ end
 function M.setup_highlights()
   -- Obsidian ==highlight== marker
   vim.api.nvim_set_hl(0, "MdRenderHighlight", { bg = "#3b3600", fg = "#ffec80", default = true })
+  -- Obsidian #tag
+  vim.api.nvim_set_hl(0, "MdRenderTag", { link = "Label", default = true })
+  -- Inline/block math
+  vim.api.nvim_set_hl(0, "MdRenderMath", { link = "Special", default = true })
   M.setup_heading_highlights()
   M.setup_alert_highlights()
   M.setup_details_highlights()
