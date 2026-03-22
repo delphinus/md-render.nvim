@@ -1792,38 +1792,79 @@ function ContentBuilder:render_document(lines, opts)
     for _, def in ipairs(footnote_defs) do
       local num = footnote_map[def.label]
       local prefix = indent .. to_superscript(num) .. " "
+      local prefix_display_width = vim.fn.strdisplaywidth(prefix)
       local rendered_text, md_highlights, md_links =
         markdown.render(def.text, repo_base_url, autolinks, ref_links, footnote_map)
 
-      -- Shift highlights/links by prefix length
-      local prefix_len = #prefix
-      for _, hl in ipairs(md_highlights) do
-        hl.col = hl.col + prefix_len
-        hl.end_col = hl.end_col + prefix_len
-      end
-      for _, link in ipairs(md_links) do
-        link.col_start = link.col_start + prefix_len
-        link.col_end = link.col_end + prefix_len
-      end
-
       local full_text = prefix .. rendered_text
-      local line_hls = {}
-      table.insert(line_hls, { col = #indent, end_col = #prefix, hl = "Special" })
-      for _, hl in ipairs(md_highlights) do
-        table.insert(line_hls, hl)
-      end
-      table.insert(line_hls, { col = 0, end_col = -1, hl = "Comment" })
+      if vim.fn.strdisplaywidth(full_text) > max_width then
+        -- Wrap: use prefix on first line, spaces on continuation lines
+        local content_max_width = max_width - prefix_display_width
+        local wrapped_lines, line_starts = wrap_words(rendered_text, content_max_width)
+        local continuation = string.rep(" ", prefix_display_width)
 
-      self:add_line(full_text, line_hls)
+        -- Distribute highlights/links across wrapped lines (content_offset=0, no quote/list)
+        local per_line_hls = distribute_highlights(md_highlights, wrapped_lines, line_starts, "", "", 0, 0, 0)
+        local base_line = #self.lines
+        local link_entries = distribute_links(md_links, wrapped_lines, line_starts, "", "", 0, base_line, 0, 0)
 
-      local base_line = #self.lines - 1
-      for _, link in ipairs(md_links) do
-        table.insert(self.link_metadata, {
-          line = base_line,
-          col_start = link.col_start,
-          col_end = link.col_end,
-          url = link.url,
-        })
+        for idx, wline in ipairs(wrapped_lines) do
+          local line_prefix = idx == 1 and prefix or (indent .. continuation:sub(#indent + 1))
+          local actual_prefix = idx == 1 and prefix or continuation
+          local line_hls = {}
+          -- Shift highlights by prefix length
+          for _, hl in ipairs(per_line_hls[idx]) do
+            table.insert(line_hls, {
+              col = hl.col + #actual_prefix,
+              end_col = hl.end_col + #actual_prefix,
+              hl = hl.hl,
+            })
+          end
+          if idx == 1 then
+            table.insert(line_hls, { col = #indent, end_col = #prefix, hl = "Special" })
+          end
+          table.insert(line_hls, { col = 0, end_col = -1, hl = "Comment" })
+          self:add_line(line_prefix .. wline, line_hls)
+        end
+
+        -- Shift link entries by prefix length
+        for _, entry in ipairs(link_entries) do
+          local line_idx = entry.line - base_line
+          local actual_prefix = line_idx == 0 and prefix or continuation
+          entry.col_start = entry.col_start + #actual_prefix
+          entry.col_end = entry.col_end + #actual_prefix
+          table.insert(self.link_metadata, entry)
+        end
+      else
+        -- No wrapping needed
+        local prefix_len = #prefix
+        for _, hl in ipairs(md_highlights) do
+          hl.col = hl.col + prefix_len
+          hl.end_col = hl.end_col + prefix_len
+        end
+        for _, link in ipairs(md_links) do
+          link.col_start = link.col_start + prefix_len
+          link.col_end = link.col_end + prefix_len
+        end
+
+        local line_hls = {}
+        table.insert(line_hls, { col = #indent, end_col = #prefix, hl = "Special" })
+        for _, hl in ipairs(md_highlights) do
+          table.insert(line_hls, hl)
+        end
+        table.insert(line_hls, { col = 0, end_col = -1, hl = "Comment" })
+
+        self:add_line(full_text, line_hls)
+
+        local base_line = #self.lines - 1
+        for _, link in ipairs(md_links) do
+          table.insert(self.link_metadata, {
+            line = base_line,
+            col_start = link.col_start,
+            col_end = link.col_end,
+            url = link.url,
+          })
+        end
       end
     end
   end
