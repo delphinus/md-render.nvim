@@ -197,6 +197,7 @@ function MarkdownTable.parse(lines, repo_base_url, autolinks)
     alignments = alignments,
     rows = rows,
     col_widths = col_widths,
+    _raw_lines = lines,
   }
 end
 
@@ -397,15 +398,159 @@ function MarkdownTable.render(parsed_table, indent, max_width)
   table.insert(out_highlights, s_hls)
   table.insert(out_links, {})
 
-  -- Data rows
-  for _, row in ipairs(parsed_table.rows) do
-    local r_line, r_hls, r_links = build_row(row, false)
-    table.insert(out_lines, r_line)
-    table.insert(out_highlights, r_hls)
-    table.insert(out_links, r_links)
+  --- Build an empty row line with borders only (for image placeholder rows)
+  ---@return string line
+  ---@return MdRender.Highlight.Group[] highlights
+  local function build_empty_row()
+    local parts = {}
+    local hls = {}
+    local byte_pos = #indent
+
+    for col = 1, num_cols do
+      local sep = "│ "
+      table.insert(hls, { col = byte_pos, end_col = byte_pos + #sep, hl = "FloatBorder" })
+      byte_pos = byte_pos + #sep
+
+      local padding = string.rep(" ", col_widths[col])
+      byte_pos = byte_pos + #padding + 1
+      table.insert(parts, sep .. padding .. " ")
+    end
+
+    local trailing = "│"
+    table.insert(hls, { col = byte_pos, end_col = byte_pos + #trailing, hl = "FloatBorder" })
+    table.insert(parts, trailing)
+
+    return indent .. table.concat(parts), hls
   end
 
-  return out_lines, out_highlights, out_links
+  --- Check if a cell contains only an image reference ![alt](url)
+  ---@param cell MdRender.MarkdownTable.ParsedCell
+  ---@param raw_text string original cell text before markdown rendering
+  ---@return string? alt, string? url
+  local function cell_image(cell, raw_text)
+    local alt, url = raw_text:match "^!%[(.-)%]%((.-)%)$"
+    if alt and url then return alt, url end
+    return nil, nil
+  end
+
+  -- Collect raw cell texts for image detection
+  local raw_rows = {}
+  for i = 3, #(parsed_table._raw_lines or {}) do
+    local cells = split_row(parsed_table._raw_lines[i])
+    if cells then
+      local row = {}
+      for col = 1, #parsed_table.alignments do
+        local cell_text = cells[col] or ""
+        cell_text = cell_text:match "^%s*(.-)%s*$"
+        table.insert(row, cell_text)
+      end
+      table.insert(raw_rows, row)
+    end
+  end
+
+  -- Image placements to return
+  local out_image_placements = {}
+
+  -- Data rows
+  for row_idx, row in ipairs(parsed_table.rows) do
+    -- Check if any cell in this row is an image
+    local row_has_images = false
+    local row_images = {} -- col -> {alt, url, resolved, img_w, img_h}
+    if #raw_rows >= row_idx then
+      local image_mod = require "md-render.image"
+      if image_mod.supports_kitty() then
+        local buf_dir = vim.fn.expand("%:p:h")
+        for col = 1, num_cols do
+          local raw = raw_rows[row_idx][col]
+          if raw then
+            local alt, url = cell_image(row[col], raw)
+            if alt and url then
+              local resolved = image_mod.resolve(url, buf_dir)
+              if resolved then
+                local img_w, img_h = image_mod.image_dimensions(resolved)
+                if img_w and img_h then
+                  -- Scale to fit within column width
+                  local display_cols, display_rows = image_mod.calc_display_size(img_w, img_h, col_widths[col], 15)
+                  row_images[col] = {
+                    alt = alt, url = url, resolved = resolved,
+                    display_cols = display_cols, display_rows = display_rows,
+                  }
+                  row_has_images = true
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+
+    if row_has_images then
+      -- Calculate max image height across all cells in this row
+      local max_img_rows = 0
+      for _, img in pairs(row_images) do
+        max_img_rows = math.max(max_img_rows, img.display_rows)
+      end
+
+      -- Build the label row (alt text)
+      local label_cells = {}
+      for col = 1, num_cols do
+        if row_images[col] then
+          local label = "🖼 " .. row_images[col].alt
+          label_cells[col] = {
+            text = label,
+            highlights = { { col = 0, end_col = #label, hl = "Comment" } },
+            links = {},
+          }
+        else
+          label_cells[col] = row[col]
+        end
+      end
+      local label_line, label_hls, label_links = build_row(label_cells, false)
+      table.insert(out_lines, label_line)
+      table.insert(out_highlights, label_hls)
+      table.insert(out_links, label_links)
+
+      -- Add placeholder rows for images
+      local img_start_line_idx = #out_lines  -- 0-indexed line where images start
+      for _ = 1, max_img_rows do
+        local empty_line, empty_hls = build_empty_row()
+        table.insert(out_lines, empty_line)
+        table.insert(out_highlights, empty_hls)
+        table.insert(out_links, {})
+      end
+
+      -- Record image placements (positions relative to table start)
+      for col, img in pairs(row_images) do
+        -- Calculate the byte offset of this column's content area
+        local col_byte_offset = #indent
+        for c = 1, col - 1 do
+          col_byte_offset = col_byte_offset + 3 + col_widths[c] -- "│ " + width + " "
+        end
+        col_byte_offset = col_byte_offset + 3 -- "│ " for this column
+
+        table.insert(out_image_placements, {
+          resolved = img.resolved,
+          line_offset = img_start_line_idx, -- relative to table start in out_lines
+          col = col_byte_offset,
+          rows = img.display_rows,
+          cols = img.display_cols,
+        })
+      end
+
+      -- Add separator after image row
+      local sep_line, sep_hls = build_separator()
+      table.insert(out_lines, sep_line)
+      table.insert(out_highlights, sep_hls)
+      table.insert(out_links, {})
+    else
+      local r_line, r_hls, r_links = build_row(row, false)
+      table.insert(out_lines, r_line)
+      table.insert(out_highlights, r_hls)
+      table.insert(out_links, r_links)
+    end
+  end
+
+  return out_lines, out_highlights, out_links, out_image_placements
 end
 
 return MarkdownTable
