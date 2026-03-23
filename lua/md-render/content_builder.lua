@@ -1751,8 +1751,19 @@ function ContentBuilder:render_document(lines, opts)
               local img_start_line = #self.lines
               -- Center the image horizontally
               local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
-              for _ = 1, display_rows do
-                self:add_line(indent)
+              -- Show placeholder while the image is loading
+              local placeholder_msg = "Loading image..."
+              local placeholder_row = math.floor(display_rows / 2)
+              for r = 1, display_rows do
+                if r == placeholder_row + 1 then
+                  local pad = math.max(0, math.floor((display_cols - vim.fn.strdisplaywidth(placeholder_msg)) / 2))
+                  local placeholder_line = indent .. string.rep(" ", img_col) .. string.rep(" ", pad) .. placeholder_msg
+                  self:add_line(placeholder_line, {
+                    { col = 0, end_col = #placeholder_line, hl = "Comment" },
+                  })
+                else
+                  self:add_line(indent)
+                end
               end
               table.insert(self.image_placements, {
                 path = resolved,
