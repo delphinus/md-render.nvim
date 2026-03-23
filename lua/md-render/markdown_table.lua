@@ -269,7 +269,7 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     end
     local total = overhead + content_sum
 
-    if has_image_cells then
+    if has_image_cells and max_width < 1e6 then
       -- Expand columns to fill max_width for better image display
       local budget = max_width - overhead
       if budget > content_sum then
