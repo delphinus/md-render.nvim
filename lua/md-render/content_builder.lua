@@ -799,6 +799,7 @@ local HTML_SKIP_TAGS = {
   details = true, summary = true,
   hr = true,
   figure = true,
+  dl = true,
 }
 
 --- Preprocess lines to handle multi-line HTML tags.
@@ -1024,6 +1025,7 @@ function ContentBuilder:render_document(lines, opts)
   local skip_details_body = false
   local in_qiita_note = false
   local qiita_note_type = nil
+  local in_dl = false
 
   --- Flush accumulated table lines
   local function flush_table()
@@ -1385,6 +1387,75 @@ function ContentBuilder:render_document(lines, opts)
 
       if line:match "^%s*<figure[^>]*>%s*$" then
         in_figure = true
+        goto continue
+      end
+    end
+
+    -- Handle <dl> definition lists (outside code blocks)
+    if not in_code_block and not in_callout_code_block then
+      if in_dl then
+        if line:match "^%s*</dl>%s*$" then
+          in_dl = false
+          goto continue
+        end
+        -- Parse <dt> and <dd> elements from the line
+        -- A line may contain <dt>term</dt><dd>description patterns
+        flush_table()
+        local rest = line
+        -- Strip standalone <dl> opening if present
+        rest = rest:gsub("^%s*<dl>%s*", "")
+        if rest:match "^%s*$" then goto continue end
+        while rest and rest ~= "" do
+          -- Try to match <dt>...</dt> or <dt>...
+          local dt_content = rest:match "^%s*<dt>(.-)</dt>"
+          if dt_content then
+            rest = rest:match "^%s*<dt>.-</dt>%s*(.*)" or ""
+            -- Strip inline HTML tags for rendering, but process through markdown
+            local dt_rendered, dt_hls, dt_links = markdown.render(dt_content, repo_base_url, autolinks, ref_links)
+            -- Add Bold highlight
+            table.insert(dt_hls, { col = 0, end_col = #dt_rendered, hl = "Bold" })
+            local dt_lines_before = #self.lines
+            self:add_simple_markdown(dt_rendered, dt_hls, dt_links, indent)
+            if in_details and details_summary_rendered and not skip_details_body then
+              apply_details_body_prefix(dt_lines_before, #self.lines)
+            end
+            lines_shown = lines_shown + 1
+          end
+          -- Try to match <dd>...</dd> or <dd>... (may not have closing tag)
+          local dd_content = rest:match "^%s*<dd>(.-)</dd>"
+          if dd_content then
+            rest = rest:match "^%s*<dd>.-</dd>%s*(.*)" or ""
+          else
+            dd_content = rest:match "^%s*<dd>(.*)"
+            if dd_content then
+              rest = ""
+            end
+          end
+          if dd_content and dd_content ~= "" then
+            local dd_indent = indent .. "  "
+            local dd_rendered, dd_hls, dd_links = markdown.render(dd_content, repo_base_url, autolinks, ref_links)
+            local dd_lines_before = #self.lines
+            if vim.fn.strdisplaywidth(dd_rendered) > max_width - 2 then
+              self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, max_width - 2, "")
+            else
+              self:add_simple_markdown(dd_rendered, dd_hls, dd_links, dd_indent)
+            end
+            if in_details and details_summary_rendered and not skip_details_body then
+              apply_details_body_prefix(dd_lines_before, #self.lines)
+            end
+            lines_shown = lines_shown + (#self.lines - dd_lines_before)
+          end
+          -- If nothing matched, skip rest to avoid infinite loop
+          if not dt_content and not dd_content then
+            break
+          end
+        end
+        goto continue
+      end
+
+      if line:match "^%s*<dl[^>]*>" then
+        flush_table()
+        in_dl = true
         goto continue
       end
     end

@@ -232,6 +232,13 @@ function MarkdownTable.render(parsed_table, indent, max_width)
   local num_cols = #parsed_table.col_widths
   local col_widths = vim.deepcopy(parsed_table.col_widths)
 
+  --- Strip leading HTML comments from text
+  ---@param text string
+  ---@return string
+  local function strip_html_comments(text)
+    return text:gsub("<!%-%-.-%-%->" , ""):match "^%s*(.-)%s*$"
+  end
+
   -- Check if any data row contains image cells
   local has_image_cells = false
   if parsed_table._raw_lines then
@@ -239,7 +246,7 @@ function MarkdownTable.render(parsed_table, indent, max_width)
       local cells = split_row(parsed_table._raw_lines[i])
       if cells then
         for _, cell_text in ipairs(cells) do
-          local trimmed = cell_text:match "^%s*(.-)%s*$"
+          local trimmed = strip_html_comments(cell_text)
           if trimmed and trimmed:match "^!%[.-%]%(.-%)" then
             has_image_cells = true
             break
@@ -479,11 +486,13 @@ function MarkdownTable.render(parsed_table, indent, max_width)
   end
 
   --- Check if a cell contains only an image reference ![alt](url)
+  --- Also handles cells with leading HTML comments like <!-- ... -->![alt](url)
   ---@param cell MdRender.MarkdownTable.ParsedCell
   ---@param raw_text string original cell text before markdown rendering
   ---@return string? alt, string? url
   local function cell_image(cell, raw_text)
-    local alt, url = raw_text:match "^!%[(.-)%]%((.-)%)$"
+    local stripped = strip_html_comments(raw_text)
+    local alt, url = stripped:match "^!%[(.-)%]%((.-)%)$"
     if alt and url then return alt, url end
     return nil, nil
   end
