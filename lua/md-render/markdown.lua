@@ -941,6 +941,8 @@ local HTML_TAG_HIGHLIGHTS = {
   kbd = "Special",
   sub = false,
   sup = false,
+  figure = false,
+  figcaption = "Comment",
 }
 
 --- Process HTML tags: <a href> links, <img> images, and paired inline tags

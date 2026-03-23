@@ -798,6 +798,7 @@ end
 local HTML_SKIP_TAGS = {
   details = true, summary = true,
   hr = true,
+  figure = true,
 }
 
 --- Preprocess lines to handle multi-line HTML tags.
@@ -1017,6 +1018,8 @@ function ContentBuilder:render_document(lines, opts)
   local details_depth = 0
   local in_details_summary = false
   local details_summary_parts = {}
+  local in_figure = false
+  local figure_caption = nil
   local skip_details_body = false
 
   --- Flush accumulated table lines
@@ -1342,6 +1345,44 @@ function ContentBuilder:render_document(lines, opts)
           render_details_summary "Details"
           -- Fall through to render this line as body content
         end
+      end
+    end
+
+    -- Handle <figure> blocks (outside code blocks)
+    -- Lines inside <figure> pass through normally (e.g. <img> lines are rendered
+    -- by the standalone image detector below). Only the <figure>, </figure>, and
+    -- <figcaption> wrapper tags are consumed here.
+    if not in_code_block and not in_callout_code_block then
+      if in_figure then
+        if line:match "^%s*</figure>%s*$" then
+          in_figure = false
+          -- Render figcaption centered (captured during figure body processing)
+          if figure_caption then
+            local caption_text = figure_caption
+            local caption_width = vim.api.nvim_strwidth(caption_text)
+            local pad = math.max(0, math.floor((max_width - caption_width) / 2) - #indent)
+            local byte_start = #indent + pad
+            local padded_caption = indent .. string.rep(" ", pad) .. caption_text
+            self:add_line(padded_caption, {
+              { col = byte_start, end_col = byte_start + #caption_text, hl = "Comment" },
+            })
+            lines_shown = lines_shown + 1
+            figure_caption = nil
+          end
+          goto continue
+        end
+        -- Extract <figcaption> content for rendering when </figure> is reached
+        local cap = line:match "^%s*<figcaption>(.-)</figcaption>%s*$"
+        if cap and cap:match "%S" then
+          figure_caption = cap
+          goto continue
+        end
+        -- Other lines inside <figure> (e.g. <img>) fall through to normal processing
+      end
+
+      if line:match "^%s*<figure[^>]*>%s*$" then
+        in_figure = true
+        goto continue
       end
     end
 
