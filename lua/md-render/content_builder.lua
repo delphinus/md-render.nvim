@@ -825,6 +825,7 @@ local function is_block_start(line)
   if line:match "^%s*!%[" then return true end
   if line:match "^%$%$$" then return true end
   if line:match "^%%%%" then return true end
+  if line:match "^:::" then return true end
   return false
 end
 
@@ -1021,6 +1022,8 @@ function ContentBuilder:render_document(lines, opts)
   local in_figure = false
   local figure_caption = nil
   local skip_details_body = false
+  local in_qiita_note = false
+  local qiita_note_type = nil
 
   --- Flush accumulated table lines
   local function flush_table()
@@ -1526,6 +1529,56 @@ function ContentBuilder:render_document(lines, opts)
 
     local lines_before = #self.lines
 
+    -- Handle Qiita :::note / :::message blocks (outside code blocks)
+    if not in_code_block and not in_math_block then
+      -- Closing :::
+      if in_qiita_note and line:match "^:::$" then
+        in_qiita_note = false
+        qiita_note_type = nil
+        goto continue
+      end
+
+      -- Opening :::note or :::message
+      local note_type = line:match "^:::note%s+(%a+)%s*$"
+        or (line:match "^:::note%s*$" and "info")
+        or line:match "^:::message%s+(%a+)%s*$"
+        or (line:match "^:::message%s*$" and "info")
+      if note_type then
+        in_qiita_note = true
+        -- Map Qiita note types to existing alert style keys
+        local qiita_map = {
+          info  = { style = "NOTE",    icon = "󰋽", label = "Note" },
+          warn  = { style = "WARNING", icon = "󰀪", label = "Warning" },
+          alert = { style = "CAUTION", icon = "󰳦", label = "Caution" },
+        }
+        local qm = qiita_map[note_type] or qiita_map.info
+        qiita_note_type = qm.style
+
+        local icon = pad_icon(qm.icon)
+        local header_text = indent .. "│ " .. icon .. " " .. qm.label
+        self:add_line(header_text, {
+          { col = #indent, end_col = #indent + #"│ ", hl = "FloatBorder" },
+          { col = #indent + #"│ ", end_col = #header_text, hl = "MdRenderAlert" .. (qiita_note_type:sub(1, 1) .. qiita_note_type:sub(2):lower()) },
+        })
+        self:apply_alert_styling(lines_before, #self.lines, qiita_note_type, true)
+        lines_shown = lines_shown + 1
+        goto continue
+      end
+
+      -- Body lines inside :::note block
+      if in_qiita_note then
+        -- Render as blockquote-style content with alert styling
+        local qn_line = "> " .. line
+        local alert_type_ret = self:add_markdown_line(qn_line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
+        local lines_after = #self.lines
+        if not alert_type_ret then
+          self:apply_alert_styling(lines_before, lines_after, qiita_note_type, false)
+        end
+        lines_shown = lines_shown + (lines_after - lines_before)
+        goto continue
+      end
+    end
+
     if not in_code_block and line:match "^%$%$$" then
       if not in_math_block then
         in_math_block = true
@@ -1542,7 +1595,25 @@ function ContentBuilder:render_document(lines, opts)
     elseif line:match "^```" then
       if not in_code_block then
         in_code_block = true
-        code_block_lang = line:match "^```(%S+)" or nil
+        local info_string = line:match "^```(%S+)" or nil
+        code_block_lang = info_string
+        -- Split lang:filename (Qiita-style code block filename)
+        local code_block_filename = nil
+        if info_string and info_string:find(":", 1, true) then
+          local lang_part, file_part = info_string:match "^([^:]*):(.+)$"
+          if file_part then
+            code_block_filename = file_part
+            code_block_lang = (lang_part ~= "") and lang_part or nil
+          end
+        end
+        -- Render filename header above code block
+        if code_block_filename then
+          local fname_line = indent .. "📄 " .. code_block_filename
+          self:add_line(fname_line, {
+            { col = 0, end_col = #fname_line, hl = "Comment" },
+          })
+          lines_shown = lines_shown + 1
+        end
         code_block_start = #self.lines
         code_source_lines = {}
         code_block_id = src_idx
@@ -1610,7 +1681,22 @@ function ContentBuilder:render_document(lines, opts)
         if stripped:match "^```" then
           if not in_callout_code_block then
             in_callout_code_block = true
-            callout_code_lang = stripped:match "^```(%S+)" or nil
+            local callout_info = stripped:match "^```(%S+)" or nil
+            callout_code_lang = callout_info
+            -- Split lang:filename (Qiita-style)
+            if callout_info and callout_info:find(":", 1, true) then
+              local lang_part, file_part = callout_info:match "^([^:]*):(.+)$"
+              if file_part then
+                callout_code_lang = (lang_part ~= "") and lang_part or nil
+                local fname_line = indent .. "│ 📄 " .. file_part
+                self:add_line(fname_line, {
+                  { col = #indent, end_col = #indent + #"│ ", hl = "FloatBorder" },
+                  { col = #indent + #"│ ", end_col = #fname_line, hl = "Comment" },
+                })
+                self:apply_alert_styling(lines_before, #self.lines, current_alert_type, false)
+                lines_shown = lines_shown + 1
+              end
+            end
             callout_code_prefix = indent .. "│ "
             callout_code_start = #self.lines
             callout_code_source_lines = {}
