@@ -38,6 +38,8 @@
 ---@field col integer 0-indexed column offset
 ---@field rows integer display height in cells
 ---@field cols integer display width in cells
+---@field img_w? integer source image width in pixels
+---@field img_h? integer source image height in pixels
 ---@field animated? boolean true if animated GIF
 ---@field src_url? string original URL for async download
 
@@ -1684,16 +1686,20 @@ function ContentBuilder:render_document(lines, opts)
             local is_animated = false
             local src_url = image.is_url(img_path) and img_path or nil
 
+            -- Standalone image: use full width and center
+            local img_max_cols = max_width - 2
+
+            local orig_img_w, orig_img_h
             if resolved then
-              local img_w, img_h = image.image_dimensions(resolved)
-              if img_w and img_h then
-                display_cols, display_rows = image.calc_display_size(img_w, img_h, max_width - 4, 20)
+              orig_img_w, orig_img_h = image.image_dimensions(resolved)
+              if orig_img_w and orig_img_h then
+                display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
                 is_animated = image.is_animated_gif(resolved)
               end
             elseif src_url then
               -- URL not yet cached: use estimated placeholder size
-              display_cols = math.floor((max_width - 4) * 0.8)
-              display_rows = 12
+              display_cols = math.floor(img_max_cols * 0.8)
+              display_rows = 15
             end
 
             if display_cols and display_rows then
@@ -1702,15 +1708,19 @@ function ContentBuilder:render_document(lines, opts)
                 { col = 0, end_col = #header, hl = "Comment" },
               })
               local img_start_line = #self.lines
+              -- Center the image horizontally
+              local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
               for _ = 1, display_rows do
                 self:add_line(indent)
               end
               table.insert(self.image_placements, {
                 path = resolved,
                 line = img_start_line,
-                col = #indent,
+                col = img_col,
                 rows = display_rows,
                 cols = display_cols,
+                img_w = orig_img_w,
+                img_h = orig_img_h,
                 animated = is_animated,
                 src_url = src_url,  -- for async download
               })

@@ -703,36 +703,79 @@ end
 ---@param display_cols integer
 ---@param display_rows integer
 ---@param anim_path? string  if set, use a=T for animated GIF display
-function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_path)
+---@param img_w? integer  source image width in pixels (for cropping)
+---@param img_h? integer  source image height in pixels (for cropping)
+function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_path, img_w, img_h)
   if not M.supports_kitty() then return end
   if not vim.api.nvim_win_is_valid(win) then return end
 
   local win_pos = vim.api.nvim_win_get_position(win)
 
-  -- Check if the image row is within visible window area
+  -- Check if the image is within visible window area
   local win_height = vim.api.nvim_win_get_height(win)
   local topline = vim.fn.getwininfo(win)[1].topline - 1  -- 0-indexed
 
-  if row < topline or row >= topline + win_height then return end
+  -- Image entirely above or below visible area
+  local img_end_row = row + display_rows - 1
+  if img_end_row < topline or row >= topline + win_height then return end
 
   -- Adjust screen position for scroll offset
   local visual_row = row - topline
-  local screen_row = win_pos[1] + visual_row + 2
   local screen_col = win_pos[2] + col + 2
+
+  -- Crop to visible area using source rectangle (no scaling distortion)
+  local crop_params = ""
+
+  -- Top crop: image starts above visible area
+  if visual_row < 0 then
+    local hidden_rows = -visual_row
+    if img_h then
+      local crop_y = math.floor(img_h * hidden_rows / display_rows)
+      crop_params = crop_params .. ",y=" .. crop_y
+    end
+    display_rows = display_rows - hidden_rows
+    visual_row = 0
+  end
+
+  local screen_row = win_pos[1] + visual_row + 2
+
+  -- Bottom crop: image extends below visible area
+  local visible_rows = win_height - visual_row
+  if visible_rows <= 0 then return end
+  if display_rows > visible_rows and img_h then
+    -- When top is also cropped, calculate h relative to remaining source region
+    local remaining_h = img_h
+    local existing_y = crop_params:match(",y=(%d+)")
+    if existing_y then
+      remaining_h = img_h - tonumber(existing_y)
+    end
+    local crop_h = math.floor(remaining_h * visible_rows / display_rows)
+    crop_params = crop_params .. ",h=" .. crop_h
+    display_rows = visible_rows
+  end
+
+  local win_width = vim.api.nvim_win_get_width(win)
+  local visible_cols = win_width - col
+  if visible_cols <= 0 then return end
+  if display_cols > visible_cols and img_w then
+    local crop_w = math.floor(img_w * visible_cols / display_cols)
+    crop_params = crop_params .. ",w=" .. crop_w
+    display_cols = visible_cols
+  end
 
   local message
   if anim_path then
     -- Animated GIF: transmit and display in one step to preserve animation
     local b64_path = vim.base64.encode(anim_path)
     message = string.format(
-      "\x1b_Ga=T,f=100,t=f,i=%d,c=%d,r=%d,C=1,q=2;%s\x1b\\",
-      image_id, display_cols, display_rows, b64_path
+      "\x1b_Ga=T,f=100,t=f,i=%d,c=%d,r=%d%s,C=1,q=2;%s\x1b\\",
+      image_id, display_cols, display_rows, crop_params, b64_path
     )
   else
     -- Static: put a previously transmitted image
     message = string.format(
-      "\x1b_Ga=p,i=%d,c=%d,r=%d,C=1,q=2\x1b\\",
-      image_id, display_cols, display_rows
+      "\x1b_Ga=p,i=%d,c=%d,r=%d%s,C=1,q=2\x1b\\",
+      image_id, display_cols, display_rows, crop_params
     )
   end
 

@@ -351,6 +351,35 @@ function M.setup_images(win, content)
     autocmd_ids = {},
   }
 
+  -- Redraw all images (called after redraw! to re-place all at once)
+  local function redraw_images()
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+    vim.cmd("redraw!")
+    for _, placement in ipairs(state.placements) do
+      local anim = state.anims[placement.path]
+      if anim then
+        local id = anim.frame_ids[anim.current]
+        if id then
+          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+        end
+      else
+        local id = state.image_ids[placement.path]
+        if id then
+          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+        end
+      end
+    end
+  end
+
+  local function schedule_redraw()
+    if state.redraw_timer then
+      state.redraw_timer:stop()
+    end
+    state.redraw_timer = vim.defer_fn(function()
+      redraw_images()
+    end, 50)
+  end
+
   --- Process a single placement: download (if URL), convert, transmit, and display.
   ---@param placement MdRender.ImagePlacement
   local function process_placement(placement)
@@ -365,6 +394,8 @@ function M.setup_images(win, content)
       local img_w, img_h = image.image_dimensions(path)
       if img_w and img_h then
         placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
+        placement.img_w = img_w
+        placement.img_h = img_h
       end
 
       if placement.animated then
@@ -387,24 +418,22 @@ function M.setup_images(win, content)
             end
             anim.current = anim.current % #anim.frame_ids + 1
             image.put_image(anim.frame_ids[anim.current], state.win,
-              placement.line, placement.col, placement.cols, placement.rows)
+              placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
           end))
         end)
       else
         image.transmit_image_async(path, function(id)
           if not id or not vim.api.nvim_win_is_valid(state.win) then return end
           state.image_ids[path] = id
-          vim.cmd("redraw!")
-          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
+          -- Use schedule_redraw to re-place ALL images together after redraw!
+          schedule_redraw()
         end)
       end
     end
 
     if placement.path then
-      -- Local file or already cached URL
       on_path_ready(placement.path)
     elseif placement.src_url then
-      -- URL not yet cached: download asynchronously
       image.download_async(placement.src_url, function(path)
         on_path_ready(path)
       end)
@@ -414,36 +443,6 @@ function M.setup_images(win, content)
   -- Phase 1: Kick off async processing for all placements
   for _, placement in ipairs(state.placements) do
     process_placement(placement)
-  end
-
-  -- Phase 2: Display after a short delay to let TUI settle
-  local function redraw_images()
-    if not vim.api.nvim_win_is_valid(state.win) then return end
-    vim.cmd("redraw!")
-    for _, placement in ipairs(state.placements) do
-      local anim = state.anims[placement.path]
-      if anim then
-        -- Animated: show current frame
-        local id = anim.frame_ids[anim.current]
-        if id then
-          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
-        end
-      else
-        local id = state.image_ids[placement.path]
-        if id then
-          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows)
-        end
-      end
-    end
-  end
-
-  local function schedule_redraw()
-    if state.redraw_timer then
-      state.redraw_timer:stop()
-    end
-    state.redraw_timer = vim.defer_fn(function()
-      redraw_images()
-    end, 50)
   end
 
   -- Initial display of already-cached images
