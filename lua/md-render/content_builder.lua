@@ -992,6 +992,7 @@ function ContentBuilder:render_document(lines, opts)
   local code_block_has_truncation = false
   local prev_was_heading = false
   local prev_was_hr = false
+  local prev_rendered_blank = false
   local prev_list_marker_type = nil
   local lines_shown = 0
   local table_buf = {}
@@ -1567,6 +1568,11 @@ function ContentBuilder:render_document(lines, opts)
           goto continue
         end
       end
+
+      -- Collapse consecutive blank lines into one (e.g. after skipping reference link definitions)
+      if prev_rendered_blank then
+        goto continue
+      end
     end
 
     -- Ensure exactly one blank line before headings (except the first content)
@@ -1995,6 +2001,7 @@ function ContentBuilder:render_document(lines, opts)
     lines_shown = lines_shown + lines_added
 
     prev_was_heading = is_heading
+    prev_rendered_blank = is_blank
     if not is_blank then
       prev_list_marker_type = markdown.list_marker_type(line)
     end
