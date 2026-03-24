@@ -1976,11 +1976,34 @@ function ContentBuilder:render_document(lines, opts)
           end
         end
 
+        -- Skip blank blockquote lines at callout boundaries (after header, before end)
+        if not handled and current_alert_type and line:match "^>%s*$" then
+          local should_skip = prev_was_heading
+          if not should_skip then
+            local found_next = false
+            for k = src_idx + 1, #lines do
+              local kl = lines[k]
+              if not kl:match "^%s*$" then
+                should_skip = not kl:match "^>"
+                found_next = true
+                break
+              end
+            end
+            if not found_next then
+              should_skip = true -- end of document = callout ends
+            end
+          end
+          if should_skip then
+            handled = true
+          end
+        end
+
         if not handled then
           local alert_type, fold_mod = self:add_markdown_line(line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
           local lines_after = #self.lines
           if alert_type then
             current_alert_type = alert_type
+            is_heading = true -- suppress blank line after header (like heading)
 
             if fold_mod then
               local is_collapsed
