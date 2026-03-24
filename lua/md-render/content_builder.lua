@@ -1530,8 +1530,13 @@ function ContentBuilder:render_document(lines, opts)
       end
     end
 
+    -- Collapse consecutive rendered blank lines (outside regular code blocks)
+    if not in_code_block and is_blank and prev_rendered_blank then
+      goto continue
+    end
+
     -- Skip blank lines adjacent to headings (outside code blocks)
-    if not in_code_block and is_blank then
+    if not in_code_block and not in_callout_code_block and is_blank then
       local skip = prev_was_heading or prev_was_hr
       if not skip then
         for k = src_idx + 1, #lines do
@@ -1543,6 +1548,9 @@ function ContentBuilder:render_document(lines, opts)
             skip = lines[k]:match "^#+%s+" ~= nil
             if not skip then
               skip = is_thematic_break(lines[k])
+            end
+            if not skip then
+              skip = lines[k]:match "^:::$" ~= nil
             end
             if not skip and not lines[k]:match "^[#>%-%*`|%d]" then
               local kk = lines[k + 1]
@@ -1570,11 +1578,6 @@ function ContentBuilder:render_document(lines, opts)
         if next_marker_type and next_marker_type == prev_list_marker_type then
           goto continue
         end
-      end
-
-      -- Collapse consecutive blank lines into one (e.g. after skipping reference link definitions)
-      if prev_rendered_blank then
-        goto continue
       end
     end
 
@@ -1615,6 +1618,8 @@ function ContentBuilder:render_document(lines, opts)
       if in_qiita_note and line:match "^:::$" then
         in_qiita_note = false
         qiita_note_type = nil
+        current_alert_type = nil
+        prev_rendered_blank = false
         goto continue
       end
 
@@ -1642,20 +1647,33 @@ function ContentBuilder:render_document(lines, opts)
         })
         self:apply_alert_styling(lines_before, #self.lines, qiita_note_type, true)
         lines_shown = lines_shown + 1
+        prev_rendered_blank = false
+        prev_was_heading = true -- suppress blank line after header (like heading)
+        prev_list_marker_type = nil
         goto continue
       end
 
       -- Body lines inside :::note block
       if in_qiita_note then
-        -- Render as blockquote-style content with alert styling
-        local qn_line = "> " .. line
-        local alert_type_ret = self:add_markdown_line(qn_line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
-        local lines_after = #self.lines
-        if not alert_type_ret then
-          self:apply_alert_styling(lines_before, lines_after, qiita_note_type, false)
+        -- Code blocks inside Qiita notes: transform to callout format
+        -- and fall through to the callout code block handler below
+        if in_callout_code_block or line:match "^```" then
+          line = "> " .. line
+          current_alert_type = qiita_note_type
+        else
+          -- Render as blockquote-style content with alert styling
+          local qn_line = "> " .. line
+          local alert_type_ret = self:add_markdown_line(qn_line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
+          local lines_after = #self.lines
+          if not alert_type_ret then
+            self:apply_alert_styling(lines_before, lines_after, qiita_note_type, false)
+          end
+          lines_shown = lines_shown + (lines_after - lines_before)
+          prev_rendered_blank = is_blank
+          prev_was_heading = false
+          prev_list_marker_type = nil
+          goto continue
         end
-        lines_shown = lines_shown + (lines_after - lines_before)
-        goto continue
       end
     end
 
@@ -2003,10 +2021,15 @@ function ContentBuilder:render_document(lines, opts)
     local lines_added = #self.lines - lines_before
     lines_shown = lines_shown + lines_added
 
-    prev_was_heading = is_heading
-    prev_rendered_blank = is_blank
-    if not is_blank then
-      prev_list_marker_type = markdown.list_marker_type(line)
+    -- Only update rendered-state tracking when lines were actually added;
+    -- code fence open/close inside callout code blocks produce no output
+    -- and must not reset prev_rendered_blank.
+    if lines_added > 0 then
+      prev_was_heading = is_heading
+      prev_rendered_blank = is_blank
+      if not is_blank then
+        prev_list_marker_type = markdown.list_marker_type(line)
+      end
     end
 
     if lines_shown >= max_lines then
