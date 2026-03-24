@@ -444,8 +444,8 @@ local function distribute_highlights(md_highlights, wrapped_lines, line_starts, 
       if hl.end_col <= content_offset and hl.hl ~= "FloatBorder" then
         if idx == 1 then
           table.insert(line_hls, {
-            col = #indent + #quote_prefix + hl.col,
-            end_col = #indent + #quote_prefix + hl.end_col,
+            col = #indent + hl.col,
+            end_col = #indent + hl.end_col,
             hl = hl.hl,
           })
         end
