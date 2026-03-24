@@ -1535,7 +1535,10 @@ function ContentBuilder:render_document(lines, opts)
       local skip = prev_was_heading or prev_was_hr
       if not skip then
         for k = src_idx + 1, #lines do
-          if not lines[k]:match "^%s*$" then
+          -- Skip blank lines, reference link definitions, and footnote definitions (not rendered)
+          if not lines[k]:match "^%s*$"
+            and not markdown.is_reference_link_def(lines[k])
+            and not markdown.is_footnote_def(lines[k]) then
             -- Check ATX heading or setext heading (text followed by === or ---)
             skip = lines[k]:match "^#+%s+" ~= nil
             if not skip then
