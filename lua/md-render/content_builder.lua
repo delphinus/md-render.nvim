@@ -125,7 +125,7 @@ end
 local function detect_urls_in_code_line(self, raw_line, prefix_len, content_byte_end)
   local pos = 1
   while true do
-    local ms, me = raw_line:find("https?://[^%s%)<>]+", pos)
+    local ms, me = raw_line:find("https?://[^%s%)<>\"]+", pos)
     if not ms then break end
     local url = raw_line:sub(ms, me):gsub("[.,;:!?*~]+$", "")
     local col_start = prefix_len + ms - 1
