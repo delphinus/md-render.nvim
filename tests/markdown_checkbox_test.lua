@@ -885,6 +885,65 @@ test("html block comment: multi-line comment is skipped", function()
   assert_eq(has_after, true, "html multi comment: after should show")
 end)
 
+test("link with inline code: underline covers full text", function()
+  local Markdown = require "md-render.markdown"
+  local text, highlights, links = Markdown.render("[`async.wrap`](#31-asyncwrap)")
+  assert_eq(text, "async.wrap", "code-in-link: text should strip backticks and link syntax")
+  -- Find Underlined highlight
+  local underline
+  for _, hl in ipairs(highlights) do
+    if hl.hl == "Underlined" then underline = hl end
+  end
+  assert_eq(underline ~= nil, true, "code-in-link: should have Underlined highlight")
+  if underline then
+    assert_eq(underline.col, 0, "code-in-link: underline col should be 0")
+    assert_eq(underline.end_col, #text, "code-in-link: underline end_col should cover full text")
+  end
+  -- Link should also cover full text
+  assert_eq(#links, 1, "code-in-link: should have 1 link")
+  if #links >= 1 then
+    assert_eq(links[1].col_start, 0, "code-in-link: link col_start should be 0")
+    assert_eq(links[1].col_end, #text, "code-in-link: link col_end should cover full text")
+  end
+end)
+
+test("reference link with inline code: underline covers full text", function()
+  local Markdown = require "md-render.markdown"
+  local ref_links = { ["vim.system"] = "https://neovim.io/doc/user/lua.html#vim.system()" }
+  local text, highlights, links = Markdown.render("[`vim.system`][vim.system]", nil, nil, ref_links)
+  assert_eq(text, "vim.system", "ref-code-in-link: text should strip backticks and link syntax")
+  local underline
+  for _, hl in ipairs(highlights) do
+    if hl.hl == "Underlined" then underline = hl end
+  end
+  assert_eq(underline ~= nil, true, "ref-code-in-link: should have Underlined highlight")
+  if underline then
+    assert_eq(underline.col, 0, "ref-code-in-link: underline col should be 0")
+    assert_eq(underline.end_col, #text, "ref-code-in-link: underline end_col should cover full text")
+  end
+end)
+
+test("multiple code spans with link: underline position correct", function()
+  local Markdown = require "md-render.markdown"
+  local input = "`sleep` text [`:cmd`](https://example.com) text `0` text [`target.func`](#section) end"
+  local text, highlights, links = Markdown.render(input)
+  -- Find the Underlined highlight for target.func
+  local target_hl
+  for _, hl in ipairs(highlights) do
+    if hl.hl == "Underlined" then
+      local covered = text:sub(hl.col + 1, hl.end_col)
+      if covered:find("target") then
+        target_hl = hl
+      end
+    end
+  end
+  assert_eq(target_hl ~= nil, true, "multi-code-link: should have Underlined for target.func")
+  if target_hl then
+    local covered = text:sub(target_hl.col + 1, target_hl.end_col)
+    assert_eq(covered, "target.func", "multi-code-link: underline should cover exactly target.func")
+  end
+end)
+
 -- Print summary
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then

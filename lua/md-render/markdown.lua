@@ -79,11 +79,15 @@ local function restore_code_spans(text, spans, hl_group, highlights, links)
           if hl.col >= finish then
             hl.col = hl.col + delta
             hl.end_col = hl.end_col + delta
+          elseif hl.end_col >= finish then
+            hl.end_col = hl.end_col + delta
           end
         end
         for _, link in ipairs(links) do
           if link.col_start >= finish then
             link.col_start = link.col_start + delta
+            link.col_end = link.col_end + delta
+          elseif link.col_end >= finish then
             link.col_end = link.col_end + delta
           end
         end
@@ -611,6 +615,9 @@ end
 ---@param links MdRender.Markdown.Link[]
 ---@return string processed
 local function process_links(text, highlights, links)
+  local pre_hl_count = #highlights
+  local pre_link_count = #links
+  local removals = {}
   local processed = ""
   local i = 1
   while i <= #text do
@@ -642,6 +649,8 @@ local function process_links(text, highlights, links)
           processed = processed .. display_text
           table.insert(highlights, { col = start_col, end_col = start_col + #display_text, hl = "Underlined" })
           table.insert(links, { col_start = start_col, col_end = start_col + #display_text, url = url })
+          table.insert(removals, { start = i - 1, count = 1 }) -- opening [
+          table.insert(removals, { start = j - 2, count = paren_end - j + 2 }) -- ](url)
           i = paren_end + 1
         else
           processed = processed .. text:sub(i, i)
@@ -656,6 +665,7 @@ local function process_links(text, highlights, links)
       i = i + 1
     end
   end
+  adjust_positions(highlights, links, removals, pre_hl_count, pre_link_count)
   return processed
 end
 
@@ -669,6 +679,9 @@ local function process_reference_links(text, ref_links, highlights, links)
   if not ref_links or not next(ref_links) then
     return text
   end
+  local pre_hl_count = #highlights
+  local pre_link_count = #links
+  local removals = {}
   local processed = ""
   local i = 1
   while i <= #text do
@@ -691,6 +704,8 @@ local function process_reference_links(text, ref_links, highlights, links)
               processed = processed .. label
               table.insert(highlights, { col = start_col, end_col = start_col + #label, hl = "Underlined" })
               table.insert(links, { col_start = start_col, col_end = start_col + #label, url = url })
+              table.insert(removals, { start = i - 1, count = 1 }) -- opening [
+              table.insert(removals, { start = close - 1, count = close2 - close + 1 }) -- ][ref]
               i = close2 + 1
             else
               processed = processed .. text:sub(i, i)
@@ -709,6 +724,8 @@ local function process_reference_links(text, ref_links, highlights, links)
               processed = processed .. label
               table.insert(highlights, { col = start_col, end_col = start_col + #label, hl = "Underlined" })
               table.insert(links, { col_start = start_col, col_end = start_col + #label, url = url })
+              table.insert(removals, { start = i - 1, count = 1 }) -- opening [
+              table.insert(removals, { start = close - 1, count = 1 }) -- closing ]
               i = close + 1
             else
               processed = processed .. text:sub(i, i)
@@ -728,6 +745,7 @@ local function process_reference_links(text, ref_links, highlights, links)
       i = i + 1
     end
   end
+  adjust_positions(highlights, links, removals, pre_hl_count, pre_link_count)
   return processed
 end
 
@@ -751,7 +769,7 @@ local function process_bare_urls(text, max_url_width, highlights, links)
       processed = processed .. "`"
       i = i + 1
     elseif not in_backtick then
-      local s, e = text:find("https?://[^%s%)<>\"']+", i)
+      local s, e = text:find("https?://[^%s%)<>\"]+", i)
       if s == i then
         local url_match = text:sub(s, e)
         -- Strip trailing punctuation (including markdown markers)
