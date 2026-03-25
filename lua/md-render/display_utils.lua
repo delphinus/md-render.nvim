@@ -433,6 +433,13 @@ function M.setup_images(win, content)
 
     if placement.path then
       on_path_ready(placement.path)
+    elseif placement.mermaid_source then
+      image.render_mermaid_async(placement.mermaid_source, function(path)
+        if path then
+          placement.mermaid_source = nil
+          on_path_ready(path)
+        end
+      end)
     elseif placement.src_url then
       image.download_async(placement.src_url, function(path)
         on_path_ready(path)

@@ -42,6 +42,7 @@
 ---@field img_h? integer source image height in pixels
 ---@field animated? boolean true if animated GIF
 ---@field src_url? string original URL for async download
+---@field mermaid_source? string mermaid source for async rendering
 
 ---@class MdRender.Content
 ---@field lines string[]
@@ -1753,26 +1754,99 @@ function ContentBuilder:render_document(lines, opts)
         code_block_id = src_idx
         code_block_has_truncation = false
       else
-        if code_block_lang and code_block_start < #self.lines then
-          local cb_prefix = nil
-          if in_details and details_summary_rendered then
-            cb_prefix = #indent + #"│ "
+        -- Mermaid code blocks: render as image if possible
+        local mermaid_handled = false
+        if code_block_lang and code_block_lang:lower() == "mermaid" and code_source_lines and #code_source_lines > 0 then
+          local image = require "md-render.image"
+          if image.supports_kitty() and image.has_mmdc() then
+            local mermaid_source = table.concat(code_source_lines, "\n")
+            -- Remove the code lines that were already added as text
+            local lines_to_remove = #self.lines - code_block_start
+            for _ = 1, lines_to_remove do
+              table.remove(self.lines)
+              table.remove(self.highlights)
+            end
+
+            -- Only use cached result synchronously; otherwise render async
+            local cached = image.get_mermaid_cached(mermaid_source)
+            local display_cols, display_rows
+            local orig_img_w, orig_img_h
+            local img_max_cols = max_width - 2
+
+            if cached then
+              orig_img_w, orig_img_h = image.image_dimensions(cached)
+              if orig_img_w and orig_img_h then
+                display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
+              end
+            end
+
+            if not display_cols then
+              display_cols = math.floor(img_max_cols * 0.8)
+              display_rows = 15
+            end
+
+            local header = indent .. "Mermaid"
+            self:add_line(header, {
+              { col = 0, end_col = #header, hl = "Comment" },
+            })
+            local img_start_line = #self.lines
+            local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
+            if not cached then
+              local placeholder_msg = "Rendering mermaid diagram..."
+              local placeholder_row = math.floor(display_rows / 2)
+              for r = 1, display_rows do
+                if r == placeholder_row + 1 then
+                  local pad = math.max(0, math.floor((display_cols - vim.fn.strdisplaywidth(placeholder_msg)) / 2))
+                  local placeholder_line = indent .. string.rep(" ", img_col) .. string.rep(" ", pad) .. placeholder_msg
+                  self:add_line(placeholder_line, {
+                    { col = 0, end_col = #placeholder_line, hl = "Comment" },
+                  })
+                else
+                  self:add_line(indent)
+                end
+              end
+            else
+              for _ = 1, display_rows do
+                self:add_line(indent)
+              end
+            end
+            table.insert(self.image_placements, {
+              path = cached,
+              line = img_start_line,
+              col = img_col,
+              rows = display_rows,
+              cols = display_cols,
+              img_w = orig_img_w,
+              img_h = orig_img_h,
+              mermaid_source = not cached and mermaid_source or nil,
+            })
+            lines_shown = lines_shown + 1 + display_rows
+            mermaid_handled = true
           end
-          table.insert(self.code_blocks, {
-            language = code_block_lang,
-            start_line = code_block_start,
-            end_line = #self.lines - 1,
-            prefix_len = cb_prefix,
-            source_lines = code_source_lines,
-          })
         end
-        if code_block_has_truncation or expand_state[code_block_id] then
-          table.insert(self.expandable_regions, {
-            start_line = code_block_start,
-            end_line = #self.lines - 1,
-            block_id = code_block_id,
-            expanded = expand_state[code_block_id] or false,
-          })
+
+        if not mermaid_handled then
+          if code_block_lang and code_block_start < #self.lines then
+            local cb_prefix = nil
+            if in_details and details_summary_rendered then
+              cb_prefix = #indent + #"│ "
+            end
+            table.insert(self.code_blocks, {
+              language = code_block_lang,
+              start_line = code_block_start,
+              end_line = #self.lines - 1,
+              prefix_len = cb_prefix,
+              source_lines = code_source_lines,
+            })
+          end
+          if code_block_has_truncation or expand_state[code_block_id] then
+            table.insert(self.expandable_regions, {
+              start_line = code_block_start,
+              end_line = #self.lines - 1,
+              block_id = code_block_id,
+              expanded = expand_state[code_block_id] or false,
+            })
+          end
         end
         in_code_block = false
         code_block_lang = nil

@@ -197,6 +197,162 @@ function M.image_dimensions(path)
   return nil
 end
 
+-- ============================================================================
+-- Mermaid diagram rendering
+-- ============================================================================
+
+--- Get cache directory for rendered mermaid diagrams
+---@return string
+local function get_mermaid_cache_dir()
+  local dir = vim.fn.stdpath("cache") .. "/md-render/mermaid"
+  vim.fn.mkdir(dir, "p")
+  return dir
+end
+
+--- Find the mmdc executable (mermaid CLI).
+--- Searches PATH first, then falls back to npx.
+---@return string[]? command prefix (e.g. {"mmdc"} or {"npx", "-y", "@mermaid-js/mermaid-cli"})
+local _mmdc_cmd = nil
+local _mmdc_checked = false
+
+local function find_mmdc()
+  if _mmdc_checked then return _mmdc_cmd end
+  _mmdc_checked = true
+  if vim.fn.executable("mmdc") == 1 then
+    _mmdc_cmd = { "mmdc" }
+  elseif vim.fn.executable("npx") == 1 then
+    _mmdc_cmd = { "npx", "-y", "@mermaid-js/mermaid-cli" }
+  end
+  return _mmdc_cmd
+end
+
+--- Check if mermaid rendering is available
+---@return boolean
+function M.has_mmdc()
+  return find_mmdc() ~= nil
+end
+
+--- Detect whether Neovim is using a dark or light background and return
+--- the appropriate mermaid theme name and background color hex string.
+---@return string theme, string bg_hex
+local function mermaid_theme_args()
+  local bg = vim.o.background  -- "dark" or "light"
+  local hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
+  if not hl.bg then
+    hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  end
+  local bg_color = hl.bg
+  if bg == "dark" then
+    local hex = bg_color and string.format("#%06x", bg_color) or "#1e1e2e"
+    return "dark", hex
+  else
+    local hex = bg_color and string.format("#%06x", bg_color) or "#ffffff"
+    return "default", hex
+  end
+end
+
+--- Compute cache path for mermaid source (includes theme in hash).
+---@param source string
+---@return string
+local function mermaid_cache_path(source)
+  local theme, bg_hex = mermaid_theme_args()
+  local hash = vim.fn.sha256(source .. "\0" .. theme .. "\0" .. bg_hex):sub(1, 16)
+  return get_mermaid_cache_dir() .. "/" .. hash .. ".png"
+end
+
+--- Build the mmdc command arguments with theme-aware colors.
+---@param cmd_prefix string[]
+---@param input_path string
+---@param output_path string
+---@return string[]
+local function build_mmdc_cmd(cmd_prefix, input_path, output_path)
+  local theme, bg_hex = mermaid_theme_args()
+  local cmd = vim.list_extend({}, cmd_prefix)
+  vim.list_extend(cmd, {
+    "-i", input_path, "-o", output_path,
+    "-t", theme, "-b", bg_hex, "-s", "2",
+  })
+  return cmd
+end
+
+--- Check if a mermaid diagram is already cached (no rendering).
+---@param source string mermaid diagram source code
+---@return string? cached_path
+function M.get_mermaid_cached(source)
+  local cache_path = mermaid_cache_path(source)
+  if vim.fn.filereadable(cache_path) == 1 then
+    return cache_path
+  end
+  return nil
+end
+
+--- Render mermaid source code to a PNG image (synchronous, cached).
+---@param source string mermaid diagram source code
+---@return string? png_path
+function M.render_mermaid(source)
+  local cmd_prefix = find_mmdc()
+  if not cmd_prefix then return nil end
+
+  local cache_path = mermaid_cache_path(source)
+  if vim.fn.filereadable(cache_path) == 1 then
+    return cache_path
+  end
+
+  local tmp_input = os.tmpname() .. ".mmd"
+  local f = io.open(tmp_input, "w")
+  if not f then return nil end
+  f:write(source)
+  f:close()
+
+  local cmd = build_mmdc_cmd(cmd_prefix, tmp_input, cache_path)
+  local result = vim.system(cmd, { text = true, timeout = 30000 }):wait()
+  os.remove(tmp_input)
+
+  if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
+    return cache_path
+  end
+  return nil
+end
+
+--- Render mermaid source code to a PNG image (asynchronous, cached).
+---@param source string mermaid diagram source code
+---@param callback fun(png_path: string?)
+function M.render_mermaid_async(source, callback)
+  local cmd_prefix = find_mmdc()
+  if not cmd_prefix then
+    callback(nil)
+    return
+  end
+
+  local cache_path = mermaid_cache_path(source)
+  if vim.fn.filereadable(cache_path) == 1 then
+    callback(cache_path)
+    return
+  end
+
+  local tmp_input = os.tmpname() .. ".mmd"
+  local f = io.open(tmp_input, "w")
+  if not f then
+    callback(nil)
+    return
+  end
+  f:write(source)
+  f:close()
+
+  local cmd = build_mmdc_cmd(cmd_prefix, tmp_input, cache_path)
+
+  vim.system(cmd, { text = true, timeout = 30000 }, function(result)
+    vim.schedule(function()
+      os.remove(tmp_input)
+      if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
+        callback(cache_path)
+      else
+        callback(nil)
+      end
+    end)
+  end)
+end
+
 --- Check if file is a format the terminal can display directly (no conversion needed)
 ---@param path string
 ---@return boolean
