@@ -356,20 +356,30 @@ function M.setup_images(win, content, on_download)
   local function redraw_images()
     if not vim.api.nvim_win_is_valid(state.win) then return end
     vim.cmd("redraw!")
-    for _, placement in ipairs(state.placements) do
-      local anim = state.anims[placement.path]
-      if anim then
-        local id = anim.frame_ids[anim.current]
-        if id then
-          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
-        end
-      else
-        local id = state.image_ids[placement.path]
-        if id then
-          image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+    -- Defer image placement to the next event loop tick so the TUI's
+    -- output buffer from redraw! is fully flushed to the terminal before
+    -- we write Kitty graphics commands directly to the TTY.
+    vim.schedule(function()
+      if not vim.api.nvim_win_is_valid(state.win) then return end
+      -- Batch all image placement commands into a single term_write to
+      -- avoid per-image TTY open/close overhead and ensure atomicity.
+      image.begin_batch()
+      for _, placement in ipairs(state.placements) do
+        local anim = state.anims[placement.path]
+        if anim then
+          local id = anim.frame_ids[anim.current]
+          if id then
+            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+          end
+        else
+          local id = state.image_ids[placement.path]
+          if id then
+            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+          end
         end
       end
-    end
+      image.flush_batch()
+    end)
   end
 
   local function schedule_redraw()

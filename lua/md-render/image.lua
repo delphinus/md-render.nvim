@@ -13,6 +13,12 @@ local uv = vim.uv or vim.loop
 local ffi = require("ffi")
 
 -- ============================================================================
+-- Batched terminal writes
+-- ============================================================================
+
+local _batch_buffer = nil
+
+-- ============================================================================
 -- TTY setup (cached at module level)
 -- ============================================================================
 
@@ -35,6 +41,10 @@ end
 ---@param data string
 local function term_write(data)
   if data == "" then return end
+  if _batch_buffer then
+    table.insert(_batch_buffer, data)
+    return
+  end
   local tty = get_tty_path()
   if tty then
     local f = io.open(tty, "w")
@@ -53,7 +63,23 @@ end
 
 local function move_cursor(x, y)
   term_write("\x1b[" .. y .. ";" .. x .. "H")
-  uv.sleep(1)
+  if not _batch_buffer then
+    uv.sleep(1)
+  end
+end
+
+--- Start batching terminal writes. Subsequent term_write calls accumulate
+--- in memory instead of writing to the terminal immediately.
+function M.begin_batch()
+  _batch_buffer = {}
+end
+
+--- Flush all accumulated terminal writes as a single write operation.
+function M.flush_batch()
+  if not _batch_buffer then return end
+  local data = table.concat(_batch_buffer)
+  _batch_buffer = nil
+  term_write(data)
 end
 
 -- ============================================================================
