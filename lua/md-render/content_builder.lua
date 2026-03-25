@@ -802,6 +802,13 @@ local HTML_SKIP_TAGS = {
   dl = true,
 }
 
+--- HTML void elements (self-closing, no end tag) — must not accumulate lines.
+local HTML_VOID_ELEMENTS = {
+  area = true, base = true, br = true, col = true, embed = true,
+  hr = true, img = true, input = true, link = true, meta = true,
+  param = true, source = true, track = true, wbr = true,
+}
+
 --- Preprocess lines to handle multi-line HTML tags.
 --- HTML collapses whitespace: all lines within a tag are joined with spaces.
 --- This applies to both block and inline elements per the HTML spec.
@@ -925,7 +932,7 @@ local function preprocess_multiline_html(lines)
         local tag_name = l:match "^%s*<(%a%w*)[%s>]"
         if tag_name then
           local lower_tag = tag_name:lower()
-          if not HTML_SKIP_TAGS[lower_tag] and not l:match "/>%s*$" then
+          if not HTML_SKIP_TAGS[lower_tag] and not HTML_VOID_ELEMENTS[lower_tag] and not l:match "/>%s*$" then
             local ll = l:lower()
             local open_count = 0
             for _ in ll:gmatch("<" .. lower_tag .. "[%s>]") do
