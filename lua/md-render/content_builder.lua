@@ -1414,6 +1414,10 @@ function ContentBuilder:render_document(lines, opts)
       if in_dl then
         if line:match "^%s*</dl>%s*$" then
           in_dl = false
+          -- Ensure blank line after </dl> block
+          self:add_line(indent)
+          lines_shown = lines_shown + 1
+          prev_rendered_blank = true
           goto continue
         end
         -- Parse <dt> and <dd> elements from the line
@@ -1428,16 +1432,20 @@ function ContentBuilder:render_document(lines, opts)
           local dt_content = rest:match "^%s*<dt>(.-)</dt>"
           if dt_content then
             rest = rest:match "^%s*<dt>.-</dt>%s*(.*)" or ""
-            -- Strip inline HTML tags for rendering, but process through markdown
-            local dt_rendered, dt_hls, dt_links = markdown.render(dt_content, repo_base_url, autolinks, ref_links)
-            -- Add Bold highlight
-            table.insert(dt_hls, { col = 0, end_col = #dt_rendered, hl = "Bold" })
+            -- Split on <br> / <br/> / <br /> and render each segment
             local dt_lines_before = #self.lines
-            self:add_simple_markdown(dt_rendered, dt_hls, dt_links, indent)
+            for _, seg in ipairs(vim.split(dt_content, "<br%s*/?>", { plain = false, trimempty = true })) do
+              seg = seg:gsub("^%s+", ""):gsub("%s+$", "")
+              if seg ~= "" then
+                local dt_rendered, dt_hls, dt_links = markdown.render(seg, repo_base_url, autolinks, ref_links)
+                table.insert(dt_hls, { col = 0, end_col = #dt_rendered, hl = "Bold" })
+                self:add_simple_markdown(dt_rendered, dt_hls, dt_links, indent)
+              end
+            end
             if in_details and details_summary_rendered and not skip_details_body then
               apply_details_body_prefix(dt_lines_before, #self.lines)
             end
-            lines_shown = lines_shown + 1
+            lines_shown = lines_shown + (#self.lines - dt_lines_before)
           end
           -- Try to match <dd>...</dd> or <dd>... (may not have closing tag)
           local dd_content = rest:match "^%s*<dd>(.-)</dd>"
@@ -1451,12 +1459,18 @@ function ContentBuilder:render_document(lines, opts)
           end
           if dd_content and dd_content ~= "" then
             local dd_indent = indent .. "  "
-            local dd_rendered, dd_hls, dd_links = markdown.render(dd_content, repo_base_url, autolinks, ref_links)
             local dd_lines_before = #self.lines
-            if vim.fn.strdisplaywidth(dd_rendered) > max_width - 2 then
-              self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, max_width - 2, "")
-            else
-              self:add_simple_markdown(dd_rendered, dd_hls, dd_links, dd_indent)
+            -- Split on <br> / <br/> / <br /> and render each segment
+            for _, seg in ipairs(vim.split(dd_content, "<br%s*/?>", { plain = false, trimempty = true })) do
+              seg = seg:gsub("^%s+", ""):gsub("%s+$", "")
+              if seg ~= "" then
+                local dd_rendered, dd_hls, dd_links = markdown.render(seg, repo_base_url, autolinks, ref_links)
+                if vim.fn.strdisplaywidth(dd_rendered) > max_width - 2 then
+                  self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, max_width - 2, "")
+                else
+                  self:add_simple_markdown(dd_rendered, dd_hls, dd_links, dd_indent)
+                end
+              end
             end
             if in_details and details_summary_rendered and not skip_details_body then
               apply_details_body_prefix(dd_lines_before, #self.lines)
@@ -1473,6 +1487,11 @@ function ContentBuilder:render_document(lines, opts)
 
       if line:match "^%s*<dl[^>]*>" then
         flush_table()
+        -- Ensure blank line before <dl> block
+        if lines_shown > 0 and not prev_rendered_blank then
+          self:add_line(indent)
+          lines_shown = lines_shown + 1
+        end
         in_dl = true
         goto continue
       end
