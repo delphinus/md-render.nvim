@@ -330,8 +330,9 @@ end
 --- Transmit all images and display them. Returns state for re-display and cleanup.
 ---@param win integer
 ---@param content MdRender.Content
+---@param on_download? fun() callback when a URL image finishes downloading
 ---@return MdRender.ImageState?
-function M.setup_images(win, content)
+function M.setup_images(win, content, on_download)
   if not content.image_placements or #content.image_placements == 0 then
     return nil
   end
@@ -442,7 +443,11 @@ function M.setup_images(win, content)
       end)
     elseif placement.src_url then
       image.download_async(placement.src_url, function(path)
-        on_path_ready(path)
+        if path and on_download then
+          on_download()
+        else
+          on_path_ready(path)
+        end
       end)
     end
   end

@@ -184,7 +184,13 @@ MdPreview.show = function(opts)
   end
 
   -- Display images (transmit + put with auto-redraw on scroll)
-  local image_state = display_utils.setup_images(win, content)
+  local image_state = display_utils.setup_images(win, content, function()
+    -- URL image downloaded: rebuild content with correct dimensions
+    if vim.api.nvim_win_is_valid(win) then
+      rebuild()
+      image_state = display_utils.update_images(image_state, win, content)
+    end
+  end)
 
   -- Clean up images when window closes
   vim.api.nvim_create_autocmd("WinClosed", {
@@ -363,7 +369,11 @@ MdPreview.show_demo = function()
     fold_state[fold.source_line] = fold.collapsed
   end
 
-  image_state = display_utils.setup_images(win, content)
+  image_state = display_utils.setup_images(win, content, function()
+    if vim.api.nvim_win_is_valid(win) then
+      rebuild()
+    end
+  end)
 
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win),

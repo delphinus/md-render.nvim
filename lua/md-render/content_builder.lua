@@ -1981,10 +1981,14 @@ function ContentBuilder:render_document(lines, opts)
         local img_path, img_alt
         if not current_alert_type then
           -- Markdown image: ![alt](path) (standalone on line)
-          img_alt, img_path = line:match "^%s*!%[(.-)%]%((.-)%)%s*$"
+          img_alt, img_path = line:match "^%s*!%[([^%]]-)%]%(([^)]-)%)%s*$"
           -- Also match heading lines that are just an image: # ![alt](path)
           if not img_path then
-            img_alt, img_path = line:match "^#+%s+!%[(.-)%]%((.-)%)%s*$"
+            img_alt, img_path = line:match "^#+%s+!%[([^%]]-)%]%(([^)]-)%)%s*$"
+          end
+          -- Linked image: [![alt](img-path)](link-url) (standalone on line)
+          if not img_path then
+            img_alt, img_path = line:match "^%s*%[!%[(.-)%]%((.-)%)%]%(.-%)%s*$"
           end
           -- HTML img: <img src="path" alt="alt"> as sole content on line
           -- Also matches inside headings: # <img ...> or ## <img ...>
@@ -2010,16 +2014,52 @@ function ContentBuilder:render_document(lines, opts)
           end
         end
 
+        -- Collect images: single image or multiple images on one line
+        local img_entries = {}
         if img_path and img_path ~= "" then
+          table.insert(img_entries, { alt = img_alt, path = img_path })
+        elseif not current_alert_type then
+          -- Multiple images on one line: ![alt](url) ![alt](url) ...
+          -- Also supports linked images: [![alt](img)](url) mixed in
+          local remainder = line:gsub("^%s+", ""):gsub("%s+$", "")
+          if remainder:match "!%[" then
+            local tmp = remainder
+            -- Strip linked images [![alt](img)](url)
+            tmp = tmp:gsub("%[!%[.-%]%(.-%)]%(.-%)", "")
+            -- Strip plain images ![alt](url)
+            tmp = tmp:gsub("!%[.-%]%(.-%)", "")
+            -- If only whitespace remains, the line is composed entirely of images
+            if tmp:match "^%s*$" then
+              for linked_alt, linked_path in remainder:gmatch "%[!%[(.-)%]%((.-)%)%]%(.-%)%s*" do
+                table.insert(img_entries, { alt = linked_alt, path = linked_path })
+              end
+              for plain_alt, plain_path in remainder:gmatch "!%[(.-)%]%((.-)%)" do
+                -- Skip images already captured as part of linked images
+                local is_linked = false
+                for _, entry in ipairs(img_entries) do
+                  if entry.path == plain_path then
+                    is_linked = true
+                    break
+                  end
+                end
+                if not is_linked then
+                  table.insert(img_entries, { alt = plain_alt, path = plain_path })
+                end
+              end
+            end
+          end
+        end
+
+        for _, img_entry in ipairs(img_entries) do
           local image = require "md-render.image"
           local buf_dir = vim.fn.expand("%:p:h")
-          local resolved = image.resolve(img_path, buf_dir)
+          local resolved = image.resolve(img_entry.path, buf_dir)
 
-          local display_name = (img_alt and img_alt ~= "") and img_alt or (img_path:match "([^/]+)$" or img_path)
+          local display_name = (img_entry.alt and img_entry.alt ~= "") and img_entry.alt or (img_entry.path:match "([^/]+)$" or img_entry.path)
           if image.supports_kitty() then
             local display_cols, display_rows
             local is_animated = false
-            local src_url = image.is_url(img_path) and img_path or nil
+            local src_url = image.is_url(img_entry.path) and img_entry.path or nil
 
             -- Standalone image: use full width and center
             local img_max_cols = max_width - 2
@@ -2045,11 +2085,10 @@ function ContentBuilder:render_document(lines, opts)
               local img_start_line = #self.lines
               -- Center the image horizontally
               local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
-              -- Show placeholder while the image is loading
-              local placeholder_msg = "Loading image..."
-              local placeholder_row = math.floor(display_rows / 2)
+              -- Show placeholder text only while the image is still loading
               for r = 1, display_rows do
-                if r == placeholder_row + 1 then
+                if not resolved and r == math.floor(display_rows / 2) + 1 then
+                  local placeholder_msg = "Loading image..."
                   local pad = math.max(0, math.floor((display_cols - vim.fn.strdisplaywidth(placeholder_msg)) / 2))
                   local placeholder_line = indent .. string.rep(" ", img_col) .. string.rep(" ", pad) .. placeholder_msg
                   self:add_line(placeholder_line, {
