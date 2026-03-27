@@ -42,6 +42,7 @@
 ---@field img_h? integer source image height in pixels
 ---@field animated? boolean true if animated GIF
 ---@field src_url? string original URL for async download
+---@field mermaid_source? string mermaid source for async rendering
 
 ---@class MdRender.Content
 ---@field lines string[]
@@ -128,6 +129,16 @@ local function detect_urls_in_code_line(self, raw_line, prefix_len, content_byte
     local ms, me = raw_line:find("https?://[^%s%)<>\"]+", pos)
     if not ms then break end
     local url = raw_line:sub(ms, me):gsub("[.,;:!?*~]+$", "")
+    -- Strip trailing non-ASCII symbols (e.g. ⏎, →) that are not valid in URLs.
+    -- charclass returns 1 for punctuation/symbols, >=2 for letters/digits.
+    while #url > 0 do
+      local last_char = vim.fn.strcharpart(url, vim.fn.strchars(url) - 1, 1)
+      if #last_char > 1 and vim.fn.charclass(last_char) <= 1 then
+        url = url:sub(1, #url - #last_char)
+      else
+        break
+      end
+    end
     local col_start = prefix_len + ms - 1
     local col_end = prefix_len + ms - 1 + #url
     if col_start < content_byte_end then
@@ -802,6 +813,13 @@ local HTML_SKIP_TAGS = {
   dl = true,
 }
 
+--- HTML void elements (self-closing, no end tag) — must not accumulate lines.
+local HTML_VOID_ELEMENTS = {
+  area = true, base = true, br = true, col = true, embed = true,
+  hr = true, img = true, input = true, link = true, meta = true,
+  param = true, source = true, track = true, wbr = true,
+}
+
 --- Preprocess lines to handle multi-line HTML tags.
 --- HTML collapses whitespace: all lines within a tag are joined with spaces.
 --- This applies to both block and inline elements per the HTML spec.
@@ -925,7 +943,7 @@ local function preprocess_multiline_html(lines)
         local tag_name = l:match "^%s*<(%a%w*)[%s>]"
         if tag_name then
           local lower_tag = tag_name:lower()
-          if not HTML_SKIP_TAGS[lower_tag] and not l:match "/>%s*$" then
+          if not HTML_SKIP_TAGS[lower_tag] and not HTML_VOID_ELEMENTS[lower_tag] and not l:match "/>%s*$" then
             local ll = l:lower()
             local open_count = 0
             for _ in ll:gmatch("<" .. lower_tag .. "[%s>]") do
@@ -1397,6 +1415,10 @@ function ContentBuilder:render_document(lines, opts)
       if in_dl then
         if line:match "^%s*</dl>%s*$" then
           in_dl = false
+          -- Ensure blank line after </dl> block
+          self:add_line(indent)
+          lines_shown = lines_shown + 1
+          prev_rendered_blank = true
           goto continue
         end
         -- Parse <dt> and <dd> elements from the line
@@ -1411,16 +1433,20 @@ function ContentBuilder:render_document(lines, opts)
           local dt_content = rest:match "^%s*<dt>(.-)</dt>"
           if dt_content then
             rest = rest:match "^%s*<dt>.-</dt>%s*(.*)" or ""
-            -- Strip inline HTML tags for rendering, but process through markdown
-            local dt_rendered, dt_hls, dt_links = markdown.render(dt_content, repo_base_url, autolinks, ref_links)
-            -- Add Bold highlight
-            table.insert(dt_hls, { col = 0, end_col = #dt_rendered, hl = "Bold" })
+            -- Split on <br> / <br/> / <br /> and render each segment
             local dt_lines_before = #self.lines
-            self:add_simple_markdown(dt_rendered, dt_hls, dt_links, indent)
+            for _, seg in ipairs(vim.split(dt_content, "<br%s*/?>", { plain = false, trimempty = true })) do
+              seg = seg:gsub("^%s+", ""):gsub("%s+$", "")
+              if seg ~= "" then
+                local dt_rendered, dt_hls, dt_links = markdown.render(seg, repo_base_url, autolinks, ref_links)
+                table.insert(dt_hls, { col = 0, end_col = #dt_rendered, hl = "Bold" })
+                self:add_simple_markdown(dt_rendered, dt_hls, dt_links, indent)
+              end
+            end
             if in_details and details_summary_rendered and not skip_details_body then
               apply_details_body_prefix(dt_lines_before, #self.lines)
             end
-            lines_shown = lines_shown + 1
+            lines_shown = lines_shown + (#self.lines - dt_lines_before)
           end
           -- Try to match <dd>...</dd> or <dd>... (may not have closing tag)
           local dd_content = rest:match "^%s*<dd>(.-)</dd>"
@@ -1434,12 +1460,18 @@ function ContentBuilder:render_document(lines, opts)
           end
           if dd_content and dd_content ~= "" then
             local dd_indent = indent .. "  "
-            local dd_rendered, dd_hls, dd_links = markdown.render(dd_content, repo_base_url, autolinks, ref_links)
             local dd_lines_before = #self.lines
-            if vim.fn.strdisplaywidth(dd_rendered) > max_width - 2 then
-              self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, max_width - 2, "")
-            else
-              self:add_simple_markdown(dd_rendered, dd_hls, dd_links, dd_indent)
+            -- Split on <br> / <br/> / <br /> and render each segment
+            for _, seg in ipairs(vim.split(dd_content, "<br%s*/?>", { plain = false, trimempty = true })) do
+              seg = seg:gsub("^%s+", ""):gsub("%s+$", "")
+              if seg ~= "" then
+                local dd_rendered, dd_hls, dd_links = markdown.render(seg, repo_base_url, autolinks, ref_links)
+                if vim.fn.strdisplaywidth(dd_rendered) > max_width - 2 then
+                  self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, max_width - 2, "")
+                else
+                  self:add_simple_markdown(dd_rendered, dd_hls, dd_links, dd_indent)
+                end
+              end
             end
             if in_details and details_summary_rendered and not skip_details_body then
               apply_details_body_prefix(dd_lines_before, #self.lines)
@@ -1456,6 +1488,11 @@ function ContentBuilder:render_document(lines, opts)
 
       if line:match "^%s*<dl[^>]*>" then
         flush_table()
+        -- Ensure blank line before <dl> block
+        if lines_shown > 0 and not prev_rendered_blank then
+          self:add_line(indent)
+          lines_shown = lines_shown + 1
+        end
         in_dl = true
         goto continue
       end
@@ -1717,26 +1754,99 @@ function ContentBuilder:render_document(lines, opts)
         code_block_id = src_idx
         code_block_has_truncation = false
       else
-        if code_block_lang and code_block_start < #self.lines then
-          local cb_prefix = nil
-          if in_details and details_summary_rendered then
-            cb_prefix = #indent + #"│ "
+        -- Mermaid code blocks: render as image if possible
+        local mermaid_handled = false
+        if code_block_lang and code_block_lang:lower() == "mermaid" and code_source_lines and #code_source_lines > 0 then
+          local image = require "md-render.image"
+          if image.supports_kitty() and image.has_mmdc() then
+            local mermaid_source = table.concat(code_source_lines, "\n")
+            -- Remove the code lines that were already added as text
+            local lines_to_remove = #self.lines - code_block_start
+            for _ = 1, lines_to_remove do
+              table.remove(self.lines)
+              table.remove(self.highlights)
+            end
+
+            -- Only use cached result synchronously; otherwise render async
+            local cached = image.get_mermaid_cached(mermaid_source)
+            local display_cols, display_rows
+            local orig_img_w, orig_img_h
+            local img_max_cols = max_width - 2
+
+            if cached then
+              orig_img_w, orig_img_h = image.image_dimensions(cached)
+              if orig_img_w and orig_img_h then
+                display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
+              end
+            end
+
+            if not display_cols then
+              display_cols = math.floor(img_max_cols * 0.8)
+              display_rows = 15
+            end
+
+            local header = indent .. "Mermaid"
+            self:add_line(header, {
+              { col = 0, end_col = #header, hl = "Comment" },
+            })
+            local img_start_line = #self.lines
+            local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
+            if not cached then
+              local placeholder_msg = "Rendering mermaid diagram..."
+              local placeholder_row = math.floor(display_rows / 2)
+              for r = 1, display_rows do
+                if r == placeholder_row + 1 then
+                  local pad = math.max(0, math.floor((display_cols - vim.fn.strdisplaywidth(placeholder_msg)) / 2))
+                  local placeholder_line = indent .. string.rep(" ", img_col) .. string.rep(" ", pad) .. placeholder_msg
+                  self:add_line(placeholder_line, {
+                    { col = 0, end_col = #placeholder_line, hl = "Comment" },
+                  })
+                else
+                  self:add_line(indent)
+                end
+              end
+            else
+              for _ = 1, display_rows do
+                self:add_line(indent)
+              end
+            end
+            table.insert(self.image_placements, {
+              path = cached,
+              line = img_start_line,
+              col = img_col,
+              rows = display_rows,
+              cols = display_cols,
+              img_w = orig_img_w,
+              img_h = orig_img_h,
+              mermaid_source = not cached and mermaid_source or nil,
+            })
+            lines_shown = lines_shown + 1 + display_rows
+            mermaid_handled = true
           end
-          table.insert(self.code_blocks, {
-            language = code_block_lang,
-            start_line = code_block_start,
-            end_line = #self.lines - 1,
-            prefix_len = cb_prefix,
-            source_lines = code_source_lines,
-          })
         end
-        if code_block_has_truncation or expand_state[code_block_id] then
-          table.insert(self.expandable_regions, {
-            start_line = code_block_start,
-            end_line = #self.lines - 1,
-            block_id = code_block_id,
-            expanded = expand_state[code_block_id] or false,
-          })
+
+        if not mermaid_handled then
+          if code_block_lang and code_block_start < #self.lines then
+            local cb_prefix = nil
+            if in_details and details_summary_rendered then
+              cb_prefix = #indent + #"│ "
+            end
+            table.insert(self.code_blocks, {
+              language = code_block_lang,
+              start_line = code_block_start,
+              end_line = #self.lines - 1,
+              prefix_len = cb_prefix,
+              source_lines = code_source_lines,
+            })
+          end
+          if code_block_has_truncation or expand_state[code_block_id] then
+            table.insert(self.expandable_regions, {
+              start_line = code_block_start,
+              end_line = #self.lines - 1,
+              block_id = code_block_id,
+              expanded = expand_state[code_block_id] or false,
+            })
+          end
         end
         in_code_block = false
         code_block_lang = nil
@@ -1871,10 +1981,14 @@ function ContentBuilder:render_document(lines, opts)
         local img_path, img_alt
         if not current_alert_type then
           -- Markdown image: ![alt](path) (standalone on line)
-          img_alt, img_path = line:match "^%s*!%[(.-)%]%((.-)%)%s*$"
+          img_alt, img_path = line:match "^%s*!%[([^%]]-)%]%(([^)]-)%)%s*$"
           -- Also match heading lines that are just an image: # ![alt](path)
           if not img_path then
-            img_alt, img_path = line:match "^#+%s+!%[(.-)%]%((.-)%)%s*$"
+            img_alt, img_path = line:match "^#+%s+!%[([^%]]-)%]%(([^)]-)%)%s*$"
+          end
+          -- Linked image: [![alt](img-path)](link-url) (standalone on line)
+          if not img_path then
+            img_alt, img_path = line:match "^%s*%[!%[(.-)%]%((.-)%)%]%(.-%)%s*$"
           end
           -- HTML img: <img src="path" alt="alt"> as sole content on line
           -- Also matches inside headings: # <img ...> or ## <img ...>
@@ -1900,16 +2014,52 @@ function ContentBuilder:render_document(lines, opts)
           end
         end
 
+        -- Collect images: single image or multiple images on one line
+        local img_entries = {}
         if img_path and img_path ~= "" then
+          table.insert(img_entries, { alt = img_alt, path = img_path })
+        elseif not current_alert_type then
+          -- Multiple images on one line: ![alt](url) ![alt](url) ...
+          -- Also supports linked images: [![alt](img)](url) mixed in
+          local remainder = line:gsub("^%s+", ""):gsub("%s+$", "")
+          if remainder:match "!%[" then
+            local tmp = remainder
+            -- Strip linked images [![alt](img)](url)
+            tmp = tmp:gsub("%[!%[.-%]%(.-%)]%(.-%)", "")
+            -- Strip plain images ![alt](url)
+            tmp = tmp:gsub("!%[.-%]%(.-%)", "")
+            -- If only whitespace remains, the line is composed entirely of images
+            if tmp:match "^%s*$" then
+              for linked_alt, linked_path in remainder:gmatch "%[!%[(.-)%]%((.-)%)%]%(.-%)%s*" do
+                table.insert(img_entries, { alt = linked_alt, path = linked_path })
+              end
+              for plain_alt, plain_path in remainder:gmatch "!%[(.-)%]%((.-)%)" do
+                -- Skip images already captured as part of linked images
+                local is_linked = false
+                for _, entry in ipairs(img_entries) do
+                  if entry.path == plain_path then
+                    is_linked = true
+                    break
+                  end
+                end
+                if not is_linked then
+                  table.insert(img_entries, { alt = plain_alt, path = plain_path })
+                end
+              end
+            end
+          end
+        end
+
+        for _, img_entry in ipairs(img_entries) do
           local image = require "md-render.image"
           local buf_dir = vim.fn.expand("%:p:h")
-          local resolved = image.resolve(img_path, buf_dir)
+          local resolved = image.resolve(img_entry.path, buf_dir)
 
-          local display_name = (img_alt and img_alt ~= "") and img_alt or (img_path:match "([^/]+)$" or img_path)
+          local display_name = (img_entry.alt and img_entry.alt ~= "") and img_entry.alt or (img_entry.path:match "([^/]+)$" or img_entry.path)
           if image.supports_kitty() then
             local display_cols, display_rows
             local is_animated = false
-            local src_url = image.is_url(img_path) and img_path or nil
+            local src_url = image.is_url(img_entry.path) and img_entry.path or nil
 
             -- Standalone image: use full width and center
             local img_max_cols = max_width - 2
@@ -1935,11 +2085,10 @@ function ContentBuilder:render_document(lines, opts)
               local img_start_line = #self.lines
               -- Center the image horizontally
               local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
-              -- Show placeholder while the image is loading
-              local placeholder_msg = "Loading image..."
-              local placeholder_row = math.floor(display_rows / 2)
+              -- Show placeholder text only while the image is still loading
               for r = 1, display_rows do
-                if r == placeholder_row + 1 then
+                if not resolved and r == math.floor(display_rows / 2) + 1 then
+                  local placeholder_msg = "Loading image..."
                   local pad = math.max(0, math.floor((display_cols - vim.fn.strdisplaywidth(placeholder_msg)) / 2))
                   local placeholder_line = indent .. string.rep(" ", img_col) .. string.rep(" ", pad) .. placeholder_msg
                   self:add_line(placeholder_line, {

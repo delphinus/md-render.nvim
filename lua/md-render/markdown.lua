@@ -774,6 +774,16 @@ local function process_bare_urls(text, max_url_width, highlights, links)
         local url_match = text:sub(s, e)
         -- Strip trailing punctuation (including markdown markers)
         local url = url_match:gsub("[.,;:!?*~]+$", "")
+        -- Strip trailing non-ASCII symbols (e.g. ⏎, →) that are not valid in URLs.
+        -- charclass returns 1 for punctuation/symbols, >=2 for letters/digits.
+        while #url > 0 do
+          local last_char = vim.fn.strcharpart(url, vim.fn.strchars(url) - 1, 1)
+          if #last_char > 1 and vim.fn.charclass(last_char) <= 1 then
+            url = url:sub(1, #url - #last_char)
+          else
+            break
+          end
+        end
         local start_col = #processed
         local display_url
 

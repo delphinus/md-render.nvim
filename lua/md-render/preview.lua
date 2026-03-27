@@ -184,7 +184,13 @@ MdPreview.show = function(opts)
   end
 
   -- Display images (transmit + put with auto-redraw on scroll)
-  local image_state = display_utils.setup_images(win, content)
+  local image_state = display_utils.setup_images(win, content, function()
+    -- URL image downloaded: rebuild content with correct dimensions
+    if vim.api.nvim_win_is_valid(win) then
+      rebuild()
+      image_state = display_utils.update_images(image_state, win, content)
+    end
+  end)
 
   -- Clean up images when window closes
   vim.api.nvim_create_autocmd("WinClosed", {
@@ -300,6 +306,16 @@ MdPreview.show_demo = function()
     ":::note alert",
     "重要な注意事項を強調できます。",
     ":::",
+    "",
+    "### Mermaid Diagram",
+    "",
+    "```mermaid",
+    "graph LR",
+    "    A[Markdown] --> B[Parser]",
+    "    B --> C[ContentBuilder]",
+    "    C --> D[FloatWin]",
+    "    D --> E[Display]",
+    "```",
   }, "\n"), "\n")
 
   if demo_float_win:close_if_valid() then
@@ -309,6 +325,7 @@ MdPreview.show_demo = function()
   local fold_state = {}
   local expand_state = {}
   local opts = {}
+  local image_state = nil
 
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace "md_render_demo"
@@ -334,6 +351,7 @@ MdPreview.show_demo = function()
     end
     vim.api.nvim_set_option_value("wrap", not any_expanded, { win = win })
     content = new_content
+    image_state = display_utils.update_images(image_state, win, content)
   end
 
   opts.autolinks = {
@@ -350,6 +368,21 @@ MdPreview.show_demo = function()
   for _, fold in ipairs(content.callout_folds) do
     fold_state[fold.source_line] = fold.collapsed
   end
+
+  image_state = display_utils.setup_images(win, content, function()
+    if vim.api.nvim_win_is_valid(win) then
+      rebuild()
+    end
+  end)
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern = tostring(win),
+    once = true,
+    callback = function()
+      display_utils.cleanup_images(image_state)
+      image_state = nil
+    end,
+  })
 
   display_utils.setup_float_keymaps(buf, ns, win, content, demo_float_win, {
     get_content = function()
