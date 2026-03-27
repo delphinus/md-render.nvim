@@ -74,6 +74,7 @@ MdPreview.build_content = function(lines, opts)
     if body_start > 1 and #frontmatter_lines > 0 then
       local entries = parse_frontmatter(frontmatter_lines)
       if #entries > 0 then
+        b:set_source_line(1)
         b:add_line("  Properties", {
           { col = 2, end_col = 2 + #"Properties", hl = "Title" },
         })
@@ -119,6 +120,7 @@ MdPreview.build_content = function(lines, opts)
     fold_state = opts.fold_state,
     expand_state = opts.expand_state,
     autolinks = opts.autolinks,
+    source_line_offset = body_start - 1,
   })
 
   return b:result()
@@ -140,6 +142,7 @@ MdPreview.show = function(opts)
     return
   end
 
+  local source_cursor_line = vim.api.nvim_win_get_cursor(0)[1] -- 1-indexed
   local source_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local fold_state = {}
   local expand_state = {}
@@ -183,6 +186,27 @@ MdPreview.show = function(opts)
     fold_state[fold.source_line] = fold.collapsed
   end
 
+  -- Scroll preview to match source cursor position
+  -- Find the first rendered line whose source_line is >= src_line,
+  -- or the last rendered line if src_line is past all mapped lines.
+  local function find_rendered_line(src_line, cont)
+    for i, sl in ipairs(cont.source_line_map) do
+      if sl >= src_line then
+        return i
+      end
+    end
+    return #cont.source_line_map
+  end
+
+  local target = find_rendered_line(source_cursor_line, content)
+  -- Place the target line near the center of the float window
+  local win_height = vim.api.nvim_win_get_height(win)
+  local top = math.max(0, target - 1 - math.floor(win_height / 2))
+  vim.api.nvim_win_call(win, function()
+    vim.fn.winrestview { topline = top + 1 }
+  end)
+  vim.api.nvim_win_set_cursor(win, { target, 0 })
+
   -- Display images (transmit + put with auto-redraw on scroll)
   local image_state = display_utils.setup_images(win, content, function()
     -- URL image downloaded: rebuild content with correct dimensions
@@ -192,12 +216,45 @@ MdPreview.show = function(opts)
     end
   end)
 
-  -- Clean up images when window closes
+  -- Track preview cursor for sync-back on close
+  local last_preview_line = target
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = buf,
+    callback = function()
+      if vim.api.nvim_win_is_valid(win) then
+        last_preview_line = vim.api.nvim_win_get_cursor(win)[1]
+      end
+    end,
+  })
+
+  -- Sync source cursor back and clean up images when window closes
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win),
     once = true,
     callback = function()
       display_utils.cleanup_images(image_state)
+      -- Map the preview cursor position back to the source line
+      local source_line_map = content.source_line_map
+      if source_line_map and last_preview_line <= #source_line_map then
+        local target_source_line = source_line_map[last_preview_line]
+        if target_source_line and target_source_line > 0
+          and vim.api.nvim_buf_is_valid(bufnr) then
+          local total_lines = vim.api.nvim_buf_line_count(bufnr)
+          target_source_line = math.min(target_source_line, total_lines)
+          -- Find a window displaying the source buffer and move its cursor
+          for _, w in ipairs(vim.api.nvim_list_wins()) do
+            if vim.api.nvim_win_is_valid(w)
+              and vim.api.nvim_win_get_buf(w) == bufnr then
+              vim.api.nvim_win_set_cursor(w, { target_source_line, 0 })
+              vim.api.nvim_win_call(w, function()
+                vim.cmd "normal! zz"
+              end)
+              break
+            end
+          end
+        end
+      end
     end,
   })
 

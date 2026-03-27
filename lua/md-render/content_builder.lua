@@ -53,6 +53,7 @@
 ---@field expandable_regions MdRender.ExpandableRegion[]
 ---@field image_placements MdRender.ImagePlacement[]
 ---@field footnote_anchors table<string, integer> anchor name → 0-indexed line number
+---@field source_line_map integer[] rendered line index (1-based) → source line number (1-based)
 ---@field title_line? integer
 ---@field title_text? string
 ---@field close_line_idx? integer
@@ -66,6 +67,8 @@
 ---@field expandable_regions MdRender.ExpandableRegion[]
 ---@field image_placements MdRender.ImagePlacement[]
 ---@field footnote_anchors table<string, integer>
+---@field source_line_map integer[]
+---@field private _current_source_line integer
 local ContentBuilder = {}
 
 ---@return MdRender.ContentBuilder
@@ -79,13 +82,21 @@ function ContentBuilder.new()
     expandable_regions = {},
     image_placements = {},
     footnote_anchors = {},
+    source_line_map = {},
+    _current_source_line = 0,
   }, { __index = ContentBuilder })
+end
+
+---@param source_line integer 1-indexed source line number
+function ContentBuilder:set_source_line(source_line)
+  self._current_source_line = source_line
 end
 
 ---@param text string
 ---@param hl_groups? MdRender.Highlight.Group[]
 function ContentBuilder:add_line(text, hl_groups)
   table.insert(self.lines, text)
+  table.insert(self.source_line_map, self._current_source_line)
   if hl_groups then
     table.insert(self.highlights, { line = #self.lines - 1, groups = hl_groups })
   end
@@ -113,6 +124,7 @@ function ContentBuilder:result()
     expandable_regions = self.expandable_regions,
     image_placements = self.image_placements,
     footnote_anchors = self.footnote_anchors,
+    source_line_map = self.source_line_map,
   }
 end
 
@@ -1001,6 +1013,7 @@ function ContentBuilder:render_document(lines, opts)
   local autolinks = opts.autolinks
   local fold_state = opts.fold_state or {}
   local expand_state = opts.expand_state or {}
+  local source_line_offset = opts.source_line_offset or 0
 
   local in_code_block = false
   local code_block_lang = nil
@@ -1183,6 +1196,8 @@ function ContentBuilder:render_document(lines, opts)
   end
 
   for src_idx, line in ipairs(lines) do
+    self:set_source_line(src_idx + source_line_offset)
+
     -- Skip setext heading underline
     if skip_next_line then
       skip_next_line = false
@@ -2327,6 +2342,7 @@ end
 ---@field autolinks? MdRender.Autolink[] Autolink definitions
 ---@field fold_state? table<integer, boolean> Callout fold state by source line
 ---@field expand_state? table<integer, boolean> Expandable region state by block id
+---@field source_line_offset? integer Offset added to src_idx for source_line_map (default: 0)
 
 local M = {}
 M.ContentBuilder = ContentBuilder
