@@ -1567,6 +1567,11 @@ function ContentBuilder:render_document(lines, opts)
     if is_table_line then
       if #table_buf == 0 then
         table_buf_start_idx = src_idx
+        -- Ensure exactly 1 blank line before table
+        if lines_shown > 0 and not prev_rendered_blank then
+          self:add_line(indent)
+          lines_shown = lines_shown + 1
+        end
       end
       table.insert(table_buf, line)
       goto continue
@@ -1580,6 +1585,10 @@ function ContentBuilder:render_document(lines, opts)
         truncated = true
         break
       end
+      -- Ensure exactly 1 blank line after table (collapse duplicates below)
+      self:add_line(indent)
+      lines_shown = lines_shown + 1
+      prev_rendered_blank = true
     end
 
     -- Collapse consecutive rendered blank lines (outside regular code blocks)
