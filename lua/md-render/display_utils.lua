@@ -144,9 +144,17 @@ function M.apply_content_to_buffer(buf, ns, content, opts)
   end
 
   for _, link in ipairs(content.link_metadata) do
+    local hl
+    if link.url:match "^#" then
+      hl = "MdRenderLinkAnchor"
+    elseif link.url:match "^obsidian://" then
+      hl = "MdRenderLinkObsidian"
+    else
+      hl = "Underlined"
+    end
     vim.api.nvim_buf_set_extmark(buf, ns, link.line, link.col_start, {
       end_col = link.col_end,
-      hl_group = "Underlined",
+      hl_group = hl,
       url = link.url,
     })
   end
@@ -265,14 +273,32 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
           if details.url then
             local end_col = details.end_col or (start_col + 1)
             if click_col >= start_col and click_col < end_col then
-              -- Handle internal footnote anchors by scrolling
-              local anchor = details.url:match("^#(footnote%-.+)$")
-              if anchor and cur_content.footnote_anchors then
-                local target_line = cur_content.footnote_anchors[anchor]
-                if target_line then
-                  vim.api.nvim_win_set_cursor(win, { target_line + 1, 0 })
-                  return true
+              -- Handle internal anchor links by scrolling
+              local anchor = details.url:match "^#(.+)$"
+              if anchor then
+                -- Footnote anchors
+                if cur_content.footnote_anchors then
+                  local target_line = cur_content.footnote_anchors[anchor]
+                  if target_line then
+                    vim.api.nvim_win_set_cursor(win, { target_line + 1, 0 })
+                    return true
+                  end
                 end
+                -- Heading anchors
+                if cur_content.heading_anchors then
+                  local target_line = cur_content.heading_anchors[anchor]
+                  if target_line then
+                    vim.api.nvim_win_set_cursor(win, { target_line + 1, 0 })
+                    return true
+                  end
+                end
+                return true
+              end
+              -- Obsidian links: always open via system handler
+              if details.url:match "^obsidian://" then
+                vim.notify("Opening: " .. details.url, vim.log.levels.INFO)
+                vim.ui.open(details.url)
+                return true
               end
               -- External URLs: skip if OSC8 terminal handles them natively
               if M.supports_osc8() then return false end

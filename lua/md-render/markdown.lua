@@ -22,6 +22,32 @@ local Markdown = {}
 
 local MAX_URL_DISPLAY_WIDTH = 50
 
+--- Convert heading text to a URL-safe slug (GitHub-compatible).
+--- Strips inline markdown markers, lowercases, replaces spaces with hyphens.
+---@param text string raw heading text (after # markers)
+---@return string slug
+function Markdown.heading_slug(text)
+  local s = text
+  -- Strip common inline markdown markers
+  s = s:gsub("%*%*(.-)%*%*", "%1") -- bold
+  s = s:gsub("%*(.-)%*", "%1") -- italic
+  s = s:gsub("~~(.-)~~", "%1") -- strikethrough
+  s = s:gsub("==(.-)==", "%1") -- highlight
+  s = s:gsub("`(.-)`", "%1") -- code
+  s = s:gsub("%[(.-)%]%(.-%)", "%1") -- [text](url) → text
+  s = s:gsub("%[%[(.-)%]%]", function(inner)
+    local pipe = inner:find("|", 1, true)
+    if pipe then return inner:sub(pipe + 1) end
+    return inner
+  end)
+  s = s:lower()
+  s = s:gsub("[%p]", "") -- remove ASCII punctuation, preserve multibyte chars
+  s = s:gsub("%s+", "-") -- spaces to hyphens
+  s = s:gsub("%-+", "-") -- collapse hyphens
+  s = s:gsub("^%-+", ""):gsub("%-+$", "") -- trim hyphens
+  return s
+end
+
 --- ASCII punctuation characters that can be backslash-escaped (CommonMark spec)
 local ESCAPABLE_CHARS = [[!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~]]
 
@@ -543,13 +569,31 @@ local function process_wikilinks(text, highlights, links)
           end
         end
 
+        -- Determine URL and highlight based on link type
+        local url, hl
+        local anchor_heading = target:match "^#(.+)$"
+        if anchor_heading then
+          -- Same-document heading anchor: [[#heading]]
+          url = "#" .. Markdown.heading_slug(anchor_heading)
+          hl = "MdRenderLinkAnchor"
+        else
+          -- Obsidian cross-file link via Advanced URI plugin
+          local page, heading = target:match "^(.+)#(.+)$"
+          if page and heading then
+            url = "obsidian://advanced-uri?filepath=" .. page .. "&heading=" .. heading
+          else
+            url = "obsidian://advanced-uri?filepath=" .. target
+          end
+          hl = "MdRenderLinkObsidian"
+        end
+
         local start_col = #processed
         processed = processed .. display
-        table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "Underlined" })
+        table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = hl })
         table.insert(links, {
           col_start = start_col,
           col_end = start_col + #display,
-          url = "obsidian://open?file=" .. target,
+          url = url,
         })
         i = close + 2
       else
@@ -588,11 +632,11 @@ local function process_embeds(text, highlights, links)
 
         local start_col = #processed
         processed = processed .. display
-        table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "Underlined" })
+        table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "MdRenderLinkObsidian" })
         table.insert(links, {
           col_start = start_col,
           col_end = start_col + #display,
-          url = "obsidian://open?file=" .. target,
+          url = "obsidian://advanced-uri?filepath=" .. target,
         })
         i = close + 2
       else
@@ -1430,7 +1474,7 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
     rendered_text = icon .. rendered_text
     local hl_group = "MdRenderH" .. heading_level
     table.insert(highlights, 1, { col = 0, end_col = #rendered_text, hl = hl_group })
-    return rendered_text, highlights, links, "heading"
+    return rendered_text, highlights, links, "heading", nil, nil, nil, heading_content
   end
 
   -- Add list marker and checkbox highlight

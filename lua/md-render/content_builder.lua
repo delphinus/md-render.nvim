@@ -53,6 +53,7 @@
 ---@field expandable_regions MdRender.ExpandableRegion[]
 ---@field image_placements MdRender.ImagePlacement[]
 ---@field footnote_anchors table<string, integer> anchor name → 0-indexed line number
+---@field heading_anchors table<string, integer> heading slug → 0-indexed line number
 ---@field source_line_map integer[] rendered line index (1-based) → source line number (1-based)
 ---@field title_line? integer
 ---@field title_text? string
@@ -82,6 +83,7 @@ function ContentBuilder.new()
     expandable_regions = {},
     image_placements = {},
     footnote_anchors = {},
+    heading_anchors = {},
     source_line_map = {},
     _current_source_line = 0,
   }, { __index = ContentBuilder })
@@ -124,6 +126,7 @@ function ContentBuilder:result()
     expandable_regions = self.expandable_regions,
     image_placements = self.image_placements,
     footnote_anchors = self.footnote_anchors,
+    heading_anchors = self.heading_anchors,
     source_line_map = self.source_line_map,
   }
 end
@@ -682,7 +685,7 @@ end
 ---@return string? fold_mod Fold modifier ("+" or "-") if this is a foldable callout
 function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
   local markdown = require "md-render.markdown"
-  local rendered_text, md_highlights, md_links, special_type, list_marker, alert_type, fold_mod =
+  local rendered_text, md_highlights, md_links, special_type, list_marker, alert_type, fold_mod, heading_content =
     markdown.render(text, repo_base_url, autolinks, ref_links, footnote_map)
 
   local quote_prefix = ""
@@ -700,6 +703,14 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
     self:add_wrapped_markdown(rendered_text, md_highlights, md_links, indent, max_width, quote_prefix, list_marker)
   else
     self:add_simple_markdown(rendered_text, md_highlights, md_links, indent)
+  end
+
+  -- Register heading anchor (slug → rendered line)
+  if heading_content then
+    local slug = markdown.heading_slug(heading_content)
+    if slug ~= "" then
+      self.heading_anchors[slug] = lines_before_fn
+    end
   end
 
   -- Register footnote ref anchors (first occurrence per label)
