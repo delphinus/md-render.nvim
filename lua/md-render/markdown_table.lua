@@ -247,7 +247,7 @@ function MarkdownTable.render(parsed_table, indent, max_width)
       if cells then
         for _, cell_text in ipairs(cells) do
           local trimmed = strip_html_comments(cell_text)
-          if trimmed and trimmed:match "^!%[.-%]%(.-%)" then
+          if trimmed and (trimmed:match "^!%[.-%]%(.-%)" or trimmed:match "^<img%s") then
             has_image_cells = true
             break
           end
@@ -485,7 +485,7 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     return indent .. table.concat(parts), hls
   end
 
-  --- Check if a cell contains only an image reference ![alt](url)
+  --- Check if a cell contains only an image reference ![alt](url) or <img> tag
   --- Also handles cells with leading HTML comments like <!-- ... -->![alt](url)
   ---@param cell MdRender.MarkdownTable.ParsedCell
   ---@param raw_text string original cell text before markdown rendering
@@ -494,6 +494,15 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     local stripped = strip_html_comments(raw_text)
     local alt, url = stripped:match "^!%[(.-)%]%((.-)%)$"
     if alt and url then return alt, url end
+    -- Try <img src="..." alt="..."> tag
+    local img_tag = stripped:match "^(<img%s[^>]*>)%s*$"
+    if img_tag then
+      local src = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
+      if src then
+        alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'" or ""
+        return alt, src
+      end
+    end
     return nil, nil
   end
 
@@ -609,11 +618,13 @@ function MarkdownTable.render(parsed_table, indent, max_width)
         })
       end
 
-      -- Add separator after image row
-      local sep_line, sep_hls = build_separator()
-      table.insert(out_lines, sep_line)
-      table.insert(out_highlights, sep_hls)
-      table.insert(out_links, {})
+      -- Add separator after image row (but not after the last row)
+      if row_idx < #parsed_table.rows then
+        local sep_line, sep_hls = build_separator()
+        table.insert(out_lines, sep_line)
+        table.insert(out_highlights, sep_hls)
+        table.insert(out_links, {})
+      end
     else
       local r_line, r_hls, r_links = build_row(row, false)
       table.insert(out_lines, r_line)

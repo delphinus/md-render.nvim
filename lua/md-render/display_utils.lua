@@ -504,7 +504,9 @@ function M.update_images(state, win, content)
     local new_paths = {}
     if content.image_placements then
       for _, p in ipairs(content.image_placements) do
-        new_paths[p.path] = true
+        if p.path then
+          new_paths[p.path] = true
+        end
       end
     end
     for path, id in pairs(state.image_ids) do
