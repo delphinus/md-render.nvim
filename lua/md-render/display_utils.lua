@@ -41,6 +41,14 @@ function M.supports_osc8()
     return true
   end
 
+  -- Fallback: detect via terminal-specific env vars
+  if vim.env.KITTY_WINDOW_ID
+    or vim.env.GHOSTTY_RESOURCES_DIR
+    or vim.env.WEZTERM_EXECUTABLE then
+    _osc8_supported = true
+    return true
+  end
+
   _osc8_supported = false
   return false
 end

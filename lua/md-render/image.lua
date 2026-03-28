@@ -424,6 +424,20 @@ function M.supports_kitty()
       return true
     end
   end
+  -- Fallback: detect via terminal-specific env vars that Neovim may preserve
+  -- even when TERM_PROGRAM is cleared
+  if vim.env.KITTY_WINDOW_ID then
+    _kitty_supported = true
+    return true
+  end
+  if vim.env.GHOSTTY_RESOURCES_DIR then
+    _kitty_supported = true
+    return true
+  end
+  if vim.env.WEZTERM_EXECUTABLE then
+    _kitty_supported = true
+    return true
+  end
   _kitty_supported = false
   return false
 end
