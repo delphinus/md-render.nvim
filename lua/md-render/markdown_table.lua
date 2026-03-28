@@ -239,21 +239,107 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     return text:gsub("<!%-%-.-%-%->" , ""):match "^%s*(.-)%s*$"
   end
 
-  -- Check if any data row contains image cells
+  --- Check if a cell contains only an image reference ![alt](url) or <img> tag
+  --- Also handles cells with leading HTML comments like <!-- ... -->![alt](url)
+  ---@param _cell MdRender.MarkdownTable.ParsedCell
+  ---@param raw_text string original cell text before markdown rendering
+  ---@return string? alt, string? url
+  local function cell_image(_cell, raw_text)
+    local stripped = strip_html_comments(raw_text)
+    local alt, url = stripped:match "^!%[(.-)%]%((.-)%)$"
+    if alt and url then return alt, url end
+    -- Try <img src="..." alt="..."> tag
+    local img_tag = stripped:match "^(<img%s[^>]*>)%s*$"
+    if img_tag then
+      local src = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
+      if src then
+        alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'" or ""
+        return alt, src
+      end
+    end
+    return nil, nil
+  end
+
+  -- Collect raw cell texts for image detection
+  local raw_rows = {}
+  for i = 3, #(parsed_table._raw_lines or {}) do
+    local cells = split_row(parsed_table._raw_lines[i])
+    if cells then
+      local row = {}
+      for col = 1, #parsed_table.alignments do
+        local cell_text = cells[col] or ""
+        cell_text = cell_text:match "^%s*(.-)%s*$"
+        table.insert(row, cell_text)
+      end
+      table.insert(raw_rows, row)
+    end
+  end
+
+  -- Pre-detect images and calculate display sizes for column width fitting
   local has_image_cells = false
-  if parsed_table._raw_lines then
-    for i = 3, #parsed_table._raw_lines do
-      local cells = split_row(parsed_table._raw_lines[i])
-      if cells then
-        for _, cell_text in ipairs(cells) do
-          local trimmed = strip_html_comments(cell_text)
-          if trimmed and (trimmed:match "^!%[.-%]%(.-%)" or trimmed:match "^<img%s") then
-            has_image_cells = true
-            break
+  local row_images_cache = {} -- row_idx -> col -> {alt, url, resolved, src_url, img_w, img_h}
+  local col_image_widths = {} -- col -> max display_cols across all image rows
+  do
+    local image_mod = require "md-render.image"
+    if image_mod.supports_kitty() then
+      local buf_dir = vim.fn.expand("%:p:h")
+      local indent_width = vim.fn.strdisplaywidth(indent)
+      local overhead = indent_width + num_cols * 3 + 1
+      local effective_max = max_width and max_width < 1e6 and max_width or 1e6
+      local total_budget = effective_max - overhead
+      local initial_max_per_col = math.max(1, math.floor(total_budget / num_cols))
+
+      for row_idx, row in ipairs(parsed_table.rows) do
+        if #raw_rows >= row_idx then
+          for col = 1, num_cols do
+            local raw = raw_rows[row_idx][col]
+            if raw then
+              local alt, url = cell_image(row[col], raw)
+              if alt and url and not image_mod.is_badge_url(url) then
+                local resolved = image_mod.resolve(url, buf_dir)
+                local src_url = image_mod.is_url(url) and url or nil
+                if resolved then
+                  local img_w, img_h = image_mod.image_dimensions(resolved)
+                  if img_w and img_h then
+                    local display_cols = image_mod.calc_display_size(img_w, img_h, initial_max_per_col, 15)
+                    if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
+                    row_images_cache[row_idx][col] = {
+                      alt = alt, url = url, resolved = resolved,
+                      img_w = img_w, img_h = img_h,
+                    }
+                    col_image_widths[col] = math.max(col_image_widths[col] or 0, display_cols)
+                    has_image_cells = true
+                  end
+                elseif src_url then
+                  if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
+                  row_images_cache[row_idx][col] = {
+                    alt = alt, url = url, resolved = nil, src_url = src_url,
+                  }
+                  col_image_widths[col] = math.max(col_image_widths[col] or 0, initial_max_per_col)
+                  has_image_cells = true
+                end
+              end
+            end
           end
         end
       end
-      if has_image_cells then break end
+    else
+      -- Non-kitty: just check for image presence
+      if parsed_table._raw_lines then
+        for i = 3, #parsed_table._raw_lines do
+          local cells = split_row(parsed_table._raw_lines[i])
+          if cells then
+            for _, cell_text in ipairs(cells) do
+              local trimmed = strip_html_comments(cell_text)
+              if trimmed and (trimmed:match "^!%[.-%]%(.-%)" or trimmed:match "^<img%s") then
+                has_image_cells = true
+                break
+              end
+            end
+          end
+          if has_image_cells then break end
+        end
+      end
     end
   end
 
@@ -269,18 +355,21 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     end
     local total = overhead + content_sum
 
-    if has_image_cells and max_width < 1e6 then
-      -- Expand columns to fill max_width for better image display
-      local budget = max_width - overhead
-      if budget > content_sum then
-        local per_col = math.floor(budget / num_cols)
+    if has_image_cells then
+      if max_width < 1e6 then
+        -- Collapsed: fit columns to image display width (tight, no extra padding)
         for col = 1, num_cols do
-          col_widths[col] = per_col
+          if col_image_widths[col] then
+            col_widths[col] = math.max(col_widths[col], col_image_widths[col])
+          end
         end
-        -- Distribute remainder
-        local remainder = budget - per_col * num_cols
-        for col = 1, remainder do
-          col_widths[col] = col_widths[col] + 1
+      else
+        -- Expanded: ensure columns fit full image labels (no truncation)
+        for _, imgs in pairs(row_images_cache) do
+          for col, img in pairs(imgs) do
+            local label_width = vim.fn.strdisplaywidth("🖼 " .. img.alt)
+            col_widths[col] = math.max(col_widths[col], label_width)
+          end
         end
       end
     end
@@ -485,83 +574,32 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     return indent .. table.concat(parts), hls
   end
 
-  --- Check if a cell contains only an image reference ![alt](url) or <img> tag
-  --- Also handles cells with leading HTML comments like <!-- ... -->![alt](url)
-  ---@param cell MdRender.MarkdownTable.ParsedCell
-  ---@param raw_text string original cell text before markdown rendering
-  ---@return string? alt, string? url
-  local function cell_image(cell, raw_text)
-    local stripped = strip_html_comments(raw_text)
-    local alt, url = stripped:match "^!%[(.-)%]%((.-)%)$"
-    if alt and url then return alt, url end
-    -- Try <img src="..." alt="..."> tag
-    local img_tag = stripped:match "^(<img%s[^>]*>)%s*$"
-    if img_tag then
-      local src = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
-      if src then
-        alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'" or ""
-        return alt, src
-      end
-    end
-    return nil, nil
-  end
-
-  -- Collect raw cell texts for image detection
-  local raw_rows = {}
-  for i = 3, #(parsed_table._raw_lines or {}) do
-    local cells = split_row(parsed_table._raw_lines[i])
-    if cells then
-      local row = {}
-      for col = 1, #parsed_table.alignments do
-        local cell_text = cells[col] or ""
-        cell_text = cell_text:match "^%s*(.-)%s*$"
-        table.insert(row, cell_text)
-      end
-      table.insert(raw_rows, row)
-    end
-  end
-
   -- Image placements to return
   local out_image_placements = {}
 
   -- Data rows
   for row_idx, row in ipairs(parsed_table.rows) do
-    -- Check if any cell in this row is an image
-    local row_has_images = false
-    local row_images = {} -- col -> {alt, url, resolved, img_w, img_h}
-    if #raw_rows >= row_idx then
+    -- Use pre-detected image info from cache
+    local cached = row_images_cache[row_idx]
+    local row_has_images = cached ~= nil
+    local row_images = {}
+    if cached then
       local image_mod = require "md-render.image"
-      if image_mod.supports_kitty() then
-        local buf_dir = vim.fn.expand("%:p:h")
-        for col = 1, num_cols do
-          local raw = raw_rows[row_idx][col]
-          if raw then
-            local alt, url = cell_image(row[col], raw)
-            if alt and url and not image_mod.is_badge_url(url) then
-              local resolved = image_mod.resolve(url, buf_dir)
-              local src_url = image_mod.is_url(url) and url or nil
-              if resolved then
-                local img_w, img_h = image_mod.image_dimensions(resolved)
-                if img_w and img_h then
-                  local display_cols, display_rows = image_mod.calc_display_size(img_w, img_h, col_widths[col], 15)
-                  row_images[col] = {
-                    alt = alt, url = url, resolved = resolved,
-                    display_cols = display_cols, display_rows = display_rows,
-                  }
-                  row_has_images = true
-                end
-              elseif src_url then
-                -- URL not yet cached: use estimated size for placeholder
-                row_images[col] = {
-                  alt = alt, url = url, resolved = nil, src_url = src_url,
-                  display_cols = col_widths[col], display_rows = 10,
-                }
-                row_has_images = true
-              end
-            end
-          end
+      for col, img in pairs(cached) do
+        if img.img_w and img.img_h then
+          local display_cols, display_rows = image_mod.calc_display_size(img.img_w, img.img_h, col_widths[col], 15)
+          row_images[col] = {
+            alt = img.alt, url = img.url, resolved = img.resolved,
+            display_cols = display_cols, display_rows = display_rows,
+          }
+        elseif img.src_url then
+          row_images[col] = {
+            alt = img.alt, url = img.url, resolved = nil, src_url = img.src_url,
+            display_cols = col_widths[col], display_rows = 10,
+          }
         end
       end
+      row_has_images = next(row_images) ~= nil
     end
 
     if row_has_images then
