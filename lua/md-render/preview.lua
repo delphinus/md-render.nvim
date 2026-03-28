@@ -208,12 +208,20 @@ MdPreview.show = function(opts)
   vim.api.nvim_win_set_cursor(win, { target, 0 })
 
   -- Display images (transmit + put with auto-redraw on scroll)
+  -- Debounce on_download to prevent cascade when multiple URL images
+  -- complete in quick succession (each would trigger rebuild + cleanup).
+  local download_rebuild_timer = nil
   local image_state = display_utils.setup_images(win, content, function()
-    -- URL image downloaded: rebuild content with correct dimensions
-    if vim.api.nvim_win_is_valid(win) then
-      rebuild()
-      image_state = display_utils.update_images(image_state, win, content)
+    if download_rebuild_timer then
+      download_rebuild_timer:stop()
     end
+    download_rebuild_timer = vim.defer_fn(function()
+      download_rebuild_timer = nil
+      if vim.api.nvim_win_is_valid(win) then
+        rebuild()
+        image_state = display_utils.update_images(image_state, win, content)
+      end
+    end, 150)
   end)
 
   -- Track preview cursor for sync-back on close

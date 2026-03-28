@@ -366,6 +366,11 @@ function M.setup_images(win, content, on_download)
   local image = require "md-render.image"
   if not image.supports_kitty() then return nil end
 
+  -- Clear all stale images from terminal on first use per Neovim session.
+  -- Previous sessions may have left image data in terminal memory (IDs persist
+  -- across Neovim restarts but cleanup commands may not have been processed).
+  image.clear_all()
+
   local uv = vim.uv or vim.loop
 
   ---@type MdRender.ImageState
@@ -378,18 +383,32 @@ function M.setup_images(win, content, on_download)
     autocmd_ids = {},
   }
 
+  -- Forward declaration (process_placement is defined after redraw_images
+  -- but referenced from the retry logic inside redraw_images)
+  local process_placement
+
   -- Redraw all images (called after redraw! to re-place all at once)
-  local function redraw_images()
+  local MAX_RETRIES = 3
+
+  local function place_images()
     if not vim.api.nvim_win_is_valid(state.win) then return end
-    vim.cmd("redraw!")
-    -- Defer image placement to the next event loop tick so the TUI's
-    -- output buffer from redraw! is fully flushed to the terminal before
-    -- we write Kitty graphics commands directly to the TTY.
-    vim.schedule(function()
-      if not vim.api.nvim_win_is_valid(state.win) then return end
-      -- Batch all image placement commands into a single term_write to
-      -- avoid per-image TTY open/close overhead and ensure atomicity.
-      image.begin_batch()
+
+    -- Retry transmit for images that have a path but no ID (up to MAX_RETRIES)
+    for _, placement in ipairs(state.placements) do
+      if placement.path
+        and not state.image_ids[placement.path]
+        and not state.anims[placement.path]
+        and (not placement._retries or placement._retries < MAX_RETRIES)
+      then
+        placement._retries = (placement._retries or 0) + 1
+        process_placement(placement)
+      end
+    end
+
+    -- Batch all image placement commands into a single term_write to
+    -- avoid per-image TTY open/close overhead and ensure atomicity.
+    image.begin_batch()
+    local ok, err = pcall(function()
       for _, placement in ipairs(state.placements) do
         local anim = state.anims[placement.path]
         if anim then
@@ -404,8 +423,17 @@ function M.setup_images(win, content, on_download)
           end
         end
       end
-      image.flush_batch()
     end)
+    image.flush_batch()
+    if not ok then
+      vim.notify("md-render: image redraw error: " .. tostring(err), vim.log.levels.WARN)
+    end
+  end
+
+  local function redraw_images()
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+    vim.cmd("redraw!")
+    vim.schedule(place_images)
   end
 
   local function schedule_redraw()
@@ -419,7 +447,7 @@ function M.setup_images(win, content, on_download)
 
   --- Process a single placement: download (if URL), convert, transmit, and display.
   ---@param placement MdRender.ImagePlacement
-  local function process_placement(placement)
+  process_placement = function(placement)
     local function on_path_ready(path)
       if not path then return end
       if not vim.api.nvim_win_is_valid(state.win) then return end
@@ -488,9 +516,18 @@ function M.setup_images(win, content, on_download)
     end
   end
 
-  -- Phase 1: Kick off async processing for all placements
-  for _, placement in ipairs(state.placements) do
-    process_placement(placement)
+  -- Phase 1: Kick off async processing for all placements.
+  -- Batch transmit commands so that synchronous transmits (local PNG files)
+  -- are sent in a single TTY write, preventing TUI output from interleaving.
+  image.begin_batch()
+  local ok, err = pcall(function()
+    for _, placement in ipairs(state.placements) do
+      process_placement(placement)
+    end
+  end)
+  image.flush_batch()
+  if not ok then
+    vim.notify("md-render: image setup error: " .. tostring(err), vim.log.levels.WARN)
   end
 
   -- Initial display of already-cached images
