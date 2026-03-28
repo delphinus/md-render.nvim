@@ -950,6 +950,8 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     if img_h then
       local crop_y = math.floor(img_h * hidden_rows / display_rows)
       crop_params = crop_params .. ",y=" .. crop_y
+      -- Explicit h= required: some terminals (Ghostty) need both y= and h=
+      crop_params = crop_params .. ",h=" .. (img_h - crop_y)
     end
     display_rows = display_rows - hidden_rows
     visual_row = 0
@@ -968,7 +970,13 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
       remaining_h = img_h - tonumber(existing_y)
     end
     local crop_h = math.floor(remaining_h * visible_rows / display_rows)
-    crop_params = crop_params .. ",h=" .. crop_h
+    -- Update h= if already set by top crop, otherwise add it
+    local existing_h = crop_params:match(",h=%d+")
+    if existing_h then
+      crop_params = crop_params:gsub(",h=%d+", ",h=" .. crop_h)
+    else
+      crop_params = crop_params .. ",h=" .. crop_h
+    end
     display_rows = visible_rows
   end
 
