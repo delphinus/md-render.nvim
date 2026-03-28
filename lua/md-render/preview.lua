@@ -199,6 +199,8 @@ MdPreview.show = function(opts)
   end
 
   local target = find_rendered_line(source_cursor_line, content)
+  local buf_lines = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
+  target = math.max(1, math.min(target, buf_lines))
   -- Place the target line near the center of the float window
   local win_height = vim.api.nvim_win_get_height(win)
   local top = math.max(0, target - 1 - math.floor(win_height / 2))
