@@ -1011,6 +1011,19 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   term_write("\x1b[u")
 end
 
+--- Delete all placements for an image but keep the transmitted data.
+---@param image_id integer
+function M.clear_placements(image_id)
+  if not M.supports_kitty() then return end
+  term_write(string.format("\x1b_Ga=d,d=a,i=%d,q=2\x1b\\", image_id))
+end
+
+--- Delete all images and placements from terminal memory.
+function M.delete_all()
+  if not M.supports_kitty() then return end
+  term_write("\x1b_Ga=d,d=A,q=2\x1b\\")
+end
+
 --- Delete a stored image from terminal memory
 ---@param image_id integer
 function M.delete_image(image_id)
