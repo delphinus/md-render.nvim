@@ -760,7 +760,7 @@ function M.transmit_animated(path)
     local id = _image_id
     local b64_path = vim.base64.encode(frame_path)
     term_write(string.format(
-      "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+      "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
       id, b64_path
     ))
     table.insert(frame_ids, id)
@@ -836,7 +836,7 @@ function M.transmit_animated_async(path, callback)
                 local id = _image_id
                 local b64_path = vim.base64.encode(first_frame)
                 term_write(string.format(
-                  "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+                  "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
                   id, b64_path
                 ))
                 callback({ id }, tmp_dir)
@@ -897,7 +897,7 @@ function M.transmit_animated_async(path, callback)
               local id = _image_id
               local b64_path = vim.base64.encode(frame_path)
               term_write(string.format(
-                "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+                "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
                 id, b64_path
               ))
               table.insert(frame_ids, id)
