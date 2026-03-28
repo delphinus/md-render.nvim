@@ -17,6 +17,7 @@ local ffi = require("ffi")
 -- ============================================================================
 
 local _batch_buffer = nil
+local _batch_stack = nil
 
 -- ============================================================================
 -- TTY setup (cached at module level)
@@ -70,16 +71,33 @@ end
 
 --- Start batching terminal writes. Subsequent term_write calls accumulate
 --- in memory instead of writing to the terminal immediately.
+--- Supports nesting: inner batches append to the parent batch on flush.
 function M.begin_batch()
+  if _batch_buffer then
+    -- Already batching: push current buffer onto stack
+    _batch_stack = _batch_stack or {}
+    table.insert(_batch_stack, _batch_buffer)
+  end
   _batch_buffer = {}
 end
 
 --- Flush all accumulated terminal writes as a single write operation.
+--- If nested, appends to the parent batch instead of writing to terminal.
 function M.flush_batch()
   if not _batch_buffer then return end
   local data = table.concat(_batch_buffer)
-  _batch_buffer = nil
-  term_write(data)
+  -- Pop parent batch if nested
+  if _batch_stack and #_batch_stack > 0 then
+    _batch_buffer = table.remove(_batch_stack)
+    if data ~= "" then
+      table.insert(_batch_buffer, data)
+    end
+  else
+    _batch_buffer = nil
+    if data ~= "" then
+      term_write(data)
+    end
+  end
 end
 
 -- ============================================================================
@@ -385,8 +403,9 @@ end
 function M.is_native_format(path)
   local h = read_header(path, 4)
   if not h then return false end
-  -- PNG and GIF are natively supported by Kitty/WezTerm
-  return h:sub(1, 4) == "\137PNG" or h:sub(1, 3) == "GIF"
+  -- Only PNG is natively supported by Kitty graphics protocol (f=100).
+  -- GIF must be converted to PNG before transmission.
+  return h:sub(1, 4) == "\137PNG"
 end
 
 -- ============================================================================
@@ -612,6 +631,7 @@ end
 -- ============================================================================
 
 local _image_id = 100
+local _session_cleared = false
 
 --- Transmit image data to terminal (store without displaying).
 --- The image can then be displayed cheaply with put_image().
@@ -857,6 +877,7 @@ function M.transmit_animated_async(path, callback)
             end
 
             local frame_ids = {}
+            M.begin_batch()
             for _, frame_path in ipairs(frames) do
               _image_id = _image_id + 1
               local id = _image_id
@@ -867,6 +888,7 @@ function M.transmit_animated_async(path, callback)
               ))
               table.insert(frame_ids, id)
             end
+            M.flush_batch()
 
             callback(frame_ids, tmp_dir)
           end)
@@ -983,6 +1005,19 @@ function M.delete_images(image_ids)
     table.insert(parts, string.format("\x1b_Ga=d,d=i,i=%d\x1b\\", id))
   end
   term_write(table.concat(parts))
+end
+
+--- Clear all images from terminal memory (once per Neovim session).
+--- Removes stale image data from previous sessions that may interfere
+--- with new transmissions using the same ID range.
+function M.clear_all()
+  if _session_cleared then return end
+  _session_cleared = true
+  if not M.supports_kitty() then return end
+  -- d=A: delete all stored image data and placements
+  term_write("\x1b_Ga=d,d=A\x1b\\")
+  -- Reset ID counter to ensure clean state
+  _image_id = 100
 end
 
 return M
