@@ -424,6 +424,20 @@ function M.supports_kitty()
       return true
     end
   end
+  -- Fallback: detect via terminal-specific env vars that Neovim may preserve
+  -- even when TERM_PROGRAM is cleared
+  if vim.env.KITTY_WINDOW_ID then
+    _kitty_supported = true
+    return true
+  end
+  if vim.env.GHOSTTY_RESOURCES_DIR then
+    _kitty_supported = true
+    return true
+  end
+  if vim.env.WEZTERM_EXECUTABLE then
+    _kitty_supported = true
+    return true
+  end
   _kitty_supported = false
   return false
 end
@@ -746,7 +760,7 @@ function M.transmit_animated(path)
     local id = _image_id
     local b64_path = vim.base64.encode(frame_path)
     term_write(string.format(
-      "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+      "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
       id, b64_path
     ))
     table.insert(frame_ids, id)
@@ -822,7 +836,7 @@ function M.transmit_animated_async(path, callback)
                 local id = _image_id
                 local b64_path = vim.base64.encode(first_frame)
                 term_write(string.format(
-                  "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+                  "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
                   id, b64_path
                 ))
                 callback({ id }, tmp_dir)
@@ -883,7 +897,7 @@ function M.transmit_animated_async(path, callback)
               local id = _image_id
               local b64_path = vim.base64.encode(frame_path)
               term_write(string.format(
-                "\x1b_Ga=t,f=100,t=t,i=%d,q=2;%s\x1b\\",
+                "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
                 id, b64_path
               ))
               table.insert(frame_ids, id)
@@ -936,6 +950,8 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     if img_h then
       local crop_y = math.floor(img_h * hidden_rows / display_rows)
       crop_params = crop_params .. ",y=" .. crop_y
+      -- Explicit h= required: some terminals (Ghostty) need both y= and h=
+      crop_params = crop_params .. ",h=" .. (img_h - crop_y)
     end
     display_rows = display_rows - hidden_rows
     visual_row = 0
@@ -954,7 +970,13 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
       remaining_h = img_h - tonumber(existing_y)
     end
     local crop_h = math.floor(remaining_h * visible_rows / display_rows)
-    crop_params = crop_params .. ",h=" .. crop_h
+    -- Update h= if already set by top crop, otherwise add it
+    local existing_h = crop_params:match(",h=%d+")
+    if existing_h then
+      crop_params = crop_params:gsub(",h=%d+", ",h=" .. crop_h)
+    else
+      crop_params = crop_params .. ",h=" .. crop_h
+    end
     display_rows = visible_rows
   end
 
@@ -987,6 +1009,19 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   move_cursor(screen_col, screen_row)
   term_write(message)
   term_write("\x1b[u")
+end
+
+--- Delete all placements for an image but keep the transmitted data.
+---@param image_id integer
+function M.clear_placements(image_id)
+  if not M.supports_kitty() then return end
+  term_write(string.format("\x1b_Ga=d,d=a,i=%d,q=2\x1b\\", image_id))
+end
+
+--- Delete all images and placements from terminal memory.
+function M.delete_all()
+  if not M.supports_kitty() then return end
+  term_write("\x1b_Ga=d,d=A,q=2\x1b\\")
 end
 
 --- Delete a stored image from terminal memory

@@ -41,6 +41,14 @@ function M.supports_osc8()
     return true
   end
 
+  -- Fallback: detect via terminal-specific env vars
+  if vim.env.KITTY_WINDOW_ID
+    or vim.env.GHOSTTY_RESOURCES_DIR
+    or vim.env.WEZTERM_EXECUTABLE then
+    _osc8_supported = true
+    return true
+  end
+
   _osc8_supported = false
   return false
 end
@@ -409,6 +417,12 @@ function M.setup_images(win, content, on_download)
     -- avoid per-image TTY open/close overhead and ensure atomicity.
     image.begin_batch()
     local ok, err = pcall(function()
+      -- Clear existing placements before re-placing. Kitty and Ghostty
+      -- keep placements across redraws (unlike WezTerm which clears on redraw!).
+      -- Clearing is harmless on WezTerm (already gone after redraw!).
+      for _, id in pairs(state.image_ids) do
+        image.clear_placements(id)
+      end
       for _, placement in ipairs(state.placements) do
         local anim = state.anims[placement.path]
         if anim then
@@ -481,9 +495,13 @@ function M.setup_images(win, content, on_download)
               timer:stop()
               return
             end
+            local prev_id = anim.frame_ids[anim.current]
             anim.current = anim.current % #anim.frame_ids + 1
+            image.begin_batch()
+            image.clear_placements(prev_id)
             image.put_image(anim.frame_ids[anim.current], state.win,
               placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+            image.flush_batch()
           end))
         end)
       else
@@ -611,6 +629,8 @@ function M.cleanup_images(state)
   end
 
   image.delete_images(ids)
+  -- Robust fallback: some terminals (Ghostty) may not support per-ID deletion
+  image.delete_all()
 
   -- Stop redraw timer
   if state.redraw_timer then
