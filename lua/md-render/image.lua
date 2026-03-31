@@ -11,6 +11,7 @@ local M = {}
 
 local uv = vim.uv or vim.loop
 local ffi = require("ffi")
+local tty_mod = require("md-render.tty")
 
 -- ============================================================================
 -- Batched terminal writes
@@ -19,74 +20,9 @@ local ffi = require("ffi")
 local _batch_buffer = nil
 local _batch_stack = nil
 
--- ============================================================================
--- TTY setup (cached at module level)
--- ============================================================================
-
-local _tty_path = nil
-local _tty_detected = false
-
----@return string?
+--- @return string?
 local function get_tty_path()
-  if _tty_detected then return _tty_path end
-  _tty_detected = true
-  local handle = io.popen("tty 2>/dev/null")
-  if handle then
-    _tty_path = vim.fn.trim(handle:read("*a"))
-    handle:close()
-    if _tty_path == "" or _tty_path == "not a tty" then _tty_path = nil end
-  end
-  -- Fallback: /dev/tty always refers to the controlling terminal even when
-  -- stdin/stdout are redirected (e.g. after :restart).
-  if not _tty_path then
-    local f = io.open("/dev/tty", "w")
-    if f then
-      f:close()
-      _tty_path = "/dev/tty"
-    end
-  end
-  -- Last resort: after :restart, all fds are /dev/null and /dev/tty is
-  -- inaccessible (no controlling terminal). The TUI process connects to
-  -- our RPC unix socket. Find it by matching socket addresses: get our
-  -- unix socket addresses, then find which nvim process has a socket
-  -- pointing to ours.
-  if not _tty_path then
-    local pid = vim.fn.getpid()
-    local our_fds = vim.fn.system("lsof -p " .. pid .. " 2>/dev/null")
-    local our_addrs = {}
-    for line in our_fds:gmatch("[^\n]+") do
-      local addr = line:match("unix%s+(0x%x+)")
-      if addr then
-        our_addrs[addr] = true
-      end
-    end
-    if next(our_addrs) then
-      local ps_out = vim.fn.system("ps -eo pid=,tty=,command= 2>/dev/null")
-      for line in ps_out:gmatch("[^\n]+") do
-        local lpid, tty_name, cmd = line:match("^%s*(%d+)%s+(%S+)%s+(.*)")
-        if lpid and tty_name and tty_name ~= "??"
-          and cmd and cmd:match("nvim")
-          and tonumber(lpid) ~= pid
-        then
-          local cand_fds = vim.fn.system("lsof -p " .. lpid .. " 2>/dev/null")
-          for cand_line in cand_fds:gmatch("[^\n]+") do
-            local peer = cand_line:match("unix.*%->(0x%x+)")
-            if peer and our_addrs[peer] then
-              local dev = "/dev/" .. tty_name
-              local f = io.open(dev, "w")
-              if f then
-                f:close()
-                _tty_path = dev
-              end
-              break
-            end
-          end
-          if _tty_path then break end
-        end
-      end
-    end
-  end
-  return _tty_path
+  return tty_mod.get_tty_path()
 end
 
 ---@param data string
@@ -506,9 +442,8 @@ end
 
 function M.reset_cache()
   _kitty_supported = nil
-  _tty_path = nil
-  _tty_detected = false
   _session_cleared = false
+  tty_mod.reset()
 end
 
 -- ============================================================================
