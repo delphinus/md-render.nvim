@@ -36,6 +36,33 @@ local function get_tty_path()
     handle:close()
     if _tty_path == "" or _tty_path == "not a tty" then _tty_path = nil end
   end
+  -- Fallback: /dev/tty always refers to the controlling terminal even when
+  -- stdin/stdout are redirected (e.g. after :restart).
+  if not _tty_path then
+    local f = io.open("/dev/tty", "w")
+    if f then
+      f:close()
+      _tty_path = "/dev/tty"
+    end
+  end
+  -- Last resort: after :restart, all fds are /dev/null and /dev/tty is
+  -- inaccessible (no controlling terminal). Find the TUI process's TTY
+  -- by looking for a sibling nvim process that has a real terminal.
+  if not _tty_path then
+    local ps_out = vim.fn.system("ps -o tty= -p $(pgrep nvim) 2>/dev/null")
+    for tty_name in ps_out:gmatch("[^\n]+") do
+      tty_name = vim.fn.trim(tty_name)
+      if tty_name ~= "" and tty_name ~= "??" then
+        local dev = "/dev/" .. tty_name
+        local f = io.open(dev, "w")
+        if f then
+          f:close()
+          _tty_path = dev
+          break
+        end
+      end
+    end
+  end
   return _tty_path
 end
 
@@ -111,6 +138,8 @@ local function ensure_ffi()
   ffi.cdef([[
     typedef struct { unsigned short row; unsigned short col; unsigned short xpixel; unsigned short ypixel; } winsize;
     int ioctl(int, unsigned long, ...);
+    int open(const char *path, int flags);
+    int close(int fd);
   ]])
 end
 
@@ -120,7 +149,17 @@ local TIOCGWINSZ = (vim.fn.has("mac") == 1 or vim.fn.has("bsd") == 1) and 0x4008
 function M.get_cell_size()
   ensure_ffi()
   local sz = ffi.new("winsize")
-  if ffi.C.ioctl(1, TIOCGWINSZ, sz) ~= 0 then return nil end
+  -- Try stdout (fd 1) first; after :restart it may be /dev/null,
+  -- so fall back to opening the discovered TTY device.
+  if ffi.C.ioctl(1, TIOCGWINSZ, sz) ~= 0 then
+    local tty = get_tty_path()
+    if not tty then return nil end
+    local fd = ffi.C.open(tty, 0) -- O_RDONLY
+    if fd < 0 then return nil end
+    local rc = ffi.C.ioctl(fd, TIOCGWINSZ, sz)
+    ffi.C.close(fd)
+    if rc ~= 0 then return nil end
+  end
   local xpixel, ypixel = sz.xpixel, sz.ypixel
   if xpixel == 0 or ypixel == 0 then
     xpixel = sz.col * 8
@@ -446,6 +485,7 @@ function M.reset_cache()
   _kitty_supported = nil
   _tty_path = nil
   _tty_detected = false
+  _session_cleared = false
 end
 
 -- ============================================================================
