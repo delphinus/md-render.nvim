@@ -78,6 +78,9 @@ end
 
 --- Set up all highlight groups used by md-render
 function M.setup_highlights()
+  -- Inline formatting fallbacks (many colorschemes define Bold but not Italic)
+  vim.api.nvim_set_hl(0, "Bold", { bold = true, default = true })
+  vim.api.nvim_set_hl(0, "Italic", { italic = true, default = true })
   -- Obsidian ==highlight== marker
   vim.api.nvim_set_hl(0, "MdRenderHighlight", { bg = "#3b3600", fg = "#ffec80", default = true })
   -- Obsidian #tag
