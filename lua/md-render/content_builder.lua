@@ -834,6 +834,7 @@ local HTML_SKIP_TAGS = {
   hr = true,
   figure = true,
   dl = true,
+  table = true, tr = true, td = true, th = true, thead = true, tbody = true,
 }
 
 --- HTML void elements (self-closing, no end tag) — must not accumulate lines.
@@ -842,6 +843,110 @@ local HTML_VOID_ELEMENTS = {
   hr = true, img = true, input = true, link = true, meta = true,
   param = true, source = true, track = true, wbr = true,
 }
+
+--- Convert accumulated HTML table lines into pipe-table format lines.
+--- Parses <tr>, <th>, <td> structure and extracts align attributes.
+---@param html_lines string[] lines between <table> and </table> (inclusive)
+---@return string[] pipe-table lines suitable for MarkdownTable.parse
+local function html_table_to_pipe(html_lines)
+  -- Join all lines and normalize whitespace
+  local html = table.concat(html_lines, " ")
+  html = html:gsub("  +", " ")
+
+  -- Extract rows from <tr>...</tr>
+  local rows = {}
+  for tr_content in html:gmatch "<tr[^>]*>(.-)</tr>" do
+    local cells = {}
+    local aligns = {}
+    -- Match <th> or <td> with optional attributes
+    for tag, attrs, content in tr_content:gmatch "<(t[hd])([^>]*)>(.-)</%1>" do
+      -- Extract align attribute
+      local align = attrs:match 'align%s*=%s*"([^"]*)"' or attrs:match "align%s*=%s*'([^']*)'"
+      table.insert(aligns, align or "")
+      -- Preserve the cell content as-is (inline HTML like <img>, <em> will be
+      -- processed later by markdown.render / process_html_tags)
+      local cell = content:gsub("^%s+", ""):gsub("%s+$", "")
+      table.insert(cells, { text = cell, is_header = tag == "th" })
+    end
+    if #cells > 0 then
+      table.insert(rows, { cells = cells, aligns = aligns })
+    end
+  end
+
+  if #rows == 0 then
+    return {}
+  end
+
+  -- Determine column count
+  local num_cols = 0
+  for _, row in ipairs(rows) do
+    num_cols = math.max(num_cols, #row.cells)
+  end
+
+  -- Determine if first row is a header row
+  local has_header = false
+  if rows[1] then
+    has_header = rows[1].cells[1] and rows[1].cells[1].is_header
+  end
+
+  -- Build alignment from header or first data row
+  local col_aligns = {}
+  for col = 1, num_cols do
+    local align = ""
+    for _, row in ipairs(rows) do
+      if row.aligns[col] and row.aligns[col] ~= "" then
+        align = row.aligns[col]
+        break
+      end
+    end
+    col_aligns[col] = align
+  end
+
+  -- Build pipe-table lines
+  local result = {}
+
+  -- Header row
+  local header_parts = {}
+  if has_header then
+    for col = 1, num_cols do
+      local cell = rows[1].cells[col]
+      header_parts[col] = cell and cell.text or ""
+    end
+  else
+    -- No <th> found — use empty header
+    for col = 1, num_cols do
+      header_parts[col] = " "
+    end
+  end
+  table.insert(result, "| " .. table.concat(header_parts, " | ") .. " |")
+
+  -- Separator row with alignment
+  local sep_parts = {}
+  for col = 1, num_cols do
+    local a = col_aligns[col]:lower()
+    if a == "center" then
+      sep_parts[col] = ":---:"
+    elseif a == "right" then
+      sep_parts[col] = "---:"
+    else
+      sep_parts[col] = "---"
+    end
+  end
+  table.insert(result, "| " .. table.concat(sep_parts, " | ") .. " |")
+
+  -- Data rows (skip first row if it was the header)
+  local start = has_header and 2 or 1
+  for i = start, #rows do
+    local parts = {}
+    for col = 1, num_cols do
+      local cell = rows[i].cells[col]
+      parts[col] = cell and cell.text or ""
+    end
+    table.insert(result, "| " .. table.concat(parts, " | ") .. " |")
+  end
+
+  return result
+end
 
 --- Preprocess lines to handle multi-line HTML tags.
 --- HTML collapses whitespace: all lines within a tag are joined with spaces.
@@ -1069,6 +1174,10 @@ function ContentBuilder:render_document(lines, opts)
   local in_qiita_note = false
   local qiita_note_type = nil
   local in_dl = false
+  local in_html_table = false
+  local html_table_lines = {}
+  local html_table_src_idx = nil
+  local html_table_depth = 0
 
   --- Flush accumulated table lines
   local function flush_table()
@@ -1520,6 +1629,93 @@ function ContentBuilder:render_document(lines, opts)
           lines_shown = lines_shown + 1
         end
         in_dl = true
+        goto continue
+      end
+    end
+
+    -- Handle HTML <table> blocks (outside code blocks)
+    if not in_code_block and not in_callout_code_block then
+      if in_html_table then
+        table.insert(html_table_lines, line)
+        -- Track nested <table> depth
+        local ll = line:lower()
+        for _ in ll:gmatch "<table[%s>]" do
+          html_table_depth = html_table_depth + 1
+        end
+        for _ in ll:gmatch "</table" do
+          html_table_depth = html_table_depth - 1
+        end
+        if html_table_depth <= 0 then
+          in_html_table = false
+          -- Convert HTML table to pipe-table lines and render
+          local pipe_lines = html_table_to_pipe(html_table_lines)
+          if #pipe_lines >= 2 then
+            flush_table()
+            if lines_shown > 0 and not prev_rendered_blank then
+              self:add_line(indent)
+              lines_shown = lines_shown + 1
+            end
+            local tbl_lines_before = #self.lines
+            local tbl_expanded = html_table_src_idx and expand_state[html_table_src_idx]
+            local effective_max = tbl_expanded and math.huge or max_width
+            self:add_table(pipe_lines, indent, effective_max, repo_base_url, autolinks)
+            local tbl_lines_added = #self.lines - tbl_lines_before
+            lines_shown = lines_shown + tbl_lines_added
+            local has_truncation = false
+            if not tbl_expanded then
+              for li = tbl_lines_before + 1, #self.lines do
+                if self.lines[li] and self.lines[li]:match "…" then
+                  has_truncation = true
+                  break
+                end
+              end
+            end
+            if has_truncation or tbl_expanded then
+              table.insert(self.expandable_regions, {
+                start_line = tbl_lines_before,
+                end_line = #self.lines - 1,
+                block_id = html_table_src_idx,
+                expanded = tbl_expanded or false,
+              })
+            end
+            if in_details and details_summary_rendered and not skip_details_body then
+              apply_details_body_prefix(tbl_lines_before, #self.lines)
+            end
+            prev_rendered_blank = false
+          end
+          html_table_lines = {}
+          html_table_src_idx = nil
+        end
+        goto continue
+      end
+
+      if line:match "^%s*<table[^>]*>" then
+        flush_table()
+        in_html_table = true
+        html_table_depth = 1
+        html_table_lines = { line }
+        html_table_src_idx = src_idx
+        -- Check if </table> is on the same line
+        if line:lower():match "</table" then
+          html_table_depth = 0
+          -- will be handled on next iteration; re-process
+          in_html_table = false
+          local pipe_lines = html_table_to_pipe(html_table_lines)
+          if #pipe_lines >= 2 then
+            if lines_shown > 0 and not prev_rendered_blank then
+              self:add_line(indent)
+              lines_shown = lines_shown + 1
+            end
+            local tbl_lines_before = #self.lines
+            self:add_table(pipe_lines, indent, max_width, repo_base_url, autolinks)
+            lines_shown = lines_shown + (#self.lines - tbl_lines_before)
+            if in_details and details_summary_rendered and not skip_details_body then
+              apply_details_body_prefix(tbl_lines_before, #self.lines)
+            end
+          end
+          html_table_lines = {}
+          html_table_src_idx = nil
+        end
         goto continue
       end
     end

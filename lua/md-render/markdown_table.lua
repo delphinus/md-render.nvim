@@ -209,12 +209,22 @@ function MarkdownTable.parse(lines, repo_base_url, autolinks)
     col_widths[col] = w
   end
 
+  -- Detect empty header (all cells are blank) — used by HTML table conversion
+  local empty_header = true
+  for _, h in ipairs(headers) do
+    if h.text:match "%S" then
+      empty_header = false
+      break
+    end
+  end
+
   return {
     headers = headers,
     alignments = alignments,
     rows = rows,
     col_widths = col_widths,
     _raw_lines = lines,
+    empty_header = empty_header,
   }
 end
 
@@ -415,10 +425,11 @@ function MarkdownTable.render(parsed_table, indent, max_width)
   --- Build a data row line (header or body)
   ---@param cells MdRender.MarkdownTable.ParsedCell[]
   ---@param is_header boolean
+  ---@param col_align_overrides? table<integer, string> per-column alignment overrides
   ---@return string line
   ---@return MdRender.Highlight.Group[] highlights
   ---@return {col_start: integer, col_end: integer, url: string}[] links
-  local function build_row(cells, is_header)
+  local function build_row(cells, is_header, col_align_overrides)
     local parts = {}
     local hls = {}
     local lnks = {}
@@ -466,7 +477,8 @@ function MarkdownTable.render(parsed_table, indent, max_width)
         cell_links = clipped_links
       end
 
-      local padded, left_pad = pad_cell(display_text, col_widths[col], parsed_table.alignments[col])
+      local col_align = (col_align_overrides and col_align_overrides[col]) or parsed_table.alignments[col]
+      local padded, left_pad = pad_cell(display_text, col_widths[col], col_align)
 
       -- "│ " before cell
       local sep = "│ "
@@ -537,17 +549,18 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     return line, hls
   end
 
-  -- Header row
-  local h_line, h_hls, h_links = build_row(parsed_table.headers, true)
-  table.insert(out_lines, h_line)
-  table.insert(out_highlights, h_hls)
-  table.insert(out_links, h_links)
+  -- Header row and separator (skip when header is empty, e.g. HTML tables without <th>)
+  if not parsed_table.empty_header then
+    local h_line, h_hls, h_links = build_row(parsed_table.headers, true)
+    table.insert(out_lines, h_line)
+    table.insert(out_highlights, h_hls)
+    table.insert(out_links, h_links)
 
-  -- Separator
-  local s_line, s_hls = build_separator()
-  table.insert(out_lines, s_line)
-  table.insert(out_highlights, s_hls)
-  table.insert(out_links, {})
+    local s_line, s_hls = build_separator()
+    table.insert(out_lines, s_line)
+    table.insert(out_highlights, s_hls)
+    table.insert(out_links, {})
+  end
 
   --- Build an empty row line with borders only (for image placeholder rows)
   ---@return string line
@@ -623,7 +636,14 @@ function MarkdownTable.render(parsed_table, indent, max_width)
           label_cells[col] = row[col]
         end
       end
-      local label_line, label_hls, label_links = build_row(label_cells, false)
+      -- Center-align image label cells
+      local img_align_overrides = {}
+      for col = 1, num_cols do
+        if row_images[col] then
+          img_align_overrides[col] = "center"
+        end
+      end
+      local label_line, label_hls, label_links = build_row(label_cells, false, img_align_overrides)
       table.insert(out_lines, label_line)
       table.insert(out_highlights, label_hls)
       table.insert(out_links, label_links)
@@ -639,18 +659,23 @@ function MarkdownTable.render(parsed_table, indent, max_width)
 
       -- Record image placements (positions relative to table start)
       for col, img in pairs(row_images) do
-        -- Calculate the byte offset of this column's content area
-        local col_byte_offset = #indent
+        -- Calculate the display column offset of this column's content area
+        -- (put_image uses display columns, not byte offsets)
+        local col_display_offset = vim.fn.strdisplaywidth(indent)
         for c = 1, col - 1 do
-          col_byte_offset = col_byte_offset + 3 + col_widths[c] -- "│ " + width + " "
+          col_display_offset = col_display_offset + 3 + col_widths[c] -- "│ " (2) + width + " " (1)
         end
-        col_byte_offset = col_byte_offset + 3 -- "│ " for this column
+        col_display_offset = col_display_offset + 2 -- "│ " for this column
+
+        -- Center image horizontally within the cell
+        local center_pad = math.max(0, math.floor((col_widths[col] - img.display_cols) / 2))
+        col_display_offset = col_display_offset + center_pad
 
         table.insert(out_image_placements, {
           resolved = img.resolved,
           src_url = img.src_url,
           line_offset = img_start_line_idx,
-          col = col_byte_offset,
+          col = col_display_offset,
           rows = img.display_rows,
           cols = img.display_cols,
         })
