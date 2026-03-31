@@ -91,6 +91,20 @@ function M.setup_highlights()
   M.setup_heading_highlights()
   M.setup_alert_highlights()
   M.setup_details_highlights()
+  M.setup_image_placeholder_highlight()
+end
+
+--- Set up image placeholder highlight group (MdRenderImagePlaceholder)
+function M.setup_image_placeholder_highlight()
+  local normal_hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
+  if not normal_hl.bg then
+    normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  end
+  local normal_bg = normal_hl.bg or 0x1e1e2e
+  local comment_hl = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
+  local fg = comment_hl.fg or 0x888888
+  local bg = blend_color(fg, normal_bg, 0.12)
+  vim.api.nvim_set_hl(0, "MdRenderImagePlaceholder", { fg = fg, bg = bg, default = true })
 end
 
 -- Re-export submodules (preview is lazy-loaded to avoid circular dependency)

@@ -366,7 +366,7 @@ end
 ---@param content MdRender.Content
 ---@param on_download? fun() callback when a URL image finishes downloading
 ---@return MdRender.ImageState?
-function M.setup_images(win, content, on_download)
+function M.setup_images(win, content, on_download, ns)
   if not content.image_placements or #content.image_placements == 0 then
     return nil
   end
@@ -466,6 +466,44 @@ function M.setup_images(win, content, on_download)
     end, 50)
   end
 
+  --- Clear placeholder text from buffer lines for a given placement.
+  --- Replaces the image area lines with spaces so the text doesn't show through
+  --- the Kitty graphics overlay.
+  ---@param placement MdRender.ImagePlacement
+  local function clear_placeholder_text(placement, num_rows)
+    if not ns then return end
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+    local buf = vim.api.nvim_win_get_buf(state.win)
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    local line_count = vim.api.nvim_buf_line_count(buf)
+    local start_line = placement.line
+    local end_line = math.min(placement.line + num_rows - 1, line_count - 1)
+    -- Find lines that have MdRenderImagePlaceholder extmarks
+    local placeholder_lines = {}
+    local marks = vim.api.nvim_buf_get_extmarks(buf, ns, { start_line, 0 }, { end_line, -1 }, { details = true })
+    for _, mark in ipairs(marks) do
+      if mark[4] and mark[4].hl_group == "MdRenderImagePlaceholder" then
+        placeholder_lines[mark[2]] = true  -- mark[2] is the line number
+        vim.api.nvim_buf_del_extmark(buf, ns, mark[1])
+      end
+    end
+    -- Only replace text on lines that had placeholder extmarks
+    if next(placeholder_lines) then
+      local was_modifiable = vim.bo[buf].modifiable
+      vim.bo[buf].modifiable = true
+      for line_idx in pairs(placeholder_lines) do
+        if line_idx < line_count then
+          local old_line = vim.api.nvim_buf_get_lines(buf, line_idx, line_idx + 1, false)[1]
+          if old_line then
+            local replacement = string.rep(" ", #old_line)
+            vim.api.nvim_buf_set_lines(buf, line_idx, line_idx + 1, false, { replacement })
+          end
+        end
+      end
+      vim.bo[buf].modifiable = was_modifiable
+    end
+  end
+
   --- Process a single placement: download (if URL), convert, transmit, and display.
   ---@param placement MdRender.ImagePlacement
   process_placement = function(placement)
@@ -475,6 +513,9 @@ function M.setup_images(win, content, on_download)
 
       placement.path = path
       placement.animated = image.is_animated_gif(path)
+
+      -- Save original placeholder row count before recalculation
+      local placeholder_rows = placement.rows
 
       -- Recalculate display size with real dimensions
       local img_w, img_h = image.image_dimensions(path)
@@ -487,6 +528,8 @@ function M.setup_images(win, content, on_download)
       if placement.animated then
         image.transmit_animated_async(path, function(frame_ids, tmp_dir)
           if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
+          -- Clear all placeholder lines (using original count before recalculation)
+          clear_placeholder_text(placement, placeholder_rows)
           state.image_ids[path] = frame_ids[1]
           local anim = {
             frame_ids = frame_ids,
@@ -511,6 +554,8 @@ function M.setup_images(win, content, on_download)
       else
         image.transmit_image_async(path, function(id)
           if not id or not vim.api.nvim_win_is_valid(state.win) then return end
+          -- Clear all placeholder lines (using original count before recalculation)
+          clear_placeholder_text(placement, placeholder_rows)
           state.image_ids[path] = id
           -- Use schedule_redraw to re-place ALL images together after redraw!
           schedule_redraw()

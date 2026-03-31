@@ -224,7 +224,7 @@ MdPreview.show = function(opts)
         image_state = display_utils.update_images(image_state, win, content)
       end
     end, 150)
-  end)
+  end, ns)
 
   -- Track preview cursor for sync-back on close
   local last_preview_line = target
@@ -456,7 +456,7 @@ MdPreview.show_demo = function()
     if vim.api.nvim_win_is_valid(win) then
       rebuild()
     end
-  end)
+  end, ns)
 
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win),

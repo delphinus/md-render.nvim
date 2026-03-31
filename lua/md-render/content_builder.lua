@@ -2120,17 +2120,30 @@ function ContentBuilder:render_document(lines, opts)
               local img_start_line = #self.lines
               -- Center the image horizontally
               local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
-              -- Show placeholder text only while the image is still loading
+              -- Show placeholder with background highlight while the image is loading.
+              -- The image overlay (Kitty graphics) will cover this once loaded.
+              local indent_width = vim.fn.strdisplaywidth(indent)
+              local placeholder_msg = is_animated and "Loading animation..." or "Loading image..."
+              local msg_width = vim.fn.strdisplaywidth(placeholder_msg)
+              local mid_row = math.floor(display_rows / 2) + 1
               for r = 1, display_rows do
-                if not resolved and r == math.floor(display_rows / 2) + 1 then
-                  local placeholder_msg = "Loading image..."
-                  local pad = math.max(0, math.floor((display_cols - vim.fn.strdisplaywidth(placeholder_msg)) / 2))
-                  local placeholder_line = indent .. string.rep(" ", img_col) .. string.rep(" ", pad) .. placeholder_msg
+                local spaces_to_img = math.max(0, img_col - indent_width)
+                if r == mid_row and msg_width <= display_cols then
+                  -- Center a short message within the image area
+                  local pad = math.floor((display_cols - msg_width) / 2)
+                  local right_pad = display_cols - pad - msg_width
+                  local placeholder_line = indent .. string.rep(" ", spaces_to_img)
+                      .. string.rep(" ", pad) .. placeholder_msg .. string.rep(" ", right_pad)
+                  local hl_start = #indent + spaces_to_img
                   self:add_line(placeholder_line, {
-                    { col = 0, end_col = #placeholder_line, hl = "Comment" },
+                    { col = hl_start, end_col = #placeholder_line, hl = "MdRenderImagePlaceholder" },
                   })
                 else
-                  self:add_line(indent)
+                  local fill = indent .. string.rep(" ", spaces_to_img) .. string.rep(" ", display_cols)
+                  local hl_start = #indent + spaces_to_img
+                  self:add_line(fill, {
+                    { col = hl_start, end_col = #fill, hl = "MdRenderImagePlaceholder" },
+                  })
                 end
               end
               table.insert(self.image_placements, {
