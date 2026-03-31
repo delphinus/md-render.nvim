@@ -423,6 +423,13 @@ function M.setup_images(win, content, on_download)
       for _, id in pairs(state.image_ids) do
         image.clear_placements(id)
       end
+      -- Also clear placements for all animation frames (not just frame_ids[1]
+      -- stored in image_ids) to avoid stale frame ghosts.
+      for _, anim in pairs(state.anims) do
+        for _, fid in ipairs(anim.frame_ids) do
+          image.clear_placements(fid)
+        end
+      end
       for _, placement in ipairs(state.placements) do
         local anim = state.anims[placement.path]
         if anim then
@@ -495,13 +502,10 @@ function M.setup_images(win, content, on_download)
               timer:stop()
               return
             end
-            local prev_id = anim.frame_ids[anim.current]
             anim.current = anim.current % #anim.frame_ids + 1
-            image.begin_batch()
-            image.clear_placements(prev_id)
-            image.put_image(anim.frame_ids[anim.current], state.win,
-              placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
-            image.flush_batch()
+            -- Re-place ALL images (static + animated) to prevent static
+            -- images from disappearing after TUI refresh clears placements.
+            place_images()
           end))
         end)
       else
