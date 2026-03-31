@@ -2,27 +2,31 @@
 
 [日本語版はこちら](#日本語)
 
-Markdown rendering engine for Neovim floating windows. Transforms raw Markdown text into richly highlighted, interactive content displayed in floating windows.
+A Markdown rendering engine for Neovim floating windows. Transforms raw Markdown into richly highlighted, interactive content — right inside your editor.
 
-![demo](assets/demo.png)
+<table>
+<tr>
+<td><img src="assets/screenshot-rendering.png" alt="Markdown rendering features" /></td>
+<td><img src="assets/screenshot-images.png" alt="Images and Mermaid diagrams" /></td>
+</tr>
+<tr>
+<td align="center"><em>Inline formatting, tables, callouts, code blocks, and CJK line-breaking</em></td>
+<td align="center"><em>Local/web images (including animated GIF) and Mermaid diagrams</em></td>
+</tr>
+</table>
 
-## Features
+## Highlights
 
-- **Inline formatting** — bold (`**bold**`), strikethrough (`~~strike~~`), inline code (`` `code` ``), and Obsidian highlight (`==highlight==`)
-- **Headings** — ATX (`# H1` .. `###### H6`) and Setext styles, each with distinct icons and treesitter-aware colors
-- **Links** — `[text](url)`, reference-style `[text][ref]`, bare URLs (auto-truncated), `#123` issue/PR references, and configurable autolinks (e.g. `JIRA-123`)
-- **Obsidian support** — `[[wikilinks]]`, `![[embeds]]`, `%%inline comments%%`, block comments, and all callout/alert types
-- **Alerts / Callouts** — GitHub (`NOTE`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`) and Obsidian extended types (`ABSTRACT`, `TODO`, `SUCCESS`, `QUESTION`, `FAILURE`, `DANGER`, `BUG`, `EXAMPLE`, `QUOTE`, etc.) with colored borders, icons, and background highlights
-- **Foldable callouts** — `[!TYPE]+` / `[!TYPE]-` syntax with click-to-toggle fold indicators
-- **Tables** — parsed and rendered with box-drawing borders, column alignment (left/center/right), proportional column shrinking, and inline formatting within cells
-- **Code blocks** — fenced code blocks with treesitter syntax highlighting for the specified language
-- **Word wrapping** — CJK-aware wrapping with [BudouX](https://github.com/google/budoux) phrase segmentation and JIS X 4051 kinsoku shori (line-breaking rules)
-- **Blockquotes** — nested blockquote rendering with `│` border indicators
-- **Ordered lists** — CommonMark-compliant renumbering
-- **Expandable regions** — click to expand/collapse truncated code blocks and tables
-- **Clickable links** — mouse click to open URLs; native OSC 8 hyperlink support for compatible terminals
-- **YAML frontmatter** — parsed and displayed as a properties section
-- **Auto-close** — floating windows close on cursor movement or window change
+- **Rich inline formatting** — bold, strikethrough, inline code, links, Obsidian `==highlight==`, all rendered in-place
+- **Tables** — box-drawing borders, column alignment, proportional sizing, and inline formatting within cells
+- **Callouts & folds** — GitHub and Obsidian alert types with colored borders, icons, and click-to-toggle folding
+- **Code blocks** — fenced blocks with treesitter syntax highlighting; expandable when truncated
+- **Images** — local and web images (PNG, JPEG, WebP, GIF, animated GIF) displayed inline via terminal graphics protocol
+- **Mermaid diagrams** — rendered as images inline
+- **CJK-aware word wrapping** — [BudouX](https://github.com/google/budoux) phrase segmentation + JIS X 4051 kinsoku shori
+- **Clickable links** — mouse click to open URLs; OSC 8 hyperlink support for compatible terminals
+- **`<details>` support** — collapsible sections with click-to-toggle, respecting the `open` attribute
+- **Library API** — use the rendering engine programmatically from your own plugins
 
 ## Requirements
 
@@ -60,22 +64,6 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",    { desc = "Markdow
 
 ## Usage
 
-### Markdown Preview
-
-Open a floating preview window for the current Markdown buffer:
-
-```lua
-require("md-render").preview.show()
-```
-
-### Demo
-
-Show a demo window with all supported Markdown notations (headings, lists, tables, code blocks, alerts, kinsoku wrapping, etc.):
-
-```lua
-require("md-render").preview.show_demo()
-```
-
 ### As a Library
 
 Use the rendering engine to build highlighted content programmatically:
@@ -105,29 +93,6 @@ local ns = vim.api.nvim_create_namespace("my_ns")
 md.display_utils.apply_content_to_buffer(buf, ns, content)
 ```
 
-## Module Structure
-
-| Module | Description |
-|---|---|
-| `md-render.init` | Entry point; sets up highlight groups and re-exports submodules |
-| `md-render.markdown` | Markdown line parser — inline formatting, links, alerts, blockquotes |
-| `md-render.content_builder` | Builds rendered content with word wrapping, code blocks, tables, and callouts |
-| `md-render.markdown_table` | Table parser and renderer with alignment and proportional column sizing |
-| `md-render.float_win` | Floating window lifecycle management with auto-close |
-| `md-render.display_utils` | Buffer/window utilities — extmarks, treesitter highlights, keymaps, OSC 8 |
-| `md-render.preview` | Markdown preview command with YAML frontmatter and interactive fold/expand |
-| `md-render.budoux` | BudouX parser for natural Japanese text segmentation (ported from [google/budoux](https://github.com/google/budoux)) |
-| `md-render.budoux_ja` | BudouX Japanese model data |
-
-## Highlight Groups
-
-The plugin defines the following highlight groups (all set with `default = true`, so your colorscheme takes precedence):
-
-- `MdRenderH1` .. `MdRenderH6` — heading levels, derived from treesitter `@markup.heading` groups
-- `MdRenderHighlight` — Obsidian `==highlight==` markers
-- `MdRenderAlert{Type}` — alert title text (e.g. `MdRenderAlertNote`, `MdRenderAlertWarning`)
-- `MdRenderAlert{Type}Bg` — alert background (blended from the alert color and `NormalFloat` background)
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
@@ -138,27 +103,31 @@ This project includes code ported from [BudouX](https://github.com/google/budoux
 
 # 日本語
 
-Neovim のフローティングウィンドウで Markdown をリッチにレンダリングするエンジンです。生の Markdown テキストをハイライト付きのインタラクティブなコンテンツに変換して表示します。
+Neovim のフローティングウィンドウで Markdown をリッチにレンダリングするエンジンです。生の Markdown テキストをハイライト付きのインタラクティブなコンテンツに変換して、エディタ内で表示します。
 
-![demo](assets/demo.png)
+<table>
+<tr>
+<td><img src="assets/screenshot-rendering.png" alt="Markdown レンダリング機能" /></td>
+<td><img src="assets/screenshot-images.png" alt="画像と Mermaid ダイアグラム" /></td>
+</tr>
+<tr>
+<td align="center"><em>インライン書式、テーブル、コールアウト、コードブロック、CJK 折り返し</em></td>
+<td align="center"><em>ローカル/Web 画像（アニメーション GIF 含む）と Mermaid ダイアグラム</em></td>
+</tr>
+</table>
 
-## 機能
+## 主な機能
 
-- **インライン書式** — 太字（`**bold**`）、取り消し線（`~~strike~~`）、インラインコード（`` `code` ``）、Obsidian ハイライト（`==highlight==`）
-- **見出し** — ATX（`# H1` .. `###### H6`）と Setext スタイル、treesitter 連携のカラー表示
-- **リンク** — `[text](url)`、参照スタイル `[text][ref]`、裸 URL（自動省略表示）、`#123` issue/PR 参照、設定可能なオートリンク（例: `JIRA-123`）
-- **Obsidian 対応** — `[[wikilinks]]`、`![[embeds]]`、`%%インラインコメント%%`、ブロックコメント、全コールアウトタイプ
-- **アラート / コールアウト** — GitHub（`NOTE`、`TIP`、`IMPORTANT`、`WARNING`、`CAUTION`）および Obsidian 拡張タイプ（`ABSTRACT`、`TODO`、`SUCCESS`、`QUESTION`、`FAILURE`、`DANGER`、`BUG`、`EXAMPLE`、`QUOTE` 等）に対応、色付きボーダー・アイコン・背景ハイライト付き
-- **折りたたみコールアウト** — `[!TYPE]+` / `[!TYPE]-` 構文でクリックによる折りたたみ切り替え
-- **テーブル** — 罫線文字による描画、列アラインメント（左/中央/右）、比例列縮小、セル内インライン書式
-- **コードブロック** — フェンスコードブロックと treesitter によるシンタックスハイライト
-- **ワードラップ** — [BudouX](https://github.com/google/budoux) によるフレーズ分割と JIS X 4051 禁則処理による CJK 対応の折り返し（[詳細](docs/line-breaking-ja.md)）
-- **ブロック引用** — `│` ボーダー付きのネスト対応
-- **番号付きリスト** — CommonMark 準拠の番号振り直し
-- **展開可能領域** — クリックで省略されたコードブロックやテーブルを展開/折りたたみ
-- **クリック可能リンク** — マウスクリックで URL を開く、対応ターミナルでの OSC 8 ハイパーリンク
-- **YAML フロントマター** — パースしてプロパティセクションとして表示
-- **自動クローズ** — カーソル移動やウィンドウ切り替えでフローティングウィンドウを自動で閉じる
+- **リッチなインライン書式** — 太字、取り消し線、インラインコード、リンク、Obsidian `==highlight==` をその場でレンダリング
+- **テーブル** — 罫線文字による描画、列アラインメント、比例サイズ調整、セル内インライン書式
+- **コールアウト & 折りたたみ** — GitHub / Obsidian のアラートタイプに対応。色付きボーダー・アイコン・クリックで折りたたみ切り替え
+- **コードブロック** — treesitter シンタックスハイライト付きフェンスコードブロック。省略時はクリックで展開
+- **画像** — ローカルおよび Web 画像（PNG, JPEG, WebP, GIF, アニメーション GIF）をターミナルグラフィクスプロトコルでインライン表示
+- **Mermaid ダイアグラム** — 画像としてインライン表示
+- **CJK 対応ワードラップ** — [BudouX](https://github.com/google/budoux) のフレーズ分割 + JIS X 4051 禁則処理
+- **クリック可能リンク** — マウスクリックで URL を開く。対応ターミナルでは OSC 8 ハイパーリンク
+- **`<details>` 対応** — クリックで折りたたみ可能なセクション。`open` 属性にも対応
+- **ライブラリ API** — レンダリングエンジンを自作プラグインからプログラム的に利用可能
 
 ## 必要要件
 
@@ -196,22 +165,6 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",    { desc = "Markdow
 
 ## 使い方
 
-### Markdown プレビュー
-
-現在の Markdown バッファのフローティングプレビューウィンドウを開きます：
-
-```lua
-require("md-render").preview.show()
-```
-
-### デモ
-
-対応する全 Markdown 記法（見出し、リスト、テーブル、コードブロック、アラート、禁則処理など）のデモウィンドウを表示します：
-
-```lua
-require("md-render").preview.show_demo()
-```
-
 ### ライブラリとして使う
 
 レンダリングエンジンをプログラムから利用してハイライト付きコンテンツを構築できます：
@@ -240,29 +193,6 @@ local buf = vim.api.nvim_create_buf(false, true)
 local ns = vim.api.nvim_create_namespace("my_ns")
 md.display_utils.apply_content_to_buffer(buf, ns, content)
 ```
-
-## モジュール構成
-
-| モジュール | 説明 |
-|---|---|
-| `md-render.init` | エントリポイント。ハイライトグループの設定とサブモジュールの再エクスポート |
-| `md-render.markdown` | Markdown 行パーサー — インライン書式、リンク、アラート、ブロック引用 |
-| `md-render.content_builder` | ワードラップ、コードブロック、テーブル、コールアウトを含むレンダリングコンテンツの構築 |
-| `md-render.markdown_table` | テーブルのパースとレンダリング（アラインメント、比例列サイズ調整） |
-| `md-render.float_win` | フローティングウィンドウのライフサイクル管理と自動クローズ |
-| `md-render.display_utils` | バッファ/ウィンドウユーティリティ — extmarks、treesitter ハイライト、キーマップ、OSC 8 |
-| `md-render.preview` | YAML フロントマターとインタラクティブな折りたたみ/展開付き Markdown プレビュー |
-| `md-render.budoux` | BudouX パーサー — 日本語テキストの自然な分節処理（[google/budoux](https://github.com/google/budoux) からの移植） |
-| `md-render.budoux_ja` | BudouX 日本語モデルデータ |
-
-## ハイライトグループ
-
-以下のハイライトグループを定義します（すべて `default = true` で設定されるため、カラースキームが優先されます）：
-
-- `MdRenderH1` .. `MdRenderH6` — 見出しレベル、treesitter の `@markup.heading` グループから導出
-- `MdRenderHighlight` — Obsidian `==highlight==` マーカー
-- `MdRenderAlert{Type}` — アラートタイトルテキスト（例: `MdRenderAlertNote`、`MdRenderAlertWarning`）
-- `MdRenderAlert{Type}Bg` — アラート背景（アラート色と `NormalFloat` 背景色のブレンド）
 
 ## ライセンス
 
