@@ -287,6 +287,10 @@ end
 
 --- Show a demo floating window with all supported Markdown notations
 MdPreview.show_demo = function()
+  -- Resolve plugin root for demo image paths
+  local plugin_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h:h")
+  local demo_img_dir = plugin_root .. "/assets/demo"
+
   local demo_lines = vim.split(table.concat({
     "## Markdown Rendering Features",
     "",
@@ -373,6 +377,18 @@ MdPreview.show_demo = function()
     ":::note alert",
     "重要な注意事項を強調できます。",
     ":::",
+    "",
+    "### Images",
+    "",
+    "![PNG](" .. demo_img_dir .. "/test.png)",
+    "",
+    "![JPEG](" .. demo_img_dir .. "/test.jpg)",
+    "",
+    "![WebP](" .. demo_img_dir .. "/test.webp)",
+    "",
+    "![GIF](" .. demo_img_dir .. "/test.gif)",
+    "",
+    "![Animated GIF](" .. demo_img_dir .. "/test_animated.gif)",
     "",
     "### Mermaid Diagram",
     "",
