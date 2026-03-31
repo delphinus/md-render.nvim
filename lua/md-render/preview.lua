@@ -155,6 +155,7 @@ MdPreview.show = function(opts)
   require("md-render").setup_highlights()
 
   local content
+  local win
 
   local function rebuild()
     opts.fold_state = fold_state
@@ -175,7 +176,7 @@ MdPreview.show = function(opts)
 
   content = MdPreview.build_content(source_lines, opts)
   display_utils.apply_content_to_buffer(buf, ns, content)
-  local win = display_utils.open_float_window(buf, content, float_win, {
+  win = display_utils.open_float_window(buf, content, float_win, {
     title = " Markdown Preview ",
     position = "center",
     enter = true,
@@ -416,6 +417,7 @@ MdPreview.show_demo = function()
   require("md-render").setup_highlights()
 
   local content
+  local win
 
   local function rebuild()
     opts.fold_state = fold_state
@@ -442,7 +444,7 @@ MdPreview.show_demo = function()
   }
   content = MdPreview.build_content(demo_lines, opts)
   display_utils.apply_content_to_buffer(buf, ns, content)
-  local win = display_utils.open_float_window(buf, content, demo_float_win, {
+  win = display_utils.open_float_window(buf, content, demo_float_win, {
     title = " Markdown Rendering Demo ",
     position = "center",
     enter = true,
