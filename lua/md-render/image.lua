@@ -754,84 +754,72 @@ local MAX_ANIM_FRAMES = 60  -- max frames to extract from animated GIFs
 
 --- Extract frames from an animated GIF and transmit each as a separate image.
 --- Large GIFs are resized and frames are sampled to stay under MAX_ANIM_FRAMES.
---- Returns array of frame IDs and a temp directory to clean up.
+--- Extracted frames are cached on disk for fast subsequent loads.
+--- Returns array of frame IDs and nil (frames are cached, not temporary).
 ---@param path string absolute path to animated GIF
 ---@return integer[]? frame_ids
----@return string? tmp_dir  temp directory containing extracted frames
+---@return string? tmp_dir  always nil (frames persist in cache)
+---@return integer? frame_w  actual width of transmitted frame PNGs
+---@return integer? frame_h  actual height of transmitted frame PNGs
 function M.transmit_animated(path)
   if not M.supports_kitty() then return nil end
   if not get_tty_path() then return nil end
 
-  -- Count total frames first (lightweight identify)
-  local count_result = vim.system({
-    "magick", "identify", "-format", "%n\n", path,
-  }, { text = true }):wait()
-  local total_frames = 1
-  if count_result.code == 0 and count_result.stdout then
-    total_frames = tonumber(count_result.stdout:match("%d+")) or 1
-  end
+  local cache_dir = get_frames_cache_dir(path)
 
-  -- Build magick command with sampling and resize for large GIFs
-  local tmp_dir = os.tmpname() .. "_frames"
-  vim.fn.mkdir(tmp_dir, "p")
-
-  local cmd = { "magick", path, "-coalesce" }
-  -- Sample frames if too many (e.g., take every Nth frame)
-  if total_frames > MAX_ANIM_FRAMES then
-    local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
-    -- Select every Nth frame using -delete to remove intermediate frames
-    -- Simpler: use -resize to shrink and only write sampled frames
-    local keep = {}
-    for i = 0, total_frames - 1, step do
-      table.insert(keep, tostring(i))
+  -- Check frame cache first
+  local cached = get_cached_frames(path, cache_dir)
+  if not cached then
+    -- Count total frames first (lightweight identify)
+    local count_result = vim.system({
+      "magick", "identify", "-format", "%n\n", path,
+    }, { text = true }):wait()
+    local total_frames = 1
+    if count_result.code == 0 and count_result.stdout then
+      total_frames = tonumber(count_result.stdout:match("%d+")) or 1
     end
-    -- magick input -coalesce -delete '!0,N,2N,...' means delete all except listed
-    -- Unfortunately magick delete syntax is complex. Use sampling via shell.
-    cmd = {
-      "magick", path, "-coalesce",
-      "-resize", "800x800>",
-      "-set", "dispose", "background",
-    }
-  else
+
+    -- Build magick command: coalesce first, then delete unwanted frames
+    vim.fn.mkdir(cache_dir, "p")
+
+    local cmd = { "magick", path, "-coalesce" }
+    if total_frames > MAX_ANIM_FRAMES then
+      local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
+      local delete = {}
+      for i = 0, total_frames - 1 do
+        if i % step ~= 0 then
+          table.insert(delete, tostring(i))
+        end
+      end
+      if #delete > 0 then
+        table.insert(cmd, "-delete")
+        table.insert(cmd, table.concat(delete, ","))
+      end
+    end
     table.insert(cmd, "-resize")
     table.insert(cmd, "800x800>")
-  end
-  table.insert(cmd, tmp_dir .. "/frame_%04d.png")
+    table.insert(cmd, cache_dir .. "/frame_%04d.png")
 
-  local result = vim.system(cmd, { text = true, timeout = 15000 }):wait()
+    local result = vim.system(cmd, { text = true, timeout = 30000 }):wait()
 
-  if result.code ~= 0 then
-    vim.fn.delete(tmp_dir, "rf")
-    return nil
-  end
-
-  local frames = vim.fn.glob(tmp_dir .. "/frame_*.png", false, true)
-  table.sort(frames)
-  if #frames == 0 then
-    vim.fn.delete(tmp_dir, "rf")
-    return nil
-  end
-
-  -- Sample frames if still too many after extraction
-  if #frames > MAX_ANIM_FRAMES then
-    local step = math.ceil(#frames / MAX_ANIM_FRAMES)
-    local sampled = {}
-    for i = 1, #frames, step do
-      table.insert(sampled, frames[i])
+    if result.code ~= 0 then
+      vim.fn.delete(cache_dir, "rf")
+      return nil
     end
-    -- Delete unused frame files
-    for i = 1, #frames do
-      local keep = false
-      for _, s in ipairs(sampled) do
-        if frames[i] == s then keep = true; break end
-      end
-      if not keep then os.remove(frames[i]) end
+
+    cached = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
+    table.sort(cached)
+    if #cached == 0 then
+      vim.fn.delete(cache_dir, "rf")
+      return nil
     end
-    frames = sampled
   end
+
+  -- Read actual frame dimensions (may differ from original GIF due to resize)
+  local frame_w, frame_h = M.image_dimensions(cached[1])
 
   local frame_ids = {}
-  for _, frame_path in ipairs(frames) do
+  for _, frame_path in ipairs(cached) do
     _image_id = _image_id + 1
     local id = _image_id
     local b64_path = vim.base64.encode(frame_path)
@@ -842,7 +830,8 @@ function M.transmit_animated(path)
     table.insert(frame_ids, id)
   end
 
-  return frame_ids, tmp_dir
+  -- Frames are in persistent cache, not a tmp_dir
+  return frame_ids, nil, frame_w, frame_h
 end
 
 --- Transmit image asynchronously (converts to PNG if needed, then transmits).
@@ -870,15 +859,74 @@ function M.transmit_image_async(path, callback)
   end)
 end
 
-local MAX_ANIM_TOTAL_FRAMES = 200  -- GIFs with more frames than this get static first-frame only
+--- Get persistent cache directory for extracted GIF frames.
+--- Uses a hash of the source path to create a stable directory name.
+---@param gif_path string
+---@return string
+local function get_frames_cache_dir(gif_path)
+  local hash = vim.fn.sha256(gif_path):sub(1, 16)
+  local dir = get_cache_dir() .. "/frames_" .. hash
+  return dir
+end
+
+--- Check if cached frames are still valid (exist and are newer than source GIF).
+---@param gif_path string
+---@param cache_dir string
+---@return string[]?  sorted list of frame PNG paths, or nil if cache miss
+local function get_cached_frames(gif_path, cache_dir)
+  local frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
+  if #frames == 0 then return nil end
+  table.sort(frames)
+  -- Invalidate if source GIF is newer than cached frames
+  local gif_mtime = vim.fn.getftime(gif_path)
+  local frame_mtime = vim.fn.getftime(frames[1])
+  if gif_mtime > frame_mtime then
+    vim.fn.delete(cache_dir, "rf")
+    return nil
+  end
+  return frames
+end
 
 --- Extract GIF frames and transmit asynchronously.
---- For very large GIFs (>200 frames), falls back to static first-frame display.
+--- Large GIFs are sampled down to MAX_ANIM_FRAMES.
+--- Extracted frames are cached on disk for fast subsequent loads.
 ---@param path string absolute path to animated GIF
----@param callback fun(frame_ids: integer[]?, tmp_dir: string?)
+---@param callback fun(frame_ids: integer[]?, tmp_dir: string?, frame_w: integer?, frame_h: integer?)
 function M.transmit_animated_async(path, callback)
   if not M.supports_kitty() or not get_tty_path() then
     callback(nil)
+    return
+  end
+
+  local cache_dir = get_frames_cache_dir(path)
+
+  --- Transmit pre-extracted frames from cache_dir and invoke callback.
+  ---@param frames string[]
+  local function transmit_frames(frames)
+    -- Read actual frame dimensions (may differ from original GIF due to resize)
+    local frame_w, frame_h = M.image_dimensions(frames[1])
+
+    local frame_ids = {}
+    M.begin_batch()
+    for _, frame_path in ipairs(frames) do
+      _image_id = _image_id + 1
+      local id = _image_id
+      local b64_path = vim.base64.encode(frame_path)
+      term_write(string.format(
+        "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
+        id, b64_path
+      ))
+      table.insert(frame_ids, id)
+    end
+    M.flush_batch()
+    -- cache_dir is persistent (not a tmp_dir), so pass nil for cleanup
+    callback(frame_ids, nil, frame_w, frame_h)
+  end
+
+  -- Check frame cache first
+  local cached = get_cached_frames(path, cache_dir)
+  if cached then
+    transmit_frames(cached)
     return
   end
 
@@ -893,94 +941,46 @@ function M.transmit_animated_async(path, callback)
           total_frames = tonumber(count_result.stdout:match("%d+")) or 1
         end
 
-        -- Too many frames: extract first frame only as static image
-        if total_frames > MAX_ANIM_TOTAL_FRAMES then
-          local tmp_dir = os.tmpname() .. "_frames"
-          vim.fn.mkdir(tmp_dir, "p")
-          local first_frame = tmp_dir .. "/frame_0000.png"
-          vim.system(
-            { "magick", path .. "[0]", "-resize", "800x800>", first_frame },
-            { text = true, timeout = 10000 },
-            function(result)
-              vim.schedule(function()
-                if result.code ~= 0 then
-                  vim.fn.delete(tmp_dir, "rf")
-                  callback(nil)
-                  return
-                end
-                _image_id = _image_id + 1
-                local id = _image_id
-                local b64_path = vim.base64.encode(first_frame)
-                term_write(string.format(
-                  "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
-                  id, b64_path
-                ))
-                callback({ id }, tmp_dir)
-              end)
-            end
-          )
-          return
-        end
+        vim.fn.mkdir(cache_dir, "p")
 
-        local tmp_dir = os.tmpname() .. "_frames"
-        vim.fn.mkdir(tmp_dir, "p")
-
-        local cmd = { "magick", path, "-coalesce", "-resize", "800x800>" }
+        -- Build magick command: coalesce first, then delete unwanted frames
+        -- (sampling during extraction avoids writing/resizing all frames to disk).
+        local cmd = { "magick", path, "-coalesce" }
         if total_frames > MAX_ANIM_FRAMES then
-          table.insert(cmd, "-set")
-          table.insert(cmd, "dispose")
-          table.insert(cmd, "background")
+          -- Build -delete list: remove all frame indices not divisible by step
+          local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
+          local delete = {}
+          for i = 0, total_frames - 1 do
+            if i % step ~= 0 then
+              table.insert(delete, tostring(i))
+            end
+          end
+          if #delete > 0 then
+            table.insert(cmd, "-delete")
+            table.insert(cmd, table.concat(delete, ","))
+          end
         end
-        table.insert(cmd, tmp_dir .. "/frame_%04d.png")
+        table.insert(cmd, "-resize")
+        table.insert(cmd, "800x800>")
+        table.insert(cmd, cache_dir .. "/frame_%04d.png")
 
-        vim.system(cmd, { text = true, timeout = 15000 }, function(result)
+        vim.system(cmd, { text = true, timeout = 30000 }, function(result)
           vim.schedule(function()
             if result.code ~= 0 then
-              vim.fn.delete(tmp_dir, "rf")
+              vim.fn.delete(cache_dir, "rf")
               callback(nil)
               return
             end
 
-            local frames = vim.fn.glob(tmp_dir .. "/frame_*.png", false, true)
+            local frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
             table.sort(frames)
             if #frames == 0 then
-              vim.fn.delete(tmp_dir, "rf")
+              vim.fn.delete(cache_dir, "rf")
               callback(nil)
               return
             end
 
-            -- Sample if too many
-            if #frames > MAX_ANIM_FRAMES then
-              local step = math.ceil(#frames / MAX_ANIM_FRAMES)
-              local sampled = {}
-              for i = 1, #frames, step do
-                table.insert(sampled, frames[i])
-              end
-              for i = 1, #frames do
-                local keep = false
-                for _, s in ipairs(sampled) do
-                  if frames[i] == s then keep = true; break end
-                end
-                if not keep then os.remove(frames[i]) end
-              end
-              frames = sampled
-            end
-
-            local frame_ids = {}
-            M.begin_batch()
-            for _, frame_path in ipairs(frames) do
-              _image_id = _image_id + 1
-              local id = _image_id
-              local b64_path = vim.base64.encode(frame_path)
-              term_write(string.format(
-                "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
-                id, b64_path
-              ))
-              table.insert(frame_ids, id)
-            end
-            M.flush_batch()
-
-            callback(frame_ids, tmp_dir)
+            transmit_frames(frames)
           end)
         end)
       end)
