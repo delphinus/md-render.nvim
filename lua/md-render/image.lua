@@ -929,7 +929,9 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
 
   -- Check if the image is within visible window area
   local win_height = vim.api.nvim_win_get_height(win)
-  local topline = vim.fn.getwininfo(win)[1].topline - 1  -- 0-indexed
+  local wininfo = vim.fn.getwininfo(win)[1]
+  local topline = wininfo.topline - 1  -- 0-indexed
+  local leftcol = wininfo.leftcol or 0
 
   -- Image entirely above or below visible area
   local img_end_row = row + display_rows - 1
@@ -952,10 +954,30 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
       border_left_width = vim.fn.strdisplaywidth("│")
     end
   end
-  local screen_col = win_pos[2] + col + border_left_width + 1
+  -- Adjust for horizontal scroll offset
+  local visual_col = col - leftcol
+
+  -- Image entirely to the left or right of visible area
+  local img_end_col = col + display_cols - 1
+  if img_end_col < leftcol or col >= leftcol + vim.api.nvim_win_get_width(win) then return end
+
+  local screen_col = win_pos[2] + visual_col + border_left_width + 1
 
   -- Crop to visible area using source rectangle (no scaling distortion)
   local crop_params = ""
+
+  -- Left crop: image starts to the left of visible area
+  if visual_col < 0 then
+    local hidden_cols = -visual_col
+    if img_w then
+      local crop_x = math.floor(img_w * hidden_cols / display_cols)
+      crop_params = crop_params .. ",x=" .. crop_x
+      crop_params = crop_params .. ",w=" .. (img_w - crop_x)
+    end
+    display_cols = display_cols - hidden_cols
+    visual_col = 0
+    screen_col = win_pos[2] + border_left_width + 1
+  end
 
   -- Top crop: image starts above visible area
   if visual_row < 0 then
@@ -994,11 +1016,23 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   end
 
   local win_width = vim.api.nvim_win_get_width(win)
-  local visible_cols = win_width - col
+  local visible_cols = win_width - visual_col
   if visible_cols <= 0 then return end
   if display_cols > visible_cols and img_w then
-    local crop_w = math.floor(img_w * visible_cols / display_cols)
-    crop_params = crop_params .. ",w=" .. crop_w
+    -- When left is also cropped, calculate w relative to remaining source region
+    local remaining_w = img_w
+    local existing_x = crop_params:match(",x=(%d+)")
+    if existing_x then
+      remaining_w = img_w - tonumber(existing_x)
+    end
+    local crop_w = math.floor(remaining_w * visible_cols / display_cols)
+    -- Update w= if already set by left crop, otherwise add it
+    local existing_w = crop_params:match(",w=%d+")
+    if existing_w then
+      crop_params = crop_params:gsub(",w=%d+", ",w=" .. crop_w)
+    else
+      crop_params = crop_params .. ",w=" .. crop_w
+    end
     display_cols = visible_cols
   end
 
