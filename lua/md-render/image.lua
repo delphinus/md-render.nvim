@@ -475,6 +475,10 @@ function M.reset_cache()
   _kitty_supported = nil
   _is_ghostty = nil
   _session_cleared = false
+  _convert_cmd = nil
+  _convert_checked = false
+  _anim_cmd = nil
+  _anim_checked = false
   tty_mod.reset()
 end
 
@@ -681,6 +685,69 @@ function M.resolve(src, base_dir)
 end
 
 -- ============================================================================
+-- Image conversion tool detection
+-- ============================================================================
+
+local _convert_cmd = nil
+local _convert_checked = false
+
+--- Detect the best available tool for static image conversion (JPEG/WebP → PNG).
+--- Priority: sips (macOS) → ffmpeg → magick
+---@return string? tool  "sips", "ffmpeg", or "magick"
+local function find_convert_tool()
+  if _convert_checked then return _convert_cmd end
+  _convert_checked = true
+  if vim.fn.has("mac") == 1 and vim.fn.executable("sips") == 1 then
+    _convert_cmd = "sips"
+  elseif vim.fn.executable("ffmpeg") == 1 then
+    _convert_cmd = "ffmpeg"
+  elseif vim.fn.executable("magick") == 1 then
+    _convert_cmd = "magick"
+  end
+  return _convert_cmd
+end
+
+local _anim_cmd = nil
+local _anim_checked = false
+
+--- Detect the best available tool for animated GIF frame extraction.
+--- Priority: ffmpeg → magick
+---@return string? tool  "ffmpeg" or "magick"
+local function find_anim_tool()
+  if _anim_checked then return _anim_cmd end
+  _anim_checked = true
+  if vim.fn.executable("ffmpeg") == 1 then
+    _anim_cmd = "ffmpeg"
+  elseif vim.fn.executable("magick") == 1 then
+    _anim_cmd = "magick"
+  end
+  return _anim_cmd
+end
+
+--- Build a command to convert a static image to PNG with resize.
+---@param tool string  "sips", "ffmpeg", or "magick"
+---@param src string  input file path
+---@param dst string  output PNG path
+---@return string[]
+local function build_convert_cmd(tool, src, dst)
+  if tool == "sips" then
+    -- -Z resizes only if the image is larger than the specified dimension
+    return { "sips", "-s", "format", "png", "-Z", "2000", src, "--out", dst }
+  elseif tool == "ffmpeg" then
+    -- scale filter with force_original_aspect_ratio keeps aspect ratio;
+    -- -vframes 1 ensures only one frame for static images
+    return {
+      "ffmpeg", "-y", "-i", src,
+      "-vframes", "1",
+      "-vf", "scale='min(2000,iw)':'min(2000,ih)':force_original_aspect_ratio=decrease",
+      dst,
+    }
+  else
+    return { "magick", src, "-resize", "2000x2000>", dst }
+  end
+end
+
+-- ============================================================================
 -- Image conversion
 -- ============================================================================
 
@@ -690,8 +757,10 @@ end
 ---@return string? png_path, boolean is_temp
 function M.ensure_png(path)
   if M.is_native_format(path) then return path, false end
+  local tool = find_convert_tool()
+  if not tool then return nil, false end
   local tmp = os.tmpname() .. ".png"
-  local result = vim.system({ "magick", path, "-resize", "2000x2000>", tmp }, { text = true }):wait()
+  local result = vim.system(build_convert_cmd(tool, path, tmp), { text = true }):wait()
   if result.code ~= 0 then return nil, false end
   return tmp, true
 end
@@ -704,9 +773,14 @@ function M.ensure_png_async(path, callback)
     callback(path, false)
     return
   end
+  local tool = find_convert_tool()
+  if not tool then
+    callback(nil, false)
+    return
+  end
   local tmp = os.tmpname() .. ".png"
   vim.system(
-    { "magick", path, "-resize", "2000x2000>", tmp },
+    build_convert_cmd(tool, path, tmp),
     { text = true },
     function(result)
       vim.schedule(function()
@@ -784,36 +858,44 @@ end
 
 local MAX_ANIM_FRAMES = 60  -- max frames to extract from animated GIFs
 
---- Extract frames from an animated GIF and transmit each as a separate image.
---- Large GIFs are resized and frames are sampled to stay under MAX_ANIM_FRAMES.
---- Extracted frames are cached on disk for fast subsequent loads.
---- Returns array of frame IDs and nil (frames are cached, not temporary).
----@param path string absolute path to animated GIF
----@return integer[]? frame_ids
----@return string? tmp_dir  always nil (frames persist in cache)
----@return integer? frame_w  actual width of transmitted frame PNGs
----@return integer? frame_h  actual height of transmitted frame PNGs
-function M.transmit_animated(path)
-  if not M.supports_kitty() then return nil end
-  if not get_tty_path() then return nil end
+--- Build a command to count frames in an animated GIF.
+---@param tool string  "ffmpeg" or "magick"
+---@param path string  GIF file path
+---@return string[] cmd
+local function build_frame_count_cmd(tool, path)
+  if tool == "ffmpeg" then
+    return {
+      "ffprobe", "-v", "error",
+      "-count_frames", "-select_streams", "v:0",
+      "-show_entries", "stream=nb_read_frames",
+      "-of", "csv=p=0", path,
+    }
+  else
+    return { "magick", "identify", "-format", "%n\n", path }
+  end
+end
 
-  local cache_dir = get_frames_cache_dir(path)
-
-  -- Check frame cache first
-  local cached = get_cached_frames(path, cache_dir)
-  if not cached then
-    -- Count total frames first (lightweight identify)
-    local count_result = vim.system({
-      "magick", "identify", "-format", "%n\n", path,
-    }, { text = true }):wait()
-    local total_frames = 1
-    if count_result.code == 0 and count_result.stdout then
-      total_frames = tonumber(count_result.stdout:match("%d+")) or 1
+--- Build a command to extract frames from an animated GIF.
+---@param tool string  "ffmpeg" or "magick"
+---@param path string  GIF file path
+---@param cache_dir string  output directory
+---@param total_frames integer  total number of frames
+---@return string[] cmd
+local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
+  if tool == "ffmpeg" then
+    local vf_parts = {}
+    if total_frames > MAX_ANIM_FRAMES then
+      local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
+      table.insert(vf_parts, string.format("select='not(mod(n\\,%d))'", step))
     end
-
-    -- Build magick command: coalesce first, then delete unwanted frames
-    vim.fn.mkdir(cache_dir, "p")
-
+    table.insert(vf_parts, "scale='min(800,iw)':'min(800,ih)':force_original_aspect_ratio=decrease")
+    return {
+      "ffmpeg", "-y", "-i", path,
+      "-vf", table.concat(vf_parts, ","),
+      "-vsync", "vfr",
+      cache_dir .. "/frame_%04d.png",
+    }
+  else
     local cmd = { "magick", path, "-coalesce" }
     if total_frames > MAX_ANIM_FRAMES then
       local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
@@ -831,7 +913,44 @@ function M.transmit_animated(path)
     table.insert(cmd, "-resize")
     table.insert(cmd, "800x800>")
     table.insert(cmd, cache_dir .. "/frame_%04d.png")
+    return cmd
+  end
+end
 
+--- Extract frames from an animated GIF and transmit each as a separate image.
+--- Large GIFs are resized and frames are sampled to stay under MAX_ANIM_FRAMES.
+--- Extracted frames are cached on disk for fast subsequent loads.
+--- Returns array of frame IDs and nil (frames are cached, not temporary).
+---@param path string absolute path to animated GIF
+---@return integer[]? frame_ids
+---@return string? tmp_dir  always nil (frames persist in cache)
+---@return integer? frame_w  actual width of transmitted frame PNGs
+---@return integer? frame_h  actual height of transmitted frame PNGs
+function M.transmit_animated(path)
+  if not M.supports_kitty() then return nil end
+  if not get_tty_path() then return nil end
+
+  local anim_tool = find_anim_tool()
+  if not anim_tool then return nil end
+
+  local cache_dir = get_frames_cache_dir(path)
+
+  -- Check frame cache first
+  local cached = get_cached_frames(path, cache_dir)
+  if not cached then
+    -- Count total frames first
+    local count_result = vim.system(
+      build_frame_count_cmd(anim_tool, path),
+      { text = true }
+    ):wait()
+    local total_frames = 1
+    if count_result.code == 0 and count_result.stdout then
+      total_frames = tonumber(count_result.stdout:match("%d+")) or 1
+    end
+
+    vim.fn.mkdir(cache_dir, "p")
+
+    local cmd = build_frame_extract_cmd(anim_tool, path, cache_dir, total_frames)
     local result = vim.system(cmd, { text = true, timeout = 30000 }):wait()
 
     if result.code ~= 0 then
@@ -934,6 +1053,12 @@ function M.transmit_animated_async(path, callback)
     return
   end
 
+  local anim_tool = find_anim_tool()
+  if not anim_tool then
+    callback(nil)
+    return
+  end
+
   local cache_dir = get_frames_cache_dir(path)
 
   --- Transmit pre-extracted frames from cache_dir and invoke callback.
@@ -968,7 +1093,7 @@ function M.transmit_animated_async(path, callback)
 
   -- Count frames first
   vim.system(
-    { "magick", "identify", "-format", "%n\n", path },
+    build_frame_count_cmd(anim_tool, path),
     { text = true },
     function(count_result)
       vim.schedule(function()
@@ -979,26 +1104,7 @@ function M.transmit_animated_async(path, callback)
 
         vim.fn.mkdir(cache_dir, "p")
 
-        -- Build magick command: coalesce first, then delete unwanted frames
-        -- (sampling during extraction avoids writing/resizing all frames to disk).
-        local cmd = { "magick", path, "-coalesce" }
-        if total_frames > MAX_ANIM_FRAMES then
-          -- Build -delete list: remove all frame indices not divisible by step
-          local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
-          local delete = {}
-          for i = 0, total_frames - 1 do
-            if i % step ~= 0 then
-              table.insert(delete, tostring(i))
-            end
-          end
-          if #delete > 0 then
-            table.insert(cmd, "-delete")
-            table.insert(cmd, table.concat(delete, ","))
-          end
-        end
-        table.insert(cmd, "-resize")
-        table.insert(cmd, "800x800>")
-        table.insert(cmd, cache_dir .. "/frame_%04d.png")
+        local cmd = build_frame_extract_cmd(anim_tool, path, cache_dir, total_frames)
 
         vim.system(cmd, { text = true, timeout = 30000 }, function(result)
           vim.schedule(function()
