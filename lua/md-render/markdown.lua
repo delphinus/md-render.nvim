@@ -832,7 +832,7 @@ local function process_bare_urls(text, max_url_width, highlights, links)
         local display_url
 
         if vim.fn.strdisplaywidth(url) > max_url_width then
-          local target = max_url_width - 1
+          local target = max_url_width - vim.fn.strdisplaywidth("…")
           local current_width = 0
           local byte_pos = 0
           for char in url:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
