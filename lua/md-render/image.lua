@@ -1066,6 +1066,14 @@ function M.clear_all()
   term_write("\x1b_Ga=d,d=A\x1b\\")
   -- Reset ID counter to ensure clean state
   _image_id = 100
+
+  -- Ensure images are cleaned up when Neovim exits (e.g. :restart in Kitty)
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    once = true,
+    callback = function()
+      M.delete_all()
+    end,
+  })
 end
 
 return M
