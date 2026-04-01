@@ -586,6 +586,12 @@ function M.setup_images(win, content, on_download, ns)
     end
   end
 
+  -- Expose internal functions so update_images can reuse transmitted data
+  -- instead of tearing down and re-transmitting everything.
+  state.schedule_redraw = schedule_redraw
+  state.process_placement = process_placement
+  state.clear_placeholder_text = clear_placeholder_text
+
   -- Phase 1: Kick off async processing for all placements.
   -- Batch transmit commands so that synchronous transmits (local PNG files)
   -- are sent in a single TTY write, preventing TUI output from interleaving.
@@ -625,33 +631,75 @@ function M.setup_images(win, content, on_download, ns)
   return state
 end
 
---- Update image state with new content (after fold/expand toggle)
+--- Update image state with new content (after fold/expand toggle).
+--- Preserves already-transmitted images to avoid flickering; only updates
+--- placement positions and transmits genuinely new images.
 ---@param state MdRender.ImageState?
 ---@param win integer
 ---@param content MdRender.Content
 ---@return MdRender.ImageState?
 function M.update_images(state, win, content)
-  -- Clean up old images that are no longer in placements
-  if state then
-    local image = require "md-render.image"
-    local new_paths = {}
-    if content.image_placements then
-      for _, p in ipairs(content.image_placements) do
-        if p.path then
-          new_paths[p.path] = true
-        end
-      end
+  -- No previous state: full setup from scratch
+  if not state then
+    return M.setup_images(win, content)
+  end
+
+  -- No images in new content: full cleanup
+  if not content.image_placements or #content.image_placements == 0 then
+    M.cleanup_images(state)
+    return nil
+  end
+
+  local image = require "md-render.image"
+
+  -- Build set of paths present in new placements
+  local new_paths = {}
+  for _, p in ipairs(content.image_placements) do
+    if p.path then new_paths[p.path] = true end
+  end
+
+  -- Remove images no longer in placements
+  for path, id in pairs(state.image_ids) do
+    if not new_paths[path] then
+      image.delete_image(id)
+      state.image_ids[path] = nil
     end
-    for path, id in pairs(state.image_ids) do
-      if not new_paths[path] then
-        image.delete_image(id)
-        state.image_ids[path] = nil
+  end
+  for path, anim in pairs(state.anims) do
+    if not new_paths[path] then
+      if anim.timer then anim.timer:stop(); anim.timer:close() end
+      for _, fid in ipairs(anim.frame_ids) do
+        image.delete_image(fid)
       end
+      if anim.tmp_dir then vim.fn.delete(anim.tmp_dir, "rf") end
+      state.anims[path] = nil
     end
   end
 
-  M.cleanup_images(state)
-  return M.setup_images(win, content)
+  -- Update placements to new positions
+  state.placements = content.image_placements
+
+  -- For each placement: clear placeholder text for already-transmitted images,
+  -- transmit genuinely new images via the original process_placement closure.
+  image.begin_batch()
+  for _, placement in ipairs(state.placements) do
+    if placement.path then
+      if state.image_ids[placement.path] or state.anims[placement.path] then
+        -- Already transmitted — just clear placeholder text so it doesn't
+        -- show through the graphics overlay.
+        state.clear_placeholder_text(placement, placement.rows)
+      else
+        -- New image: transmit, clear placeholder, and register in state
+        state.process_placement(placement)
+      end
+    end
+  end
+  image.flush_batch()
+
+  -- Re-place all images at their updated positions
+  state.schedule_redraw()
+
+  return state
 end
 
 --- Clean up all images and autocmds

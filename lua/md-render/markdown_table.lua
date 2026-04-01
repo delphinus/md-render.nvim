@@ -367,15 +367,14 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     local total = overhead + content_sum
 
     if has_image_cells then
-      if max_width < 1e6 then
-        -- Collapsed: fit columns to image display width (tight, no extra padding)
-        for col = 1, num_cols do
-          if col_image_widths[col] then
-            col_widths[col] = math.max(col_widths[col], col_image_widths[col])
-          end
+      -- Ensure columns are wide enough for actual image display sizes
+      for col = 1, num_cols do
+        if col_image_widths[col] then
+          col_widths[col] = math.max(col_widths[col], col_image_widths[col])
         end
-      else
-        -- Expanded: ensure columns fit full image labels (no truncation)
+      end
+      if max_width >= 1e6 then
+        -- Expanded: also ensure columns fit full image labels (no truncation)
         for _, imgs in pairs(row_images_cache) do
           for col, img in pairs(imgs) do
             local label_width = vim.fn.strdisplaywidth("🖼 " .. img.alt)
