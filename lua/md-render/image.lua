@@ -432,6 +432,16 @@ end
 -- ============================================================================
 
 local _kitty_supported = nil
+local _is_ghostty = nil
+
+--- Check if running inside Ghostty terminal.
+--- Ghostty does not support t=t (temporary file transfer mode) in Kitty
+--- graphics protocol, so we must use t=f and clean up temp files ourselves.
+local function is_ghostty()
+  if _is_ghostty ~= nil then return _is_ghostty end
+  _is_ghostty = vim.env.TERM_PROGRAM == "ghostty" or vim.env.GHOSTTY_RESOURCES_DIR ~= nil
+  return _is_ghostty
+end
 
 function M.supports_kitty()
   if _kitty_supported ~= nil then return _kitty_supported end
@@ -463,6 +473,7 @@ end
 
 function M.reset_cache()
   _kitty_supported = nil
+  _is_ghostty = nil
   _session_cleared = false
   tty_mod.reset()
 end
@@ -754,7 +765,8 @@ function M.transmit_image(path)
   local id = _image_id
 
   local b64_path = vim.base64.encode(png_path)
-  local t = is_temp and "t" or "f"
+  -- Ghostty does not support t=t; always use t=f and delete temp files ourselves
+  local t = (is_temp and not is_ghostty()) and "t" or "f"
 
   -- a=t: transmit and store, q=2: suppress all responses
   local message = string.format(
@@ -762,6 +774,10 @@ function M.transmit_image(path)
     t, id, b64_path
   )
   term_write(message)
+
+  if is_temp and is_ghostty() then
+    vim.defer_fn(function() os.remove(png_path) end, 1000)
+  end
 
   return id
 end
@@ -866,11 +882,15 @@ function M.transmit_image_async(path, callback)
     _image_id = _image_id + 1
     local id = _image_id
     local b64_path = vim.base64.encode(png_path)
-    local t = is_temp and "t" or "f"
+    -- Ghostty does not support t=t; always use t=f and delete temp files ourselves
+    local t = (is_temp and not is_ghostty()) and "t" or "f"
     term_write(string.format(
       "\x1b_Ga=t,f=100,t=%s,i=%d,q=2;%s\x1b\\",
       t, id, b64_path
     ))
+    if is_temp and is_ghostty() then
+      vim.defer_fn(function() os.remove(png_path) end, 1000)
+    end
     callback(id)
   end)
 end
