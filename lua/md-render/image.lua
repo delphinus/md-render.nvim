@@ -22,6 +22,7 @@ local _batch_stack = nil
 
 --- @return string?
 local function get_tty_path()
+  if M._test_tty_path ~= nil then return M._test_tty_path end
   return tty_mod.get_tty_path()
 end
 
@@ -30,6 +31,10 @@ local function term_write(data)
   if data == "" then return end
   if _batch_buffer then
     table.insert(_batch_buffer, data)
+    return
+  end
+  if M._test_write then
+    M._test_write(data)
     return
   end
   local tty = get_tty_path()
@@ -444,6 +449,17 @@ function M.reset_cache()
   _kitty_supported = nil
   _session_cleared = false
   tty_mod.reset()
+end
+
+--- Override kitty support detection for testing.
+---@param val boolean?
+function M._set_kitty_supported(val)
+  _kitty_supported = val
+end
+
+--- Reset image ID counter for testing.
+function M._reset_image_id()
+  _image_id = 100
 end
 
 -- ============================================================================
