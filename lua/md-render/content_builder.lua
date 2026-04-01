@@ -799,6 +799,148 @@ local function pad_icon(icon)
   return icon
 end
 
+--- Nerd Font icon mapping for common file extensions.
+--- Used as fallback when nvim-web-devicons / mini.icons is not available.
+---@type table<string, string>
+local file_ext_icons = {
+  lua = "",
+  py = "",
+  js = "",
+  ts = "",
+  jsx = "",
+  tsx = "",
+  rb = "",
+  go = "",
+  rs = "",
+  c = "",
+  cpp = "",
+  h = "",
+  hpp = "",
+  cs = "󰌛",
+  java = "",
+  kt = "",
+  swift = "",
+  php = "",
+  r = "",
+  sh = "",
+  bash = "",
+  zsh = "",
+  fish = "",
+  ps1 = "󰨊",
+  vim = "",
+  html = "",
+  css = "",
+  scss = "",
+  sass = "",
+  less = "",
+  json = "",
+  yaml = "",
+  yml = "",
+  toml = "",
+  xml = "󰗀",
+  md = "",
+  markdown = "",
+  txt = "󰈙",
+  sql = "",
+  graphql = "",
+  dockerfile = "",
+  docker = "",
+  makefile = "",
+  cmake = "",
+  ex = "",
+  exs = "",
+  erl = "",
+  hs = "",
+  ml = "",
+  clj = "",
+  scala = "",
+  dart = "",
+  vue = "",
+  svelte = "",
+  zig = "",
+  nim = "",
+  perl = "",
+  pl = "",
+  diff = "",
+  patch = "",
+  lock = "",
+  conf = "",
+  cfg = "",
+  ini = "",
+  env = "",
+  csv = "",
+  svg = "󰜡",
+  png = "",
+  jpg = "",
+  jpeg = "",
+  gif = "",
+  pdf = "",
+  zip = "",
+  gz = "",
+  tar = "",
+  tf = "󱁢",
+  nix = "",
+}
+
+--- Special filename → icon mapping (case-insensitive basenames).
+---@type table<string, string>
+local file_name_icons = {
+  makefile = "",
+  dockerfile = "",
+  gemfile = "",
+  rakefile = "",
+  procfile = "",
+  vagrantfile = "⍱",
+  [".gitignore"] = "",
+  [".gitconfig"] = "",
+  [".editorconfig"] = "",
+  [".env"] = "",
+}
+
+--- Get a Nerd Font icon and highlight group for a filename.
+--- Tries nvim-web-devicons first, then mini.icons, then the built-in table.
+---@param filename string
+---@return string icon
+---@return string|nil hl_group highlight group for the icon (nil if no color info)
+local function get_file_icon(filename)
+  -- Try nvim-web-devicons
+  local ok, devicons = pcall(require, "nvim-web-devicons")
+  if ok then
+    local icon, hl = devicons.get_icon(filename, nil, { default = false })
+    if icon then
+      return icon, hl
+    end
+  end
+
+  -- Try mini.icons
+  local ok2, mini_icons = pcall(require, "mini.icons")
+  if ok2 then
+    local ok3, icon, hl = pcall(mini_icons.get, "file", filename)
+    if ok3 and icon then
+      return icon, hl
+    end
+  end
+
+  -- Built-in fallback: check special filenames first
+  local base = filename:match("[^/]+$") or filename
+  local base_lower = base:lower()
+  if file_name_icons[base_lower] then
+    return file_name_icons[base_lower], nil
+  end
+
+  -- Then check extension
+  local ext = base:match("%.([^.]+)$")
+  if ext then
+    local icon = file_ext_icons[ext:lower()]
+    if icon then
+      return icon, nil
+    end
+  end
+
+  -- Default file icon
+  return "", nil
+end
+
 --- Append a fold indicator (›/∨) to the end of a callout header line
 ---@param self MdRender.ContentBuilder
 ---@param line_idx integer 0-indexed rendered line
@@ -1976,10 +2118,20 @@ function ContentBuilder:render_document(lines, opts)
         end
         -- Render filename header above code block
         if code_block_filename then
-          local fname_line = indent .. "📄 " .. code_block_filename
-          self:add_line(fname_line, {
-            { col = 0, end_col = #fname_line, hl = "Comment" },
-          })
+          local file_icon, icon_hl = get_file_icon(code_block_filename)
+          file_icon = pad_icon(file_icon)
+          local icon_start = #indent
+          local icon_end = icon_start + #file_icon
+          local fname_line = indent .. file_icon .. " " .. code_block_filename
+          local hls = {
+            { col = icon_end, end_col = #fname_line, hl = "Comment" },
+          }
+          if icon_hl then
+            table.insert(hls, 1, { col = icon_start, end_col = icon_end, hl = icon_hl })
+          else
+            hls[1].col = icon_start
+          end
+          self:add_line(fname_line, hls)
           lines_shown = lines_shown + 1
         end
         code_block_start = #self.lines
@@ -2129,11 +2281,21 @@ function ContentBuilder:render_document(lines, opts)
               local lang_part, file_part = callout_info:match "^([^:]*):(.+)$"
               if file_part then
                 callout_code_lang = (lang_part ~= "") and lang_part or nil
-                local fname_line = indent .. "│ 📄 " .. file_part
-                self:add_line(fname_line, {
-                  { col = #indent, end_col = #indent + #"│ ", hl = "FloatBorder" },
-                  { col = #indent + #"│ ", end_col = #fname_line, hl = "Comment" },
-                })
+                local cb_file_icon, cb_icon_hl = get_file_icon(file_part)
+                cb_file_icon = pad_icon(cb_file_icon)
+                local cb_icon_start = #indent + #"│ "
+                local cb_icon_end = cb_icon_start + #cb_file_icon
+                local fname_line = indent .. "│ " .. cb_file_icon .. " " .. file_part
+                local cb_hls = {
+                  { col = #indent, end_col = cb_icon_start, hl = "FloatBorder" },
+                  { col = cb_icon_end, end_col = #fname_line, hl = "Comment" },
+                }
+                if cb_icon_hl then
+                  table.insert(cb_hls, 2, { col = cb_icon_start, end_col = cb_icon_end, hl = cb_icon_hl })
+                else
+                  cb_hls[2].col = cb_icon_start
+                end
+                self:add_line(fname_line, cb_hls)
                 self:apply_alert_styling(lines_before, #self.lines, current_alert_type, false)
                 lines_shown = lines_shown + 1
               end
