@@ -668,6 +668,8 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
         rows = p.rows,
         cols = p.cols,
         src_url = p.src_url,
+        img_w = p.img_w,
+        img_h = p.img_h,
       })
     end
   end
@@ -2090,7 +2092,7 @@ function ContentBuilder:render_document(lines, opts)
       local display_width = vim.fn.strdisplaywidth(indented)
       if not expand_state[code_block_id] and display_width > max_width then
         code_block_has_truncation = true
-        local target = max_width - 1
+        local target = max_width - vim.fn.strdisplaywidth("…")
         local current_width = 0
         local byte_pos = 0
         for char in indented:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
@@ -2171,7 +2173,7 @@ function ContentBuilder:render_document(lines, opts)
           local display_width = vim.fn.strdisplaywidth(code_line)
           if not expand_state[callout_code_block_id] and display_width > max_width then
             callout_code_has_truncation = true
-            local target = max_width - 1
+            local target = max_width - vim.fn.strdisplaywidth("…")
             local current_width = 0
             local byte_pos = 0
             for char in code_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do

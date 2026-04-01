@@ -108,8 +108,8 @@ local function truncate_to_width(text, max_display_width)
   if text_width <= max_display_width then
     return text, #text
   end
-  -- Need at least 1 col for "…"
-  local target = max_display_width - 1
+  local ellipsis_width = vim.fn.strdisplaywidth("…")
+  local target = max_display_width - ellipsis_width
   if target <= 0 then
     return "…", 0
   end
@@ -241,6 +241,7 @@ function MarkdownTable.render(parsed_table, indent, max_width)
   local out_links = {}
   local num_cols = #parsed_table.col_widths
   local col_widths = vim.deepcopy(parsed_table.col_widths)
+  local sep_width = vim.fn.strdisplaywidth("│") -- border char display width (varies with ambiwidth)
 
   --- Strip leading HTML comments from text
   ---@param text string
@@ -294,7 +295,7 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     if image_mod.supports_kitty() then
       local buf_dir = vim.fn.expand("%:p:h")
       local indent_width = vim.fn.strdisplaywidth(indent)
-      local overhead = indent_width + num_cols * 3 + 1
+      local overhead = indent_width + num_cols * (sep_width + 2) + sep_width
       local effective_max = max_width and max_width < 1e6 and max_width or 1e6
       local total_budget = effective_max - overhead
       local initial_max_per_col = math.max(1, math.floor(total_budget / num_cols))
@@ -357,8 +358,8 @@ function MarkdownTable.render(parsed_table, indent, max_width)
   if max_width then
     local indent_width = vim.fn.strdisplaywidth(indent)
     -- Total = indent + num_cols * ("│ " + col_width + " ") + "│"
-    --       = indent + num_cols * 3 + sum(col_widths) + 1
-    local overhead = indent_width + num_cols * 3 + 1
+    --       = indent + num_cols * (sep_width + 2) + sum(col_widths) + sep_width
+    local overhead = indent_width + num_cols * (sep_width + 2) + sep_width
     local content_sum = 0
     for _, w in ipairs(col_widths) do
       content_sum = content_sum + w
@@ -663,21 +664,32 @@ function MarkdownTable.render(parsed_table, indent, max_width)
         -- (put_image uses display columns, not byte offsets)
         local col_display_offset = vim.fn.strdisplaywidth(indent)
         for c = 1, col - 1 do
-          col_display_offset = col_display_offset + 3 + col_widths[c] -- "│ " (2) + width + " " (1)
+          col_display_offset = col_display_offset + sep_width + 2 + col_widths[c] -- "│" + " " + width + " "
         end
-        col_display_offset = col_display_offset + 2 -- "│ " for this column
+        col_display_offset = col_display_offset + sep_width + 1 -- "│ " for this column
 
-        -- Center image horizontally within the cell
-        local center_pad = math.max(0, math.floor((col_widths[col] - img.display_cols) / 2))
+        -- Center image horizontally within the cell.
+        -- When the gap is odd, expand the image by 1 cell so centering is symmetric.
+        local img_cols = img.display_cols
+        local diff = col_widths[col] - img_cols
+        if diff > 0 and diff % 2 == 1 then
+          img_cols = img_cols + 1
+        end
+        local center_pad = math.max(0, math.floor((col_widths[col] - img_cols) / 2))
         col_display_offset = col_display_offset + center_pad
 
+        -- Pass pre-computed img_w/img_h so process_placement skips recalculation
+        -- (which would undo the +1 expansion above).
+        local cached_img = cached[col]
         table.insert(out_image_placements, {
           resolved = img.resolved,
           src_url = img.src_url,
           line_offset = img_start_line_idx,
           col = col_display_offset,
           rows = img.display_rows,
-          cols = img.display_cols,
+          cols = img_cols,
+          img_w = cached_img and cached_img.img_w or nil,
+          img_h = cached_img and cached_img.img_h or nil,
         })
       end
 

@@ -517,10 +517,13 @@ function M.setup_images(win, content, on_download, ns)
       -- Save original placeholder row count before recalculation
       local placeholder_rows = placement.rows
 
-      -- Recalculate display size with real dimensions
+      -- Recalculate display size with real dimensions (skip if table renderer
+      -- already pre-computed them — recalculating would undo symmetric centering).
       local img_w, img_h = image.image_dimensions(path)
       if img_w and img_h then
-        placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
+        if not placement.img_w then
+          placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
+        end
         placement.img_w = img_w
         placement.img_h = img_h
       end

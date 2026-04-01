@@ -937,7 +937,22 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
 
   -- Adjust screen position for scroll offset
   local visual_row = row - topline
-  local screen_col = win_pos[2] + col + 2
+  -- Compute left border width from window config (varies with setcellwidths/ambiwidth)
+  local border_left_width = 0
+  local ok_cfg, win_cfg = pcall(vim.api.nvim_win_get_config, win)
+  if ok_cfg and win_cfg.border then
+    local border = win_cfg.border
+    if type(border) == "table" then
+      local left = border[8] -- 8th element = left border char
+      if type(left) == "table" then left = left[1] end
+      if left and left ~= "" then
+        border_left_width = vim.fn.strdisplaywidth(left)
+      end
+    elseif border ~= "none" and border ~= "" then
+      border_left_width = vim.fn.strdisplaywidth("│")
+    end
+  end
+  local screen_col = win_pos[2] + col + border_left_width + 1
 
   -- Crop to visible area using source rectangle (no scaling distortion)
   local crop_params = ""
