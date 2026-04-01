@@ -31,7 +31,28 @@ A Markdown rendering engine for Neovim floating windows. Transforms raw Markdown
 ## Requirements
 
 - Neovim >= 0.10
-- Treesitter parsers for syntax-highlighted code blocks (optional)
+- A terminal that supports the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) (required for inline images):
+  - [WezTerm](https://wezfurlong.org/wezterm/)
+  - [Kitty](https://sw.kovidgoyal.net/kitty/)
+  - [Ghostty](https://ghostty.org/)
+
+### Optional dependencies
+
+| Dependency | Purpose | Fallback |
+|---|---|---|
+| [curl](https://curl.se/) | Download web images | Custom function via `set_download_fn()` |
+| [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG conversion, animated GIF frame extraction | Falls back to ImageMagick |
+| [ImageMagick](https://imagemagick.org/) (`magick`) | Same as above | `sips` (macOS) handles static conversion; animated GIF requires ffmpeg or magick |
+| [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Render Mermaid diagrams as images | Falls back to `npx -y @mermaid-js/mermaid-cli` |
+| Treesitter parsers | Syntax highlighting in code blocks | Code blocks rendered without highlighting |
+| [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) or [mini.icons](https://github.com/echasnovski/mini.icons) | File type icons in code block headers | Built-in icon table |
+
+For image format conversion and animated GIF support, the plugin tries tools in this order:
+
+| Use case | 1st | 2nd | 3rd |
+|---|---|---|---|
+| Static image conversion (JPEG/WebP → PNG) | `sips` (macOS) | `ffmpeg` | `magick` |
+| Animated GIF frame extraction | `ffmpeg` | `magick` | — |
 
 ## Installation
 
@@ -132,7 +153,28 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
 ## 必要要件
 
 - Neovim >= 0.10
-- Treesitter パーサー（コードブロックのシンタックスハイライト用、オプション）
+- [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) に対応したターミナル（画像のインライン表示に必要）：
+  - [WezTerm](https://wezfurlong.org/wezterm/)
+  - [Kitty](https://sw.kovidgoyal.net/kitty/)
+  - [Ghostty](https://ghostty.org/)
+
+### オプション依存
+
+| 依存 | 用途 | フォールバック |
+|---|---|---|
+| [curl](https://curl.se/) | Web 画像のダウンロード | `set_download_fn()` でカスタム関数を指定可 |
+| [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG 変換、アニメーション GIF のフレーム展開 | ImageMagick にフォールバック |
+| [ImageMagick](https://imagemagick.org/) (`magick`) | 同上 | macOS では `sips` が静止画変換を処理。アニメーション GIF には ffmpeg か magick が必要 |
+| [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Mermaid ダイアグラムを画像として描画 | `npx -y @mermaid-js/mermaid-cli` にフォールバック |
+| Treesitter パーサー | コードブロックのシンタックスハイライト | ハイライトなしで表示 |
+| [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) または [mini.icons](https://github.com/echasnovski/mini.icons) | コードブロックヘッダのファイルタイプアイコン | 内蔵アイコンテーブル |
+
+画像フォーマット変換とアニメーション GIF のサポートでは、以下の優先順位でツールを検索します：
+
+| ユースケース | 1st | 2nd | 3rd |
+|---|---|---|---|
+| 静止画変換（JPEG/WebP → PNG） | `sips`（macOS） | `ffmpeg` | `magick` |
+| アニメーション GIF フレーム展開 | `ffmpeg` | `magick` | — |
 
 ## インストール
 
