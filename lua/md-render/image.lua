@@ -531,12 +531,25 @@ end
 ---@return string? cached_path
 function M.get_cached(url)
   if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then
-    return _url_cache[url]
+    -- Validate cached file is a recognized image format
+    if M.image_dimensions(_url_cache[url]) then
+      return _url_cache[url]
+    end
+    -- Stale/corrupt cache entry: remove file and clear in-memory cache
+    os.remove(_url_cache[url])
+    _url_cache[url] = nil
+    return nil
   end
   local cache_path = url_to_cache_path(url)
   if vim.fn.filereadable(cache_path) == 1 then
-    _url_cache[url] = cache_path
-    return cache_path
+    -- Validate cached file is a recognized image format
+    if M.image_dimensions(cache_path) then
+      _url_cache[url] = cache_path
+      return cache_path
+    end
+    -- Stale/corrupt cache file: remove it
+    os.remove(cache_path)
+    return nil
   end
   return nil
 end
@@ -553,14 +566,16 @@ function M.download_async(url, callback)
 
   local cache_path = url_to_cache_path(url)
   vim.system(
-    { "curl", "-sL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url },
+    { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url },
     { text = true },
     function(result)
       vim.schedule(function()
-        if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
+        if result.code == 0 and vim.fn.filereadable(cache_path) == 1 and M.image_dimensions(cache_path) then
           _url_cache[url] = cache_path
           callback(cache_path)
         else
+          -- Remove any invalid file that curl may have created
+          os.remove(cache_path)
           callback(nil)
         end
       end)

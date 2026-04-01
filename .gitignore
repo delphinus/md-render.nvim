@@ -94,3 +94,7 @@ tags
 
 # Claude
 .claude/
+
+# Visual test screenshots (reference images are tracked separately)
+tests/screenshots/
+!tests/screenshots/reference/
