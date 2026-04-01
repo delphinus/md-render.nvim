@@ -466,6 +466,25 @@ end
 -- URL detection and download with cache
 -- ============================================================================
 
+--- Custom download function for authenticated or special URL handling.
+--- Signature: fn(url, output_path, callback) -> handled
+---   - url: the image URL to download
+---   - output_path: absolute path where the image file should be saved
+---   - callback: fun(ok: boolean) — call with true on success, false on failure
+---   - return true if this function handles the URL (callback will be called later)
+---   - return false to fall back to the default curl downloader
+---@type fun(url: string, output_path: string, callback: fun(ok: boolean)): boolean
+local _custom_download_fn = nil
+
+--- Register a custom download function for URL images.
+--- The function is called before the default curl downloader. If it returns
+--- true, it is expected to handle the download and call the callback. If it
+--- returns false, the default curl-based downloader is used as a fallback.
+---@param fn fun(url: string, output_path: string, callback: fun(ok: boolean)): boolean
+function M.set_download_fn(fn)
+  _custom_download_fn = fn
+end
+
 --- Check if a string is an HTTP(S) URL
 ---@param s string
 ---@return boolean
@@ -554,6 +573,20 @@ function M.get_cached(url)
   return nil
 end
 
+--- Validate a downloaded file and update cache, then invoke callback.
+---@param url string
+---@param cache_path string
+---@param callback fun(path: string?)
+local function finalize_download(url, cache_path, callback)
+  if vim.fn.filereadable(cache_path) == 1 and M.image_dimensions(cache_path) then
+    _url_cache[url] = cache_path
+    callback(cache_path)
+  else
+    os.remove(cache_path)
+    callback(nil)
+  end
+end
+
 --- Download a URL to a local file asynchronously.
 ---@param url string
 ---@param callback fun(path: string?)  called with local path on success, nil on failure
@@ -565,16 +598,30 @@ function M.download_async(url, callback)
   end
 
   local cache_path = url_to_cache_path(url)
+
+  -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
+  if _custom_download_fn then
+    local handled = _custom_download_fn(url, cache_path, function(ok)
+      vim.schedule(function()
+        if ok then
+          finalize_download(url, cache_path, callback)
+        else
+          callback(nil)
+        end
+      end)
+    end)
+    if handled then return end
+  end
+
+  -- Default: download with curl
   vim.system(
     { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url },
     { text = true },
     function(result)
       vim.schedule(function()
-        if result.code == 0 and vim.fn.filereadable(cache_path) == 1 and M.image_dimensions(cache_path) then
-          _url_cache[url] = cache_path
-          callback(cache_path)
+        if result.code == 0 then
+          finalize_download(url, cache_path, callback)
         else
-          -- Remove any invalid file that curl may have created
           os.remove(cache_path)
           callback(nil)
         end
