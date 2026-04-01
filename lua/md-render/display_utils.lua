@@ -4,6 +4,10 @@ local M = {}
 
 local _osc8_supported = nil
 
+local function is_wezterm()
+  return vim.env.TERM_PROGRAM == "WezTerm" or vim.env.WEZTERM_EXECUTABLE ~= nil
+end
+
 --- Check if the terminal supports OSC 8 hyperlinks
 ---@return boolean
 function M.supports_osc8()
@@ -478,11 +482,24 @@ function M.setup_images(win, content, on_download, ns)
     if not vim.api.nvim_win_is_valid(state.win) then return end
     -- Pause animation during redraw! to prevent concurrent placement writes
     pause_anim_timers()
-    vim.cmd("redraw!")
-    vim.schedule(function()
+    if is_wezterm() then
+      -- WezTerm clears all Kitty Graphics placements on redraw!.
+      -- Skip redraw! (screen is already up-to-date after WinScrolled)
+      -- and wrap clear+place in a synchronized update (DEC mode 2026)
+      -- so the terminal renders the transition atomically — no flash.
+      -- Note: we cannot wrap redraw! itself because Neovim's TUI uses
+      -- its own ?2026 sequences that would end our sync block prematurely.
+      image.begin_sync_update()
       place_images()
+      image.end_sync_update()
       resume_anim_timers()
-    end)
+    else
+      vim.cmd("redraw!")
+      vim.schedule(function()
+        place_images()
+        resume_anim_timers()
+      end)
+    end
   end
 
   local function schedule_redraw()

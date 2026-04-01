@@ -92,6 +92,22 @@ function M.flush_batch()
 end
 
 -- ============================================================================
+-- Synchronized terminal update (DEC private mode 2026)
+-- ============================================================================
+
+--- Begin synchronized update. The terminal buffers all subsequent output
+--- and renders it atomically when end_sync_update() is called.
+--- Supported by WezTerm, Kitty, foot, and others.
+function M.begin_sync_update()
+  term_write("\x1b[?2026h")
+end
+
+--- End synchronized update and flush buffered output to screen.
+function M.end_sync_update()
+  term_write("\x1b[?2026l")
+end
+
+-- ============================================================================
 -- Terminal cell size detection via TIOCGWINSZ
 -- ============================================================================
 
