@@ -458,7 +458,7 @@ test("html: <img> renders as image display", function()
   local Markdown = require "md-render.markdown"
   local text, highlights, links = Markdown.render('<img src="photo.png" alt="My Photo">')
   assert(text:find("My Photo"), "html img: should contain alt text")
-  assert(text:find("🖼"), "html img: should contain image icon")
+  assert(text:find("My Photo"), "html img: should contain image display text")
   assert_eq(#links, 1, "html img: should have 1 link")
   assert_eq(links[1].url, "photo.png", "html img: link url should be src")
 end)

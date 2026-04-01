@@ -133,7 +133,7 @@ do
     "</table>",
   }
   local result = render(lines)
-  -- Image cells should show the 🖼 placeholder or the alt text
+  -- Image cells should show the alt text with a Nerd Font icon
   local found_any_content = false
   for _, line in ipairs(result.lines) do
     if line:find("│", 1, true) then found_any_content = true end

@@ -232,6 +232,7 @@ end
 
 local budoux = require "md-render.budoux"
 local budoux_ja = require "md-render.budoux_ja"
+local icons = require "md-render.icons"
 
 --- Check if a character is CJK/fullwidth or kinsoku-relevant punctuation.
 local function is_cjk_or_kinsoku(char)
@@ -799,147 +800,7 @@ local function pad_icon(icon)
   return icon
 end
 
---- Nerd Font icon mapping for common file extensions.
---- Used as fallback when nvim-web-devicons / mini.icons is not available.
----@type table<string, string>
-local file_ext_icons = {
-  lua = "",
-  py = "",
-  js = "",
-  ts = "",
-  jsx = "",
-  tsx = "",
-  rb = "",
-  go = "",
-  rs = "",
-  c = "",
-  cpp = "",
-  h = "",
-  hpp = "",
-  cs = "󰌛",
-  java = "",
-  kt = "",
-  swift = "",
-  php = "",
-  r = "",
-  sh = "",
-  bash = "",
-  zsh = "",
-  fish = "",
-  ps1 = "󰨊",
-  vim = "",
-  html = "",
-  css = "",
-  scss = "",
-  sass = "",
-  less = "",
-  json = "",
-  yaml = "",
-  yml = "",
-  toml = "",
-  xml = "󰗀",
-  md = "",
-  markdown = "",
-  txt = "󰈙",
-  sql = "",
-  graphql = "",
-  dockerfile = "",
-  docker = "",
-  makefile = "",
-  cmake = "",
-  ex = "",
-  exs = "",
-  erl = "",
-  hs = "",
-  ml = "",
-  clj = "",
-  scala = "",
-  dart = "",
-  vue = "",
-  svelte = "",
-  zig = "",
-  nim = "",
-  perl = "",
-  pl = "",
-  diff = "",
-  patch = "",
-  lock = "",
-  conf = "",
-  cfg = "",
-  ini = "",
-  env = "",
-  csv = "",
-  svg = "󰜡",
-  png = "",
-  jpg = "",
-  jpeg = "",
-  gif = "",
-  pdf = "",
-  zip = "",
-  gz = "",
-  tar = "",
-  tf = "󱁢",
-  nix = "",
-}
-
---- Special filename → icon mapping (case-insensitive basenames).
----@type table<string, string>
-local file_name_icons = {
-  makefile = "",
-  dockerfile = "",
-  gemfile = "",
-  rakefile = "",
-  procfile = "",
-  vagrantfile = "⍱",
-  [".gitignore"] = "",
-  [".gitconfig"] = "",
-  [".editorconfig"] = "",
-  [".env"] = "",
-}
-
---- Get a Nerd Font icon and highlight group for a filename.
---- Tries nvim-web-devicons first, then mini.icons, then the built-in table.
----@param filename string
----@return string icon
----@return string|nil hl_group highlight group for the icon (nil if no color info)
-local function get_file_icon(filename)
-  -- Try nvim-web-devicons
-  local ok, devicons = pcall(require, "nvim-web-devicons")
-  if ok then
-    local icon, hl = devicons.get_icon(filename, nil, { default = false })
-    if icon then
-      return icon, hl
-    end
-  end
-
-  -- Try mini.icons
-  local ok2, mini_icons = pcall(require, "mini.icons")
-  if ok2 then
-    local ok3, icon, hl = pcall(mini_icons.get, "file", filename)
-    if ok3 and icon then
-      return icon, hl
-    end
-  end
-
-  -- Built-in fallback: check special filenames first
-  local base = filename:match("[^/]+$") or filename
-  local base_lower = base:lower()
-  if file_name_icons[base_lower] then
-    return file_name_icons[base_lower], nil
-  end
-
-  -- Then check extension
-  local ext = base:match("%.([^.]+)$")
-  if ext then
-    local icon = file_ext_icons[ext:lower()]
-    if icon then
-      return icon, nil
-    end
-  end
-
-  -- Default file icon
-  return "", nil
-end
+local get_file_icon = icons.get_file_icon
 
 --- Append a fold indicator (›/∨) to the end of a callout header line
 ---@param self MdRender.ContentBuilder
@@ -2473,10 +2334,18 @@ function ContentBuilder:render_document(lines, opts)
             end
 
             if display_cols and display_rows then
-              local header = indent .. "🖼 " .. display_name
-              self:add_line(header, {
-                { col = 0, end_col = #header, hl = "Comment" },
-              })
+              local raw_icon, icon_hl = icons.get_image_icon(img_entry.path)
+              local img_icon = pad_icon(raw_icon)
+              local icon_start = #indent
+              local icon_end = icon_start + #img_icon
+              local header = indent .. img_icon .. " " .. display_name
+              local hls = {
+                { col = icon_end, end_col = #header, hl = "Comment" },
+              }
+              if icon_hl then
+                table.insert(hls, 1, { col = icon_start, end_col = icon_end, hl = icon_hl })
+              end
+              self:add_line(header, hls)
               local img_start_line = #self.lines
               -- Center the image horizontally
               local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
@@ -2524,10 +2393,18 @@ function ContentBuilder:render_document(lines, opts)
 
           if not handled then
             -- Fallback: text-only display
-            local fallback = indent .. "🖼 " .. display_name
-            self:add_line(fallback, {
-              { col = 0, end_col = #fallback, hl = "Underlined" },
-            })
+            local raw_icon, icon_hl = icons.get_image_icon(img_entry.path)
+            local img_icon = pad_icon(raw_icon)
+            local icon_start = #indent
+            local icon_end = icon_start + #img_icon
+            local fallback = indent .. img_icon .. " " .. display_name
+            local fb_hls = {
+              { col = icon_end, end_col = #fallback, hl = "Underlined" },
+            }
+            if icon_hl then
+              table.insert(fb_hls, 1, { col = icon_start, end_col = icon_end, hl = icon_hl })
+            end
+            self:add_line(fallback, fb_hls)
             lines_shown = lines_shown + 1
             handled = true
           end

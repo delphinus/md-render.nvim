@@ -377,7 +377,9 @@ function MarkdownTable.render(parsed_table, indent, max_width)
         -- Expanded: also ensure columns fit full image labels (no truncation)
         for _, imgs in pairs(row_images_cache) do
           for col, img in pairs(imgs) do
-            local label_width = vim.fn.strdisplaywidth("🖼 " .. img.alt)
+            local icons_mod = require "md-render.icons"
+            local raw_icon = icons_mod.get_image_icon(img.url or "")
+            local label_width = vim.fn.strdisplaywidth(icons_mod.pad_icon(raw_icon) .. " " .. img.alt)
             col_widths[col] = math.max(col_widths[col], label_width)
           end
         end
@@ -626,10 +628,19 @@ function MarkdownTable.render(parsed_table, indent, max_width)
       local label_cells = {}
       for col = 1, num_cols do
         if row_images[col] then
-          local label = "🖼 " .. row_images[col].alt
+          local icons_mod = require "md-render.icons"
+          local raw_icon, icon_hl = icons_mod.get_image_icon(row_images[col].url or "")
+          local img_icon = icons_mod.pad_icon(raw_icon)
+          local label = img_icon .. " " .. row_images[col].alt
+          local lbl_hls = {
+            { col = #img_icon + 1, end_col = #label, hl = "Comment" },
+          }
+          if icon_hl then
+            table.insert(lbl_hls, 1, { col = 0, end_col = #img_icon, hl = icon_hl })
+          end
           label_cells[col] = {
             text = label,
-            highlights = { { col = 0, end_col = #label, hl = "Comment" } },
+            highlights = lbl_hls,
             links = {},
           }
         else

@@ -627,12 +627,22 @@ local function process_embeds(text, highlights, links)
         local inner = text:sub(i + 3, close - 1)
         local target = inner:match "^([^|#]+)" or inner
         local ext = target:match "%.(%w+)$"
-        local icon = (ext and IMAGE_EXTENSIONS[ext:lower()]) and "🖼 " or "📎 "
+        local icons_mod = require "md-render.icons"
+        local raw_icon, embed_icon_hl
+        if ext and IMAGE_EXTENSIONS[ext:lower()] then
+          raw_icon, embed_icon_hl = icons_mod.get_image_icon(target)
+        else
+          raw_icon = "📎"
+        end
+        local icon = icons_mod.pad_icon(raw_icon) .. " "
         local display = icon .. target
 
         local start_col = #processed
         processed = processed .. display
-        table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "MdRenderLinkObsidian" })
+        if embed_icon_hl then
+          table.insert(highlights, { col = start_col, end_col = start_col + #icon - 1, hl = embed_icon_hl })
+        end
+        table.insert(highlights, { col = start_col + #icon, end_col = start_col + #display, hl = "MdRenderLinkObsidian" })
         table.insert(links, {
           col_start = start_col,
           col_end = start_col + #display,
@@ -1064,11 +1074,17 @@ local function process_html_tags(text, highlights, links)
           local src = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
           if src then
             local alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'"
-            local display = (alt and alt ~= "") and ("🖼 " .. alt) or ("🖼 " .. (src:match "([^/]+)$" or src))
+            local icons_mod = require "md-render.icons"
+            local raw_img_icon, img_icon_hl = icons_mod.get_image_icon(src)
+            local img_icon = icons_mod.pad_icon(raw_img_icon) .. " "
+            local display = img_icon .. ((alt and alt ~= "") and alt or (src:match "([^/]+)$" or src))
             table.insert(removals, { start = i - 1, count = #img_tag })
             local start_col = #processed
             processed = processed .. display
-            table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "Underlined" })
+            if img_icon_hl then
+              table.insert(highlights, { col = start_col, end_col = start_col + #img_icon - 1, hl = img_icon_hl })
+            end
+            table.insert(highlights, { col = start_col + #img_icon, end_col = start_col + #display, hl = "Underlined" })
             table.insert(links, { col_start = start_col, col_end = start_col + #display, url = src })
             i = i + #img_tag
             matched = true
