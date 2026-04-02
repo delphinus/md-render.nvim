@@ -231,7 +231,7 @@ for _, ch in ipairs {
 end
 
 local has_budoux, budoux = pcall(require, "budoux")
-local _, budoux_ja = pcall(require, "budoux.models.ja")
+local budoux_parser = has_budoux and budoux.load_default_japanese_parser() or nil
 local icons = require "md-render.icons"
 
 --- Check if a character is CJK/fullwidth or kinsoku-relevant punctuation.
@@ -279,7 +279,7 @@ local function split_segments(text)
   local function flush_cjk()
     if cjk_run == "" then return end
     if has_budoux then
-      local chunks = budoux.parse(budoux_ja, cjk_run)
+      local chunks = budoux_parser:parse(cjk_run)
       local chunk_byte = cjk_run_start
       local first = true
       for _, chunk in ipairs(chunks) do
