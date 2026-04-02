@@ -230,8 +230,8 @@ for _, ch in ipairs {
   NO_BREAK_END[ch] = true
 end
 
-local budoux = require "md-render.budoux"
-local budoux_ja = require "md-render.budoux_ja"
+local has_budoux, budoux = pcall(require, "budoux")
+local _, budoux_ja = pcall(require, "budoux.models.ja")
 local icons = require "md-render.icons"
 
 --- Check if a character is CJK/fullwidth or kinsoku-relevant punctuation.
@@ -278,18 +278,34 @@ local function split_segments(text)
 
   local function flush_cjk()
     if cjk_run == "" then return end
-    local chunks = budoux.parse(budoux_ja, cjk_run)
-    local chunk_byte = cjk_run_start
-    local first = true
-    for _, chunk in ipairs(chunks) do
-      local sub_chunks = budoux.split_by_script(chunk)
-      for _, sub in ipairs(sub_chunks) do
+    if has_budoux then
+      local chunks = budoux.parse(budoux_ja, cjk_run)
+      local chunk_byte = cjk_run_start
+      local first = true
+      for _, chunk in ipairs(chunks) do
+        local sub_chunks = budoux.split_by_script(chunk)
+        for _, sub in ipairs(sub_chunks) do
+          table.insert(segments, {
+            text = sub,
+            byte_pos = chunk_byte,
+            has_leading_space = first and cjk_leading_space or false,
+          })
+          chunk_byte = chunk_byte + #sub
+          first = false
+        end
+      end
+    else
+      -- Without BudouX, split CJK runs into individual characters.
+      -- Kinsoku rules in wrap_words still apply for proper line breaking.
+      local chunk_byte = cjk_run_start
+      local first = true
+      for char in cjk_run:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
         table.insert(segments, {
-          text = sub,
+          text = char,
           byte_pos = chunk_byte,
           has_leading_space = first and cjk_leading_space or false,
         })
-        chunk_byte = chunk_byte + #sub
+        chunk_byte = chunk_byte + #char
         first = false
       end
     end

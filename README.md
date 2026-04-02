@@ -23,7 +23,7 @@ A Markdown rendering engine for Neovim floating windows. Transforms raw Markdown
 - **Code blocks** — fenced blocks with treesitter syntax highlighting; expandable when truncated
 - **Images** — local and web images (PNG, JPEG, WebP, GIF, animated GIF) displayed inline via terminal graphics protocol
 - **Mermaid diagrams** — rendered as images inline
-- **CJK-aware word wrapping** — [BudouX](https://github.com/google/budoux) phrase segmentation + JIS X 4051 kinsoku shori
+- **CJK-aware word wrapping** — JIS X 4051 kinsoku shori + optional [BudouX](https://github.com/google/budoux) phrase segmentation via [budoux.lua](https://github.com/delphinus/budoux.lua)
 - **Clickable links** — mouse click to open URLs; OSC 8 hyperlink support for compatible terminals
 - **`<details>` support** — collapsible sections with click-to-toggle, respecting the `open` attribute
 - **Library API** — use the rendering engine programmatically from your own plugins
@@ -44,6 +44,7 @@ A Markdown rendering engine for Neovim floating windows. Transforms raw Markdown
 | [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG conversion, animated GIF frame extraction | Falls back to ImageMagick |
 | [ImageMagick](https://imagemagick.org/) (`magick`) | Same as above | `sips` (macOS) handles static conversion; animated GIF requires ffmpeg or magick |
 | [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Render Mermaid diagrams as images | Falls back to `npx -y @mermaid-js/mermaid-cli` |
+| [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK phrase-level line breaking (BudouX) | Character-level splitting (kinsoku rules still apply) |
 | Treesitter parsers | Syntax highlighting in code blocks | Code blocks rendered without highlighting |
 | [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) or [mini.icons](https://github.com/echasnovski/mini.icons) | File type icons in code block headers | Built-in icon table |
 
@@ -62,6 +63,9 @@ For image format conversion and animated GIF support, the plugin tries tools in 
 {
   "delphinus/md-render.nvim",
   version = "*",
+  dependencies = {
+    { "delphinus/budoux.lua" }, -- optional: CJK phrase-level line breaking
+  },
   keys = {
     { "<leader>mp", "<Plug>(md-render-preview)", desc = "Markdown preview (toggle)" },
     { "<leader>md", "<Plug>(md-render-demo)",    desc = "Markdown render demo" },
@@ -118,8 +122,6 @@ md.display_utils.apply_content_to_buffer(buf, ns, content)
 
 MIT — see [LICENSE](LICENSE).
 
-This project includes code ported from [BudouX](https://github.com/google/budoux) (Copyright 2021 Google LLC, Apache-2.0). See [NOTICE](NOTICE) for details.
-
 ---
 
 # 日本語
@@ -145,7 +147,7 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
 - **コードブロック** — treesitter シンタックスハイライト付きフェンスコードブロック。省略時はクリックで展開
 - **画像** — ローカルおよび Web 画像（PNG, JPEG, WebP, GIF, アニメーション GIF）をターミナルグラフィクスプロトコルでインライン表示
 - **Mermaid ダイアグラム** — 画像としてインライン表示
-- **CJK 対応ワードラップ** — [BudouX](https://github.com/google/budoux) のフレーズ分割 + JIS X 4051 禁則処理
+- **CJK 対応ワードラップ** — JIS X 4051 禁則処理 + [budoux.lua](https://github.com/delphinus/budoux.lua) によるオプションのフレーズ分割
 - **クリック可能リンク** — マウスクリックで URL を開く。対応ターミナルでは OSC 8 ハイパーリンク
 - **`<details>` 対応** — クリックで折りたたみ可能なセクション。`open` 属性にも対応
 - **ライブラリ API** — レンダリングエンジンを自作プラグインからプログラム的に利用可能
@@ -166,6 +168,7 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
 | [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG 変換、アニメーション GIF のフレーム展開 | ImageMagick にフォールバック |
 | [ImageMagick](https://imagemagick.org/) (`magick`) | 同上 | macOS では `sips` が静止画変換を処理。アニメーション GIF には ffmpeg か magick が必要 |
 | [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Mermaid ダイアグラムを画像として描画 | `npx -y @mermaid-js/mermaid-cli` にフォールバック |
+| [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK フレーズ単位の改行（BudouX） | 1文字ずつ分割（禁則処理は維持） |
 | Treesitter パーサー | コードブロックのシンタックスハイライト | ハイライトなしで表示 |
 | [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) または [mini.icons](https://github.com/echasnovski/mini.icons) | コードブロックヘッダのファイルタイプアイコン | 内蔵アイコンテーブル |
 
@@ -184,6 +187,9 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
 {
   "delphinus/md-render.nvim",
   version = "*",
+  dependencies = {
+    { "delphinus/budoux.lua" }, -- optional: CJK phrase-level line breaking
+  },
   keys = {
     { "<leader>mp", "<Plug>(md-render-preview)", desc = "Markdown preview (toggle)" },
     { "<leader>md", "<Plug>(md-render-demo)",    desc = "Markdown render demo" },
@@ -239,5 +245,3 @@ md.display_utils.apply_content_to_buffer(buf, ns, content)
 ## ライセンス
 
 MIT — [LICENSE](LICENSE) を参照。
-
-本プロジェクトには [BudouX](https://github.com/google/budoux)（Copyright 2021 Google LLC、Apache-2.0）から移植したコードが含まれています。詳細は [NOTICE](NOTICE) を参照してください。
