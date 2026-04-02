@@ -1,0 +1,409 @@
+*md-render.txt*	Markdown rendering engine for Neovim floating windows
+
+Author: delphinus
+License: MIT
+
+==============================================================================
+CONTENTS						*md-render-contents*
+
+Introduction					|md-render-introduction|
+Requirements					|md-render-requirements|
+Installation					|md-render-installation|
+Mappings					|md-render-mappings|
+Usage						|md-render-usage|
+  Preview					|md-render-preview|
+  Library API					|md-render-api|
+  ContentBuilder				|md-render-content-builder|
+  Markdown					|md-render-markdown|
+  Display Utilities				|md-render-display-utils|
+  Image						|md-render-image|
+Highlight Groups				|md-render-highlights|
+Optional Dependencies				|md-render-dependencies|
+
+==============================================================================
+INTRODUCTION					*md-render-introduction*
+
+md-render.nvim is a Markdown rendering engine for Neovim floating windows.
+It transforms raw Markdown into richly highlighted, interactive content
+right inside your editor.
+
+Features:
+
+- Rich inline formatting (bold, strikethrough, inline code, links,
+  Obsidian `==highlight==`)
+- Tables with box-drawing borders, column alignment, and proportional
+  sizing
+- Callouts and folds (GitHub / Obsidian alert types with colored borders,
+  icons, and click-to-toggle folding)
+- Code blocks with treesitter syntax highlighting; expandable when
+  truncated
+- Images (PNG, JPEG, WebP, GIF, animated GIF) displayed inline via
+  terminal graphics protocol
+- Mermaid diagrams rendered as images inline
+- CJK-aware word wrapping (JIS X 4051 kinsoku shori + optional BudouX
+  phrase segmentation)
+- Clickable links (mouse click to open URLs; OSC 8 hyperlink support)
+- `<details>` support (collapsible sections with click-to-toggle)
+- Library API for programmatic use from other plugins
+
+==============================================================================
+REQUIREMENTS					*md-render-requirements*
+
+- Neovim >= 0.10
+- A terminal that supports the Kitty graphics protocol (required for
+  inline images):
+  - WezTerm (https://wezfurlong.org/wezterm/)
+  - Kitty (https://sw.kovidgoyal.net/kitty/)
+  - Ghostty (https://ghostty.org/)
+
+==============================================================================
+INSTALLATION					*md-render-installation*
+
+Using lazy.nvim: >lua
+
+  {
+    "delphinus/md-render.nvim",
+    version = "*",
+    dependencies = {
+      { "nvim-tree/nvim-web-devicons", version = "*" },
+      { "delphinus/budoux.lua", version = "*" },
+    },
+    keys = {
+      {
+        "<leader>mp",
+        "<Plug>(md-render-preview)",
+        desc = "Markdown preview (toggle)",
+      },
+      {
+        "<leader>md",
+        "<Plug>(md-render-demo)",
+        desc = "Markdown render demo",
+      },
+    },
+  }
+<
+
+==============================================================================
+MAPPINGS					*md-render-mappings*
+
+This plugin provides `<Plug>` mappings but does NOT set any default
+keybindings. Map them yourself: >lua
+
+  vim.keymap.set("n", "<leader>mp", "<Plug>(md-render-preview)")
+  vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)")
+<
+
+						*<Plug>(md-render-preview)*
+<Plug>(md-render-preview)
+	Toggle a floating preview window for the current Markdown buffer.
+	If the preview window is already open, it will be closed.
+
+						*<Plug>(md-render-demo)*
+<Plug>(md-render-demo)
+	Show a demo window with all supported Markdown notations.
+
+Inside the preview window, the following keys are available:
+
+	`q` / `<Esc>`	Close the preview window
+	`<CR>`		Toggle callout fold / expand truncated region
+	`<LeftMouse>`	Click links, toggle folds, expand regions
+
+==============================================================================
+USAGE						*md-render-usage*
+
+------------------------------------------------------------------------------
+PREVIEW						*md-render-preview*
+
+						*MdPreview.show()*
+MdPreview.show({opts})
+	Toggle a floating preview window for the current Markdown buffer.
+
+	Parameters: ~
+	  {opts}	(table|nil) Optional settings:
+		  - {max_width}	(integer) Maximum rendering width
+
+	Example: >lua
+	  require("md-render").preview.show({ max_width = 100 })
+<
+
+						*MdPreview.show_demo()*
+MdPreview.show_demo()
+	Show a demo window with all supported Markdown notations.
+
+						*MdPreview.build_content()*
+MdPreview.build_content({lines}, {opts})
+	Build rendered content from Markdown lines. This function handles
+	YAML frontmatter extraction and delegates to |ContentBuilder|.
+
+	Parameters: ~
+	  {lines}	(string[]) Raw Markdown lines
+	  {opts}	(table) Options passed to |ContentBuilder:render_document()|
+
+	Returns: ~
+	  Content result table (see |ContentBuilder:result()|)
+
+------------------------------------------------------------------------------
+LIBRARY API					*md-render-api*
+
+The main module `require("md-render")` re-exports the following
+submodules:
+
+  `ContentBuilder`	|md-render-content-builder|
+  `Markdown`		|md-render-markdown|
+  `MarkdownTable`	Table parsing and rendering
+  `FloatWin`		Floating window management
+  `display_utils`	|md-render-display-utils|
+  `preview`		|md-render-preview| (lazy-loaded)
+
+------------------------------------------------------------------------------
+CONTENT BUILDER					*md-render-content-builder*
+
+						*ContentBuilder.new()*
+ContentBuilder.new()
+	Create a new ContentBuilder instance.
+
+						*ContentBuilder:render_document()*
+ContentBuilder:render_document({lines}, {opts})
+	Render a full Markdown document.
+
+	Parameters: ~
+	  {lines}	(string[]) Raw Markdown lines
+	  {opts}	(table|nil) Options:
+		  - {max_width}	     (integer) Max width (default: 80)
+		  - {indent}	     (string)  Line indent (default: "  ")
+		  - {max_lines}      (number)  Max lines to render
+				     (default: math.huge)
+		  - {repo_base_url}  (string)  Base URL for relative links
+		  - {autolinks}      (table[]) Autolink patterns; each
+				     entry has:
+				       - {key_prefix} (string) e.g. "JIRA-"
+				       - {url_template} (string) e.g.
+					 "https://jira.example.com/browse/JIRA-<num>"
+				       - {is_alphanumeric} (boolean|nil)
+		  - {fold_state}     (table)   Callout fold states
+		  - {expand_state}   (table)   Expandable region states
+		  - {source_line_offset} (integer) Source line offset
+
+						*ContentBuilder:result()*
+ContentBuilder:result()
+	Return the rendered content. The result table contains lines,
+	highlights, link metadata, code blocks, folds, expandable regions,
+	images, and source line mappings used by |display_utils|.
+
+						*ContentBuilder:add_line()*
+ContentBuilder:add_line({text}, {hl_groups})
+	Add a single line with optional highlight groups.
+
+						*ContentBuilder:add_labeled()*
+ContentBuilder:add_labeled({label}, {value}, {value_hl})
+	Add a key-value pair line (used for frontmatter rendering).
+
+						*ContentBuilder:add_wrapped_markdown()*
+ContentBuilder:add_wrapped_markdown({text}, {indent}, {max_width},
+				    {repo_base_url}, {autolinks},
+				    {ref_links}, {footnote_map})
+	Add a line of Markdown with word wrapping and inline formatting.
+
+						*ContentBuilder:add_simple_markdown()*
+ContentBuilder:add_simple_markdown({text}, {indent}, {repo_base_url},
+				   {autolinks}, {ref_links}, {footnote_map})
+	Add a line of Markdown with inline formatting but no wrapping.
+
+						*ContentBuilder:add_table()*
+ContentBuilder:add_table({table_lines}, {indent}, {max_width},
+			 {repo_base_url}, {autolinks})
+	Render a Markdown table with box-drawing borders.
+
+------------------------------------------------------------------------------
+MARKDOWN					*md-render-markdown*
+
+						*Markdown.render()*
+Markdown.render({text}, {repo_base_url}, {autolinks},
+		{ref_links}, {footnote_map})
+	Render a single line of Markdown into display text, highlights,
+	and link metadata.
+
+	Parameters: ~
+	  {text}		(string) Raw Markdown text
+	  {repo_base_url}	(string|nil) Base URL for relative links
+	  {autolinks}		(table[]|nil) Autolink patterns
+	  {ref_links}		(table|nil) Reference link definitions
+	  {footnote_map}	(table|nil) Footnote definitions
+
+	Returns: ~
+	  {text}	(string) Display text
+	  {highlights}	(table[]) Highlight spans
+	  {links}	(table[]) Link metadata
+
+						*Markdown.heading_slug()*
+Markdown.heading_slug({text})
+	Convert heading text to a GitHub-compatible URL slug.
+
+						*Markdown.parse_footnotes()*
+Markdown.parse_footnotes({lines})
+	Parse footnote definitions from Markdown lines.
+
+						*Markdown.parse_reference_links()*
+Markdown.parse_reference_links({lines})
+	Parse reference link definitions from Markdown lines.
+
+						*Markdown.renumber_ordered_lists()*
+Markdown.renumber_ordered_lists({lines})
+	Renumber ordered list items per CommonMark rules.
+
+------------------------------------------------------------------------------
+DISPLAY UTILITIES				*md-render-display-utils*
+
+						*display_utils.apply_content_to_buffer()*
+display_utils.apply_content_to_buffer({buf}, {ns}, {content}, {opts})
+	Apply rendered content (lines, highlights, links) to a buffer.
+
+						*display_utils.apply_treesitter_highlights()*
+display_utils.apply_treesitter_highlights({buf}, {ns}, {content})
+	Apply treesitter syntax highlighting to code blocks.
+
+						*display_utils.open_float_window()*
+display_utils.open_float_window({buf}, {content}, {float_win}, {opts})
+	Create and position a floating window for rendered content.
+
+						*display_utils.setup_float_keymaps()*
+display_utils.setup_float_keymaps({buf}, {ns}, {win}, {content},
+				  {float_win}, {opts})
+	Set up interactive keymaps (link clicking, fold toggling, etc.)
+	in a floating window.
+
+						*display_utils.supports_osc8()*
+display_utils.supports_osc8()
+	Check whether the terminal supports OSC 8 hyperlinks.
+
+						*display_utils.setup_images()*
+display_utils.setup_images({win}, {content}, {on_download}, {ns})
+	Initialize image display for a window.
+
+------------------------------------------------------------------------------
+IMAGE						*md-render-image*
+
+						*image.set_download_fn()*
+image.set_download_fn({fn})
+	Set a custom download function for web images.
+	By default, curl is used.
+
+	Parameters: ~
+	  {fn}	(function) Function with signature:
+		  fn(url: string, dest: string, callback: function)
+
+						*image.reset_cache()*
+image.reset_cache()
+	Clear all cached images and Mermaid renders.
+
+						*image.supports_kitty()*
+image.supports_kitty()
+	Check whether the terminal supports the Kitty graphics protocol.
+
+Example: >lua
+
+  local md = require("md-render")
+
+  -- Render a single line of markdown
+  local text, highlights, links =
+    md.Markdown.render("**bold** and [link](https://example.com)")
+
+  -- Build full document content
+  local ContentBuilder = md.ContentBuilder
+  local b = ContentBuilder.new()
+  b:render_document(lines, {
+    max_width = 80,
+    indent = "  ",
+    repo_base_url = "https://github.com/user/repo",
+    autolinks = {
+      {
+        key_prefix = "JIRA-",
+        url_template = "https://jira.example.com/browse/JIRA-<num>",
+      },
+    },
+  })
+  local content = b:result()
+
+  -- Apply to a buffer
+  local buf = vim.api.nvim_create_buf(false, true)
+  local ns = vim.api.nvim_create_namespace("my_ns")
+  md.display_utils.apply_content_to_buffer(buf, ns, content)
+<
+
+==============================================================================
+HIGHLIGHT GROUPS				*md-render-highlights*
+
+All highlight groups are defined with `default = true`, so they can be
+overridden by your colorscheme.
+
+INLINE FORMATTING ~
+
+  *Bold*		Bold text (fallback; `bold = true`)
+  *Italic*		Italic text (fallback; `italic = true`)
+  *MdRenderHighlight*	Obsidian `==highlight==` markers
+  *MdRenderTag*		Obsidian `#tag` syntax (links to `Label`)
+  *MdRenderMath*	Inline/block math expressions (links to `Special`)
+  *MdRenderLinkAnchor*	Anchor links `#heading` (links to `DiagnosticHint`)
+  *MdRenderLinkObsidian*
+			Obsidian wikilinks `[[...]]` (links to `Special`)
+
+HEADINGS ~
+
+  *MdRenderH1*		Heading level 1 (derived from treesitter heading hl)
+  *MdRenderH2*		Heading level 2
+  *MdRenderH3*		Heading level 3
+  *MdRenderH4*		Heading level 4
+  *MdRenderH5*		Heading level 5
+  *MdRenderH6*		Heading level 6
+
+ALERTS / CALLOUTS ~
+
+For each alert type ({Type} = Note, Tip, Important, Warning, Caution,
+Abstract, Todo, Success, Question, Failure, Danger, Bug, Example, Quote):
+
+  *MdRenderAlert{Type}*
+			Alert header text color (bold, derived from
+			corresponding diagnostic highlight)
+  *MdRenderAlert{Type}Bg*
+			Alert background color (blended from alert fg and
+			NormalFloat bg)
+
+DETAILS ~
+
+  *MdRenderDetailsBg*	`<details>` section background color
+  *MdRenderDetailsBar*	`<details>` section border/indicator
+
+IMAGE ~
+
+  *MdRenderImagePlaceholder*
+			Placeholder shown while images are loading
+
+==============================================================================
+OPTIONAL DEPENDENCIES				*md-render-dependencies*
+
+  nvim-web-devicons	File type icons in code block headers.
+  (or mini.icons)	Falls back to a built-in icon table.
+
+  budoux.lua		CJK phrase-level line breaking (BudouX).
+			Falls back to character-level splitting
+			(kinsoku rules still apply).
+
+  Treesitter parsers	Syntax highlighting in code blocks.
+			Code blocks render without highlighting
+			if parsers are missing.
+
+  curl			Download web images.
+			Can be replaced via |image.set_download_fn()|.
+
+  FFmpeg		JPEG/WebP to PNG conversion, animated GIF
+  (ffmpeg/ffprobe)	frame extraction. Falls back to ImageMagick.
+
+  ImageMagick (magick)	Same as FFmpeg above. On macOS, `sips`
+			handles static conversion; animated GIF
+			requires ffmpeg or magick.
+
+  Mermaid CLI (mmdc)	Render Mermaid diagrams as images.
+			Falls back to `npx -y @mermaid-js/mermaid-cli`.
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:

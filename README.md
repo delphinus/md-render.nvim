@@ -64,7 +64,8 @@ For image format conversion and animated GIF support, the plugin tries tools in 
   "delphinus/md-render.nvim",
   version = "*",
   dependencies = {
-    { "delphinus/budoux.lua" }, -- optional: CJK phrase-level line breaking
+    { "nvim-tree/nvim-web-devicons", version = "*" }, -- optional: file type icons in code blocks
+    { "delphinus/budoux.lua", version = "*" }, -- optional: CJK phrase-level line breaking
   },
   keys = {
     { "<leader>mp", "<Plug>(md-render-preview)", desc = "Markdown preview (toggle)" },
@@ -188,7 +189,8 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
   "delphinus/md-render.nvim",
   version = "*",
   dependencies = {
-    { "delphinus/budoux.lua" }, -- optional: CJK phrase-level line breaking
+    { "nvim-tree/nvim-web-devicons", version = "*" }, -- optional: file type icons in code blocks
+    { "delphinus/budoux.lua", version = "*" }, -- optional: CJK phrase-level line breaking
   },
   keys = {
     { "<leader>mp", "<Plug>(md-render-preview)", desc = "Markdown preview (toggle)" },
