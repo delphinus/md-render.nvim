@@ -184,347 +184,11 @@ local function to_superscript(n)
   return table.concat(result)
 end
 
---- Characters that must not appear at the start of a line (JIS X 4051 行頭禁則文字).
----@type table<string, true>
-local NO_BREAK_START = {}
-for _, ch in ipairs {
-  -- Cl.02 終わり括弧類
-  "）", "〕", "］", "｝", "〉", "》", "」", "』", "】", "｠", "〙", "〗", "»",
-  -- Cl.03 ハイフン類
-  "‐", "〜",
-  -- Cl.04 区切り約物
-  "！", "？", "‼", "⁇", "⁈", "⁉",
-  -- Cl.05 中点類
-  "・", "：", "；",
-  -- Cl.06 句点類
-  "。", "．",
-  -- Cl.07 読点類
-  "、", "，",
-  -- Cl.08 繰返し記号
-  "ゝ", "ゞ", "ヽ", "ヾ", "々", "〻",
-  -- Cl.09 長音記号
-  "ー",
-  -- Cl.10 小書きの仮名
-  "ぁ", "ぃ", "ぅ", "ぇ", "ぉ", "っ", "ゃ", "ゅ", "ょ", "ゎ", "ゕ", "ゖ",
-  "ァ", "ィ", "ゥ", "ェ", "ォ", "ッ", "ャ", "ュ", "ョ", "ヮ", "ヵ", "ヶ",
-  "ㇰ", "ㇱ", "ㇲ", "ㇳ", "ㇴ", "ㇵ", "ㇶ", "ㇷ", "ㇸ", "ㇹ", "ㇺ", "ㇻ", "ㇼ", "ㇽ", "ㇾ", "ㇿ",
-  -- 半角カタカナ
-  "｡", "､", "｣", "ｧ", "ｨ", "ｩ", "ｪ", "ｫ", "ｯ", "ｬ", "ｭ", "ｮ", "ｰ",
-  -- ASCII (half-width) punctuation
-  ")", "]", "}", "!", "?", ",", ".", ";", ":",
-} do
-  NO_BREAK_START[ch] = true
-end
-
---- Characters that must not appear at the end of a line (JIS X 4051 行末禁則文字).
----@type table<string, true>
-local NO_BREAK_END = {}
-for _, ch in ipairs {
-  -- Cl.01 始め括弧類
-  "（", "〔", "［", "｛", "〈", "《", "「", "『", "【", "｟", "〘", "〖", "«",
-  -- 半角カタカナ
-  "｢",
-  -- ASCII (half-width) punctuation
-  "(", "[", "{",
-} do
-  NO_BREAK_END[ch] = true
-end
-
-local has_budoux, budoux = pcall(require, "budoux")
-local budoux_parser = has_budoux and budoux.load_default_japanese_parser() or nil
-
---- Extract Unicode code point from a UTF-8 character.
----@param char string A single UTF-8 character
----@return integer
-local function utf8_codepoint(char)
-  local b1 = char:byte(1)
-  if b1 < 0x80 then return b1 end
-  if b1 < 0xE0 then return (b1 - 0xC0) * 64 + (char:byte(2) - 128) end
-  if b1 < 0xF0 then return (b1 - 0xE0) * 4096 + (char:byte(2) - 128) * 64 + (char:byte(3) - 128) end
-  return (b1 - 0xF0) * 262144 + (char:byte(2) - 128) * 4096 + (char:byte(3) - 128) * 64 + (char:byte(4) - 128)
-end
-
---- Classify a character into a script class for sub-splitting.
---- "C" = CJK ideograph, "H" = hiragana, "K" = katakana, "O" = other
----@param char string
----@return string
-local function script_class(char)
-  local cp = utf8_codepoint(char)
-  if cp >= 0x4E00 and cp <= 0x9FFF then return "C" end
-  if cp >= 0x3400 and cp <= 0x4DBF then return "C" end
-  if cp >= 0xF900 and cp <= 0xFAFF then return "C" end
-  if cp >= 0x3040 and cp <= 0x309F then return "H" end
-  if cp >= 0x30A0 and cp <= 0x30FF then return "K" end
-  if cp >= 0x31F0 and cp <= 0x31FF then return "K" end
-  if cp >= 0xFF65 and cp <= 0xFF9F then return "K" end
-  return "O"
-end
-
---- Sub-split a BudouX chunk at script transition boundaries (kanji <-> kana).
---- This provides finer-grained segments so that line-breaking algorithms can
---- break long phrases like "参照してください" into "参照" + "してください".
---- Punctuation/symbols ("O" class) attach to the preceding run.
----@param chunk string
----@return string[]
-local function split_by_script(chunk)
-  local chars = {}
-  for c in chunk:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-    chars[#chars + 1] = c
-  end
-  if #chars <= 1 then return { chunk } end
-
-  local sub_chunks = {}
-  local current = chars[1]
-  local prev_cls = script_class(chars[1])
-  local kanji_run = prev_cls == "C" and 1 or 0
-
-  for i = 2, #chars do
-    local cls = script_class(chars[i])
-    local should_split = false
-    if chars[i - 1] == "・" and current ~= "・" then
-      should_split = true
-    end
-    if cls ~= "O" and cls ~= prev_cls then
-      if prev_cls == "K" then
-        should_split = true
-      elseif prev_cls == "C" and cls == "H" then
-        should_split = kanji_run >= 2
-      elseif prev_cls == "C" then
-        should_split = true
-      end
-    end
-    if should_split then
-      sub_chunks[#sub_chunks + 1] = current
-      current = chars[i]
-      kanji_run = 0
-    else
-      current = current .. chars[i]
-    end
-    if cls == "C" then
-      kanji_run = kanji_run + 1
-    elseif cls ~= "O" then
-      kanji_run = 0
-    end
-    if cls ~= "O" then prev_cls = cls end
-  end
-  sub_chunks[#sub_chunks + 1] = current
-  return sub_chunks
-end
+local wrap_mod = require "md-render.wrap"
 local icons = require "md-render.icons"
 
---- Check if a character is CJK/fullwidth or kinsoku-relevant punctuation.
-local function is_cjk_or_kinsoku(char)
-  return vim.fn.strdisplaywidth(char) >= 2 or NO_BREAK_START[char] or NO_BREAK_END[char]
-end
-
---- Extract the first UTF-8 character from a string.
-local function first_char(s)
-  return s:match "[%z\1-\127\194-\253][\128-\191]*"
-end
-
---- Extract the last UTF-8 character from a string.
-local function last_char(s)
-  local last
-  for c in s:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-    last = c
-  end
-  return last
-end
-
---- Split text into segments for wrapping.
---- CJK runs are segmented using BudouX for natural word-boundary splitting.
---- ASCII words are accumulated as single segments (split at spaces).
----@param text string
----@return {text: string, byte_pos: integer, has_leading_space: boolean}[]
-local function split_segments(text)
-  local segments = {}
-  local current_word = ""
-  local current_word_start = 0
-  local has_leading_space = false
-  local cjk_run = ""
-  local cjk_run_start = 0
-  local cjk_leading_space = false
-  local byte_pos = 0
-
-  local function flush_ascii()
-    if current_word ~= "" then
-      table.insert(segments, { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space })
-      current_word = ""
-      has_leading_space = false
-    end
-  end
-
-  local function flush_cjk()
-    if cjk_run == "" then return end
-    if has_budoux then
-      local chunks = budoux_parser:parse(cjk_run)
-      local chunk_byte = cjk_run_start
-      local first = true
-      for _, chunk in ipairs(chunks) do
-        local sub_chunks = split_by_script(chunk)
-        for _, sub in ipairs(sub_chunks) do
-          table.insert(segments, {
-            text = sub,
-            byte_pos = chunk_byte,
-            has_leading_space = first and cjk_leading_space or false,
-          })
-          chunk_byte = chunk_byte + #sub
-          first = false
-        end
-      end
-    else
-      -- Without BudouX, split CJK runs into individual characters.
-      -- Kinsoku rules in wrap_words still apply for proper line breaking.
-      local chunk_byte = cjk_run_start
-      local first = true
-      for char in cjk_run:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-        table.insert(segments, {
-          text = char,
-          byte_pos = chunk_byte,
-          has_leading_space = first and cjk_leading_space or false,
-        })
-        chunk_byte = chunk_byte + #char
-        first = false
-      end
-    end
-    cjk_run = ""
-    has_leading_space = false
-  end
-
-  for char in text:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-    if char:match "%s" then
-      flush_ascii()
-      flush_cjk()
-      has_leading_space = true
-    elseif is_cjk_or_kinsoku(char) then
-      flush_ascii()
-      if cjk_run == "" then
-        cjk_run_start = byte_pos
-        cjk_leading_space = has_leading_space
-        has_leading_space = false
-      end
-      cjk_run = cjk_run .. char
-    else
-      -- ASCII/narrow character: accumulate into word
-      flush_cjk()
-      if current_word == "" then
-        current_word_start = byte_pos
-      end
-      current_word = current_word .. char
-    end
-    byte_pos = byte_pos + #char
-  end
-
-  flush_ascii()
-  flush_cjk()
-
-  return segments
-end
-
---- Wrap text into lines at word boundaries, tracking original positions.
---- Uses segment-based splitting to handle CJK/fullwidth characters correctly.
---- Applies kinsoku (JIS X 4051) rules using 追い出し (push-out) strategy:
---- characters are pushed to the next line to keep lines within max_width.
----@param text string The text to wrap
----@param max_width integer Maximum display width per line
----@return string[] wrapped_lines
----@return integer[] line_starts 0-indexed start position of each line in the original text
-local function wrap_words(text, max_width)
-  local wrapped_lines = {}
-  local line_starts = {}
-  local current = ""
-  local current_width = 0
-  local current_start = 0
-
-  -- For kinsoku 追い出し: track state before the last segment was appended
-  local prev_current = ""
-  local prev_width = 0
-  local last_seg_text = ""
-  local last_seg_pos = 0
-
-  local segments = split_segments(text)
-
-  for i, seg in ipairs(segments) do
-    local seg_width = vim.fn.strdisplaywidth(seg.text)
-    local space_width = (seg.has_leading_space and current ~= "") and 1 or 0
-
-    if current_width + space_width + seg_width > max_width and current ~= "" then
-      -- Kinsoku 追い出し: if this segment starts with a no-break-start char,
-      -- push the last segment of the current line to the next line too
-      if NO_BREAK_START[first_char(seg.text)] and prev_current ~= "" then
-        table.insert(wrapped_lines, prev_current)
-        table.insert(line_starts, current_start)
-        local sep = seg.has_leading_space and " " or ""
-        current = last_seg_text .. sep .. seg.text
-        current_start = last_seg_pos
-        current_width = vim.fn.strdisplaywidth(current)
-      elseif NO_BREAK_START[first_char(seg.text)] then
-        -- Kinsoku 追い込み fallback: keep the char on the current line
-        -- even if it exceeds max_width, to avoid it starting a new line
-        local sep = (seg.has_leading_space and current ~= "") and " " or ""
-        current = current .. sep .. seg.text
-        current_width = current_width + #sep + seg_width
-      else
-        table.insert(wrapped_lines, current)
-        table.insert(line_starts, current_start)
-        current = seg.text
-        current_start = seg.byte_pos
-        current_width = seg_width
-      end
-      prev_current = ""
-      prev_width = 0
-      last_seg_text = ""
-      last_seg_pos = 0
-    else
-      -- Kinsoku: if this segment ends with a no-break-end char at the end of a full line,
-      -- break before it so it doesn't sit at line end
-      if NO_BREAK_END[last_char(seg.text)] and current ~= "" then
-        local next_seg = segments[i + 1]
-        local next_width = next_seg and vim.fn.strdisplaywidth(next_seg.text) or 0
-        if current_width + space_width + seg_width + next_width > max_width then
-          table.insert(wrapped_lines, current)
-          table.insert(line_starts, current_start)
-          current = seg.text
-          current_start = seg.byte_pos
-          current_width = seg_width
-          prev_current = ""
-          prev_width = 0
-          last_seg_text = ""
-          last_seg_pos = 0
-          goto continue
-        end
-      end
-
-      -- Save state before appending (for potential 追い出し on the next segment)
-      prev_current = current
-      prev_width = current_width
-      last_seg_text = seg.text
-      last_seg_pos = seg.byte_pos
-
-      if current ~= "" then
-        if space_width > 0 then
-          current = current .. " " .. seg.text
-          current_width = current_width + 1 + seg_width
-        else
-          current = current .. seg.text
-          current_width = current_width + seg_width
-        end
-      else
-        current = seg.text
-        current_start = seg.byte_pos
-        current_width = seg_width
-      end
-    end
-    ::continue::
-  end
-
-  if current ~= "" then
-    table.insert(wrapped_lines, current)
-    table.insert(line_starts, current_start)
-  end
-
-  return wrapped_lines, line_starts
-end
+local split_segments = wrap_mod.split_segments
+local wrap_words = wrap_mod.wrap_words
 
 --- Distribute markdown highlights across wrapped lines
 ---@param md_highlights MdRender.Markdown.Highlight[]
@@ -728,7 +392,7 @@ end
 ---@param max_width integer
 ---@param repo_base_url? string
 ---@param autolinks? MdRender.Autolink[]
-function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url, autolinks)
+function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url, autolinks, expanded)
   local markdown_table = require "md-render.markdown_table"
   local parsed = markdown_table.parse(table_lines, repo_base_url, autolinks)
   if not parsed then
@@ -739,7 +403,7 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
     return
   end
   local lines, per_line_hls, per_line_links, tbl_image_placements =
-    markdown_table.render(parsed, indent, max_width)
+    markdown_table.render(parsed, indent, max_width, expanded)
   local base_line = #self.lines
   for i, line in ipairs(lines) do
     self:add_line(line, #per_line_hls[i] > 0 and per_line_hls[i] or nil)
@@ -1283,8 +947,7 @@ function ContentBuilder:render_document(lines, opts)
     if #table_buf > 0 then
       local lines_before_tbl = #self.lines
       local tbl_expanded = table_buf_start_idx and expand_state[table_buf_start_idx]
-      local effective_max = tbl_expanded and math.huge or max_width
-      self:add_table(table_buf, indent, effective_max, repo_base_url, autolinks)
+      self:add_table(table_buf, indent, max_width, repo_base_url, autolinks, tbl_expanded or false)
       local lines_added = #self.lines - lines_before_tbl
       lines_shown = lines_shown + lines_added
       local has_truncation = false
@@ -1756,8 +1419,7 @@ function ContentBuilder:render_document(lines, opts)
             end
             local tbl_lines_before = #self.lines
             local tbl_expanded = html_table_src_idx and expand_state[html_table_src_idx]
-            local effective_max = tbl_expanded and math.huge or max_width
-            self:add_table(pipe_lines, indent, effective_max, repo_base_url, autolinks)
+            self:add_table(pipe_lines, indent, max_width, repo_base_url, autolinks, tbl_expanded or false)
             local tbl_lines_added = #self.lines - tbl_lines_before
             lines_shown = lines_shown + tbl_lines_added
             local has_truncation = false
