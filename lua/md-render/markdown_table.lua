@@ -10,6 +10,7 @@
 ---@field col_widths integer[] display width per column
 
 local MarkdownTable = {}
+local wrap_mod = require "md-render.wrap"
 
 --- Split a table row into cell strings (trim leading/trailing whitespace)
 ---@param line string
@@ -95,6 +96,55 @@ local function process_cell(text, repo_base_url, autolinks)
     highlights = highlights,
     links = links,
   }
+end
+
+--- Wrap cell text into multiple lines fitting within max_display_width.
+--- Uses BudouX and kinsoku rules from wrap module for proper line breaking.
+--- When a wrapped line still overflows (single word wider than column),
+--- tries syllable-level V|C splitting as a last resort before truncation.
+--- Returns a list of {text, byte_start} entries for each wrapped line.
+---@param text string
+---@param max_display_width integer
+---@return {text: string, byte_start: integer}[]
+local function wrap_cell_text(text, max_display_width)
+  if vim.fn.strdisplaywidth(text) <= max_display_width then
+    return { { text = text, byte_start = 0 } }
+  end
+
+  local wrapped_lines, line_starts = wrap_mod.wrap_words(text, max_display_width)
+  local result = {}
+  for i, line in ipairs(wrapped_lines) do
+    if vim.fn.strdisplaywidth(line) > max_display_width then
+      -- Single word wider than column: try syllable-level V|C splitting
+      local sub_segs = wrap_mod.split_ascii_syllables(line, 0, false)
+      if #sub_segs > 1 then
+        -- Pack syllable segments into lines fitting max_display_width
+        local current_text = ""
+        local current_byte = 0
+        for _, seg in ipairs(sub_segs) do
+          if current_text ~= "" and vim.fn.strdisplaywidth(current_text .. seg.text) > max_display_width then
+            table.insert(result, { text = current_text, byte_start = line_starts[i] + current_byte })
+            current_byte = seg.byte_pos
+            current_text = seg.text
+          else
+            if current_text == "" then
+              current_byte = seg.byte_pos
+            end
+            current_text = current_text .. seg.text
+          end
+        end
+        if current_text ~= "" then
+          table.insert(result, { text = current_text, byte_start = line_starts[i] + current_byte })
+        end
+      else
+        -- Syllable splitting didn't help; add as-is (build_wrapped_row will truncate)
+        table.insert(result, { text = line, byte_start = line_starts[i] })
+      end
+    else
+      table.insert(result, { text = line, byte_start = line_starts[i] })
+    end
+  end
+  return result
 end
 
 --- Truncate text to fit within a display width, appending "…" if truncated.
@@ -232,10 +282,11 @@ end
 ---@param parsed_table MdRender.MarkdownTable.ParsedTable
 ---@param indent string
 ---@param max_width? integer Maximum display width (default: no limit)
+---@param expanded? boolean When true, wrap cell content instead of truncating
 ---@return string[] lines
 ---@return MdRender.Highlight.Group[][] per_line_highlights
 ---@return {line: integer, col_start: integer, col_end: integer, url: string}[][] per_line_links
-function MarkdownTable.render(parsed_table, indent, max_width)
+function MarkdownTable.render(parsed_table, indent, max_width, expanded)
   local out_lines = {}
   local out_highlights = {}
   local out_links = {}
@@ -373,7 +424,7 @@ function MarkdownTable.render(parsed_table, indent, max_width)
           col_widths[col] = math.max(col_widths[col], col_image_widths[col])
         end
       end
-      if max_width >= 1e6 then
+      if expanded then
         -- Expanded: also ensure columns fit full image labels (no truncation)
         for _, imgs in pairs(row_images_cache) do
           for col, img in pairs(imgs) do
@@ -421,6 +472,15 @@ function MarkdownTable.render(parsed_table, indent, max_width)
         remaining = remaining - 1
       end
       col_widths = new_widths
+    end
+  end
+
+  -- When expanded, ensure minimum column width of 2 to prevent CJK character overflow
+  if expanded then
+    for col = 1, num_cols do
+      if col_widths[col] < 2 then
+        col_widths[col] = 2
+      end
     end
   end
 
@@ -532,6 +592,124 @@ function MarkdownTable.render(parsed_table, indent, max_width)
     return indent .. table.concat(parts), hls, lnks
   end
 
+  --- Build a multi-line data row by wrapping cell content instead of truncating
+  ---@param cells MdRender.MarkdownTable.ParsedCell[]
+  ---@param is_header boolean
+  ---@param col_align_overrides? table<integer, string> per-column alignment overrides
+  ---@return string[] lines
+  ---@return MdRender.Highlight.Group[][] per_line_highlights
+  ---@return {col_start: integer, col_end: integer, url: string}[][] per_line_links
+  local function build_wrapped_row(cells, is_header, col_align_overrides)
+    -- Wrap each cell's text into multiple lines
+    local wrapped_cells = {}
+    local max_wrap_lines = 1
+    for col = 1, num_cols do
+      local cell = cells[col]
+      local wraps = wrap_cell_text(cell.text, col_widths[col])
+      wrapped_cells[col] = wraps
+      max_wrap_lines = math.max(max_wrap_lines, #wraps)
+    end
+
+    -- If everything fits in one line, delegate to build_row
+    if max_wrap_lines == 1 then
+      local line, hls, lnks = build_row(cells, is_header, col_align_overrides)
+      return { line }, { hls }, { lnks }
+    end
+
+    local all_lines = {}
+    local all_hls = {}
+    local all_lnks = {}
+
+    for wrap_idx = 1, max_wrap_lines do
+      local parts = {}
+      local hls = {}
+      local lnks = {}
+      local byte_pos = #indent
+
+      for col = 1, num_cols do
+        local cell = cells[col]
+        local wrap = wrapped_cells[col][wrap_idx]
+        local display_text = wrap and wrap.text or ""
+        local wrap_byte_start = wrap and wrap.byte_start or 0
+
+        local col_align = (col_align_overrides and col_align_overrides[col]) or parsed_table.alignments[col]
+        local padded, left_pad = pad_cell(display_text, col_widths[col], col_align)
+
+        -- "│ " before cell
+        local sep = "│ "
+        table.insert(hls, { col = byte_pos, end_col = byte_pos + #sep, hl = "FloatBorder" })
+        byte_pos = byte_pos + #sep
+
+        local cell_start = byte_pos + left_pad
+
+        -- If a wrapped line still exceeds column width (single word wider
+        -- than column), truncate it to prevent border misalignment
+        local kept_byte_len = #display_text
+        if wrap and vim.fn.strdisplaywidth(display_text) > col_widths[col] then
+          display_text, kept_byte_len = truncate_to_width(display_text, col_widths[col])
+          padded, left_pad = pad_cell(display_text, col_widths[col], col_align)
+          cell_start = byte_pos + left_pad
+        end
+
+        -- Distribute highlights for this wrapped line
+        if wrap then
+          local wrap_byte_end = wrap_byte_start + kept_byte_len
+          for _, hl in ipairs(cell.highlights) do
+            if hl.end_col > wrap_byte_start and hl.col < wrap_byte_end then
+              local local_start = math.max(0, hl.col - wrap_byte_start)
+              local local_end = math.min(kept_byte_len, hl.end_col - wrap_byte_start)
+              table.insert(hls, {
+                col = cell_start + local_start,
+                end_col = cell_start + local_end,
+                hl = hl.hl,
+              })
+            end
+          end
+
+          -- Distribute links
+          for _, link in ipairs(cell.links) do
+            if link.col_end > wrap_byte_start and link.col_start < wrap_byte_end then
+              local local_start = math.max(0, link.col_start - wrap_byte_start)
+              local local_end = math.min(kept_byte_len, link.col_end - wrap_byte_start)
+              table.insert(lnks, {
+                col_start = cell_start + local_start,
+                col_end = cell_start + local_end,
+                url = link.url,
+              })
+            end
+          end
+        end
+
+        -- Add header Bold highlight
+        if is_header and wrap then
+          table.insert(hls, {
+            col = cell_start,
+            end_col = cell_start + #display_text,
+            hl = "Bold",
+          })
+        end
+
+        byte_pos = byte_pos + #padded
+        table.insert(parts, sep .. padded)
+
+        -- " " after cell (before next separator)
+        byte_pos = byte_pos + 1
+        table.insert(parts, " ")
+      end
+
+      -- Trailing "│"
+      local trailing = "│"
+      table.insert(hls, { col = byte_pos, end_col = byte_pos + #trailing, hl = "FloatBorder" })
+      table.insert(parts, trailing)
+
+      table.insert(all_lines, indent .. table.concat(parts))
+      table.insert(all_hls, hls)
+      table.insert(all_lnks, lnks)
+    end
+
+    return all_lines, all_hls, all_lnks
+  end
+
   --- Build a separator line
   ---@return string line
   ---@return MdRender.Highlight.Group[] highlights
@@ -553,10 +731,19 @@ function MarkdownTable.render(parsed_table, indent, max_width)
 
   -- Header row and separator (skip when header is empty, e.g. HTML tables without <th>)
   if not parsed_table.empty_header then
-    local h_line, h_hls, h_links = build_row(parsed_table.headers, true)
-    table.insert(out_lines, h_line)
-    table.insert(out_highlights, h_hls)
-    table.insert(out_links, h_links)
+    if expanded then
+      local h_lines, h_hls_list, h_links_list = build_wrapped_row(parsed_table.headers, true)
+      for i, line in ipairs(h_lines) do
+        table.insert(out_lines, line)
+        table.insert(out_highlights, h_hls_list[i])
+        table.insert(out_links, h_links_list[i])
+      end
+    else
+      local h_line, h_hls, h_links = build_row(parsed_table.headers, true)
+      table.insert(out_lines, h_line)
+      table.insert(out_highlights, h_hls)
+      table.insert(out_links, h_links)
+    end
 
     local s_line, s_hls = build_separator()
     table.insert(out_lines, s_line)
@@ -711,10 +898,26 @@ function MarkdownTable.render(parsed_table, indent, max_width)
         table.insert(out_links, {})
       end
     else
-      local r_line, r_hls, r_links = build_row(row, false)
-      table.insert(out_lines, r_line)
-      table.insert(out_highlights, r_hls)
-      table.insert(out_links, r_links)
+      if expanded then
+        local r_lines, r_hls_list, r_links_list = build_wrapped_row(row, false)
+        for i, line in ipairs(r_lines) do
+          table.insert(out_lines, line)
+          table.insert(out_highlights, r_hls_list[i])
+          table.insert(out_links, r_links_list[i])
+        end
+        -- Add separator between all rows when expanded (not after the last row)
+        if row_idx < #parsed_table.rows then
+          local sep_line, sep_hls = build_separator()
+          table.insert(out_lines, sep_line)
+          table.insert(out_highlights, sep_hls)
+          table.insert(out_links, {})
+        end
+      else
+        local r_line, r_hls, r_links = build_row(row, false)
+        table.insert(out_lines, r_line)
+        table.insert(out_highlights, r_hls)
+        table.insert(out_links, r_links)
+      end
     end
   end
 
