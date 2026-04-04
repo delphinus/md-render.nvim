@@ -1212,7 +1212,7 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     visual_row = 0
   end
 
-  local screen_row = win_pos[1] + visual_row + 2
+  local screen_row = wininfo.winrow + visual_row
 
   -- Bottom crop: image extends below visible area
   local visible_rows = win_height - visual_row
