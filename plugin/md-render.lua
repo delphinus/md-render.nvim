@@ -7,6 +7,10 @@ vim.keymap.set("n", "<Plug>(md-render-preview)", function()
   require("md-render").preview.show()
 end, { desc = "Markdown preview (toggle)" })
 
+vim.keymap.set("n", "<Plug>(md-render-preview-tab)", function()
+  require("md-render").preview.show_tab()
+end, { desc = "Markdown preview in tab (toggle)" })
+
 vim.keymap.set("n", "<Plug>(md-render-demo)", function()
   require("md-render").preview.show_demo()
 end, { desc = "Markdown render demo" })

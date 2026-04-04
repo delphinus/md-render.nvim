@@ -1,10 +1,12 @@
 local FloatWin = require "md-render.float_win"
+local TabWin = require "md-render.tab_win"
 local cb = require "md-render.content_builder"
 local display_utils = require "md-render.display_utils"
 local ContentBuilder = cb.ContentBuilder
 
 local float_win = FloatWin.new "md_render_preview_float"
 local demo_float_win = FloatWin.new "md_render_demo_float"
+local tab_win = TabWin.new "md_render_preview_tab"
 
 local MdPreview = {}
 
@@ -270,6 +272,174 @@ MdPreview.show = function(opts)
   })
 
   display_utils.setup_float_keymaps(buf, ns, win, content, float_win, {
+    get_content = function()
+      return content
+    end,
+    on_fold_toggle = function(source_line, collapsed)
+      fold_state[source_line] = collapsed
+      rebuild()
+      image_state = display_utils.update_images(image_state, win, content)
+    end,
+    on_expand_toggle = function(block_id, expanded)
+      expand_state[block_id] = expanded
+      rebuild()
+      image_state = display_utils.update_images(image_state, win, content)
+    end,
+  })
+end
+
+--- Show a tab previewing the current buffer's markdown content
+---@param opts? { max_width?: integer }
+MdPreview.show_tab = function(opts)
+  if tab_win:close_if_valid() then
+    return
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local ft = vim.bo[bufnr].filetype
+  local name = vim.api.nvim_buf_get_name(bufnr)
+
+  if ft ~= "markdown" and not name:match "%.md$" and not name:match "%.markdown$" then
+    vim.notify("md-render: current buffer is not a Markdown file", vim.log.levels.WARN)
+    return
+  end
+
+  local source_cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  local source_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local fold_state = {}
+  local expand_state = {}
+  opts = opts or {}
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  local ns = vim.api.nvim_create_namespace "md_render_preview_tab"
+
+  require("md-render").setup_highlights()
+
+  local content
+  local win
+
+  local function rebuild()
+    opts.fold_state = fold_state
+    opts.expand_state = expand_state
+    local new_content = MdPreview.build_content(source_lines, opts)
+    vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    display_utils.apply_content_to_buffer(buf, ns, new_content)
+    vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+    local any_expanded = false
+    for _, v in pairs(expand_state) do
+      if v then any_expanded = true; break end
+    end
+    vim.api.nvim_set_option_value("wrap", not any_expanded, { win = win })
+    content = new_content
+  end
+
+  content = MdPreview.build_content(source_lines, opts)
+  display_utils.apply_content_to_buffer(buf, ns, content)
+
+  -- Open in a new tab
+  vim.cmd "tabnew"
+  win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(win, buf)
+
+  -- Set window options for clean display
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = "no"
+  vim.wo[win].foldcolumn = "0"
+  vim.wo[win].cursorline = true
+  vim.wo[win].wrap = true
+  vim.wo[win].spell = false
+  vim.wo[win].list = false
+  vim.wo[win].statusline = " Markdown Preview "
+
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].buftype = "nofile"
+
+  tab_win:setup(win)
+
+  -- Initialize fold_state from default fold states
+  for _, fold in ipairs(content.callout_folds) do
+    fold_state[fold.source_line] = fold.collapsed
+  end
+
+  -- Scroll preview to match source cursor position
+  local function find_rendered_line(src_line, cont)
+    for i, sl in ipairs(cont.source_line_map) do
+      if sl >= src_line then
+        return i
+      end
+    end
+    return #cont.source_line_map
+  end
+
+  local target = find_rendered_line(source_cursor_line, content)
+  local buf_lines = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
+  target = math.max(1, math.min(target, buf_lines))
+  local win_height = vim.api.nvim_win_get_height(win)
+  local top = math.max(0, target - 1 - math.floor(win_height / 2))
+  vim.api.nvim_win_call(win, function()
+    vim.fn.winrestview { topline = top + 1 }
+  end)
+  vim.api.nvim_win_set_cursor(win, { target, 0 })
+
+  -- Display images
+  local download_rebuild_timer = nil
+  local image_state = display_utils.setup_images(win, content, function()
+    if download_rebuild_timer then
+      download_rebuild_timer:stop()
+    end
+    download_rebuild_timer = vim.defer_fn(function()
+      download_rebuild_timer = nil
+      if vim.api.nvim_win_is_valid(win) then
+        rebuild()
+        image_state = display_utils.update_images(image_state, win, content)
+      end
+    end, 150)
+  end, ns)
+
+  -- Track preview cursor for sync-back on close
+  local last_preview_line = target
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = buf,
+    callback = function()
+      if vim.api.nvim_win_is_valid(win) then
+        last_preview_line = vim.api.nvim_win_get_cursor(win)[1]
+      end
+    end,
+  })
+
+  -- Sync source cursor back and clean up images when window closes
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern = tostring(win),
+    once = true,
+    callback = function()
+      display_utils.cleanup_images(image_state)
+      local source_line_map = content.source_line_map
+      if source_line_map and last_preview_line <= #source_line_map then
+        local target_source_line = source_line_map[last_preview_line]
+        if target_source_line and target_source_line > 0
+          and vim.api.nvim_buf_is_valid(bufnr) then
+          local total_lines = vim.api.nvim_buf_line_count(bufnr)
+          target_source_line = math.min(target_source_line, total_lines)
+          for _, w in ipairs(vim.api.nvim_list_wins()) do
+            if vim.api.nvim_win_is_valid(w)
+              and vim.api.nvim_win_get_buf(w) == bufnr then
+              vim.api.nvim_win_set_cursor(w, { target_source_line, 0 })
+              vim.api.nvim_win_call(w, function()
+                vim.cmd "normal! zz"
+              end)
+              break
+            end
+          end
+        end
+      end
+    end,
+  })
+
+  display_utils.setup_float_keymaps(buf, ns, win, content, tab_win, {
     get_content = function()
       return content
     end,

@@ -115,6 +115,7 @@ M.ContentBuilder = require("md-render.content_builder").ContentBuilder
 M.Markdown = require "md-render.markdown"
 M.MarkdownTable = require "md-render.markdown_table"
 M.FloatWin = require "md-render.float_win"
+M.TabWin = require "md-render.tab_win"
 M.display_utils = require "md-render.display_utils"
 
 -- Expose for testing
