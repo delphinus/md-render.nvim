@@ -2,7 +2,7 @@
 
 [日本語版はこちら](#日本語)
 
-A Markdown rendering engine for Neovim floating windows. Transforms raw Markdown into richly highlighted, interactive content — right inside your editor.
+A Markdown rendering engine for Neovim. Transforms raw Markdown into richly highlighted, interactive content — right inside your editor. Supports floating windows, tab views, and a pager mode for `less`-like usage from the command line.
 
 <table>
 <tr>
@@ -68,8 +68,9 @@ For image format conversion and animated GIF support, the plugin tries tools in 
     { "delphinus/budoux.lua", version = "*" }, -- optional: CJK phrase-level line breaking
   },
   keys = {
-    { "<leader>mp", "<Plug>(md-render-preview)", desc = "Markdown preview (toggle)" },
-    { "<leader>md", "<Plug>(md-render-demo)",    desc = "Markdown render demo" },
+    { "<leader>mp", "<Plug>(md-render-preview)",     desc = "Markdown preview (toggle)" },
+    { "<leader>mt", "<Plug>(md-render-preview-tab)", desc = "Markdown preview in tab (toggle)" },
+    { "<leader>md", "<Plug>(md-render-demo)",        desc = "Markdown render demo" },
   },
 }
 ```
@@ -79,14 +80,40 @@ For image format conversion and animated GIF support, the plugin tries tools in 
 The plugin provides `<Plug>` mappings but does **not** set any default keybindings. Map them yourself:
 
 ```lua
-vim.keymap.set("n", "<leader>mp", "<Plug>(md-render-preview)", { desc = "Markdown preview (toggle)" })
-vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",    { desc = "Markdown render demo" })
+vim.keymap.set("n", "<leader>mp", "<Plug>(md-render-preview)",     { desc = "Markdown preview (toggle)" })
+vim.keymap.set("n", "<leader>mt", "<Plug>(md-render-preview-tab)", { desc = "Markdown preview in tab (toggle)" })
+vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Markdown render demo" })
 ```
 
 | `<Plug>` mapping | Description |
 |---|---|
 | `<Plug>(md-render-preview)` | Toggle a floating preview window for the current Markdown buffer |
+| `<Plug>(md-render-preview-tab)` | Toggle a tab preview for the current Markdown buffer |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `:MdRender` | Toggle a floating preview window |
+| `:MdRenderTab` | Toggle a tab preview |
+| `:MdRenderPager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
+| `:MdRenderDemo` | Show a demo window with all supported Markdown notations |
+
+### Pager mode
+
+Use `MdRenderPager` to view Markdown files like `less`:
+
+```bash
+nvim +MdRenderPager README.md
+```
+
+Add a shell alias for convenience:
+
+```bash
+alias mdless='nvim +MdRenderPager'
+mdless README.md
+```
 
 ## Usage
 
@@ -127,7 +154,7 @@ MIT — see [LICENSE](LICENSE).
 
 # 日本語
 
-Neovim のフローティングウィンドウで Markdown をリッチにレンダリングするエンジンです。生の Markdown テキストをハイライト付きのインタラクティブなコンテンツに変換して、エディタ内で表示します。
+Neovim で Markdown をリッチにレンダリングするエンジンです。生の Markdown テキストをハイライト付きのインタラクティブなコンテンツに変換して、エディタ内で表示します。フローティングウィンドウ、タブ表示、コマンドラインからの `less` ライクなページャーモードに対応しています。
 
 <table>
 <tr>
@@ -193,8 +220,9 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
     { "delphinus/budoux.lua", version = "*" }, -- optional: CJK phrase-level line breaking
   },
   keys = {
-    { "<leader>mp", "<Plug>(md-render-preview)", desc = "Markdown preview (toggle)" },
-    { "<leader>md", "<Plug>(md-render-demo)",    desc = "Markdown render demo" },
+    { "<leader>mp", "<Plug>(md-render-preview)",     desc = "Markdown preview (toggle)" },
+    { "<leader>mt", "<Plug>(md-render-preview-tab)", desc = "Markdown preview in tab (toggle)" },
+    { "<leader>md", "<Plug>(md-render-demo)",        desc = "Markdown render demo" },
   },
 }
 ```
@@ -204,14 +232,40 @@ Neovim のフローティングウィンドウで Markdown をリッチにレン
 このプラグインは `<Plug>` マッピングを提供しますが、デフォルトのキーバインドは設定**しません**。自分でマッピングしてください：
 
 ```lua
-vim.keymap.set("n", "<leader>mp", "<Plug>(md-render-preview)", { desc = "Markdown preview (toggle)" })
-vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",    { desc = "Markdown render demo" })
+vim.keymap.set("n", "<leader>mp", "<Plug>(md-render-preview)",     { desc = "Markdown preview (toggle)" })
+vim.keymap.set("n", "<leader>mt", "<Plug>(md-render-preview-tab)", { desc = "Markdown preview in tab (toggle)" })
+vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Markdown render demo" })
 ```
 
 | `<Plug>` マッピング | 説明 |
 |---|---|
 | `<Plug>(md-render-preview)` | 現在の Markdown バッファのフローティングプレビューをトグル |
+| `<Plug>(md-render-preview-tab)` | 現在の Markdown バッファのタブプレビューをトグル |
 | `<Plug>(md-render-demo)` | 対応する全 Markdown 記法のデモウィンドウを表示 |
+
+## コマンド
+
+| コマンド | 説明 |
+|---|---|
+| `:MdRender` | フローティングプレビューをトグル |
+| `:MdRenderTab` | タブプレビューをトグル |
+| `:MdRenderPager` | ページャーモード — フルスクリーン、装飾なし、`q` で Neovim 終了 |
+| `:MdRenderDemo` | 対応する全 Markdown 記法のデモウィンドウを表示 |
+
+### ページャーモード
+
+`MdRenderPager` を使うと Markdown ファイルを `less` のように閲覧できます：
+
+```bash
+nvim +MdRenderPager README.md
+```
+
+シェルエイリアスを設定すると便利です：
+
+```bash
+alias mdless='nvim +MdRenderPager'
+mdless README.md
+```
 
 ## 使い方
 
