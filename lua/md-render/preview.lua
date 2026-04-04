@@ -456,6 +456,178 @@ MdPreview.show_tab = function(opts)
   })
 end
 
+--- Show markdown in pager mode (full-screen, minimal UI, q to quit Neovim)
+---@param opts? { max_width?: integer }
+MdPreview.show_pager = function(opts)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  local ft = vim.bo[bufnr].filetype
+
+  if ft ~= "markdown" and not name:match "%.md$" and not name:match "%.markdown$" then
+    vim.notify("md-render: current buffer is not a Markdown file", vim.log.levels.WARN)
+    return
+  end
+
+  local source_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local fold_state = {}
+  local expand_state = {}
+  opts = opts or {}
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  local ns = vim.api.nvim_create_namespace "md_render_pager"
+  local win = vim.api.nvim_get_current_win()
+
+  require("md-render").setup_highlights()
+
+  local content
+
+  local function rebuild()
+    opts.fold_state = fold_state
+    opts.expand_state = expand_state
+    local new_content = MdPreview.build_content(source_lines, opts)
+    vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    display_utils.apply_content_to_buffer(buf, ns, new_content)
+    vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+    local any_expanded = false
+    for _, v in pairs(expand_state) do
+      if v then any_expanded = true; break end
+    end
+    vim.api.nvim_set_option_value("wrap", not any_expanded, { win = win })
+    content = new_content
+  end
+
+  content = MdPreview.build_content(source_lines, opts)
+  display_utils.apply_content_to_buffer(buf, ns, content)
+
+  -- Replace current window buffer
+  vim.api.nvim_win_set_buf(win, buf)
+
+  -- Hide all chrome for pager feel
+  vim.o.showtabline = 0
+  vim.o.laststatus = 0
+  vim.o.cmdheight = 0
+  vim.o.ruler = false
+  vim.o.showcmd = false
+
+  -- Window options
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = "no"
+  vim.wo[win].foldcolumn = "0"
+  vim.wo[win].cursorline = true
+  vim.wo[win].wrap = true
+  vim.wo[win].spell = false
+  vim.wo[win].list = false
+
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].buftype = "nofile"
+
+  -- Initialize fold_state
+  for _, fold in ipairs(content.callout_folds) do
+    fold_state[fold.source_line] = fold.collapsed
+  end
+
+  -- Display images
+  local download_rebuild_timer = nil
+  local image_state = display_utils.setup_images(win, content, function()
+    if download_rebuild_timer then
+      download_rebuild_timer:stop()
+    end
+    download_rebuild_timer = vim.defer_fn(function()
+      download_rebuild_timer = nil
+      if vim.api.nvim_win_is_valid(win) then
+        rebuild()
+        image_state = display_utils.update_images(image_state, win, content)
+      end
+    end, 150)
+  end, ns)
+
+  -- q quits Neovim (pager behavior)
+  vim.keymap.set("n", "q", function()
+    display_utils.cleanup_images(image_state)
+    vim.cmd "qa!"
+  end, { buffer = buf, noremap = true, silent = true })
+
+  -- Click handling (links, folds, expand)
+  vim.keymap.set("n", "<LeftRelease>", function()
+    local mouse = vim.fn.getmousepos()
+    if mouse.winid ~= win then return end
+
+    local click_line = mouse.line - 1
+    local click_col = mouse.column - 1
+
+    local function try_open_url()
+      local extmarks =
+        vim.api.nvim_buf_get_extmarks(buf, ns, { click_line, 0 }, { click_line + 1, 0 }, { details = true })
+      for _, mark in ipairs(extmarks) do
+        local _, _, start_col, details = unpack(mark)
+        if details.url then
+          local end_col = details.end_col or (start_col + 1)
+          if click_col >= start_col and click_col < end_col then
+            local anchor = details.url:match "^#(.+)$"
+            if anchor then
+              if content.footnote_anchors then
+                local target_line = content.footnote_anchors[anchor]
+                if target_line then
+                  vim.api.nvim_win_set_cursor(win, { target_line + 1, 0 })
+                  return true
+                end
+              end
+              if content.heading_anchors then
+                local target_line = content.heading_anchors[anchor]
+                if target_line then
+                  vim.api.nvim_win_set_cursor(win, { target_line + 1, 0 })
+                  return true
+                end
+              end
+              return true
+            end
+            if details.url:match "^obsidian://" then
+              vim.notify("Opening: " .. details.url, vim.log.levels.INFO)
+              vim.ui.open(details.url)
+              return true
+            end
+            if display_utils.supports_osc8() then return false end
+            vim.notify("Opening: " .. details.url, vim.log.levels.INFO)
+            vim.ui.open(details.url)
+            return true
+          end
+        end
+      end
+      return false
+    end
+
+    -- Foldable callout header
+    if content.callout_folds then
+      for _, fold in ipairs(content.callout_folds) do
+        if fold.header_line == click_line then
+          fold_state[fold.source_line] = not fold.collapsed
+          rebuild()
+          image_state = display_utils.update_images(image_state, win, content)
+          return
+        end
+      end
+    end
+
+    -- Expandable region
+    if content.expandable_regions then
+      for _, region in ipairs(content.expandable_regions) do
+        if click_line >= region.start_line and click_line <= region.end_line then
+          if try_open_url() then return end
+          expand_state[region.block_id] = not region.expanded
+          rebuild()
+          image_state = display_utils.update_images(image_state, win, content)
+          return
+        end
+      end
+    end
+
+    try_open_url()
+  end, { buffer = buf, noremap = true, silent = true })
+end
+
 --- Show a demo floating window with all supported Markdown notations
 MdPreview.show_demo = function()
   -- Resolve plugin root for demo image paths
