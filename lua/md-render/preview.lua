@@ -216,7 +216,8 @@ MdPreview.show = function(opts)
   -- Debounce on_download to prevent cascade when multiple URL images
   -- complete in quick succession (each would trigger rebuild + cleanup).
   local download_rebuild_timer = nil
-  local image_state = display_utils.setup_images(win, content, function()
+  local image_state
+  image_state = display_utils.setup_images(win, content, function()
     if download_rebuild_timer then
       download_rebuild_timer:stop()
     end
@@ -386,7 +387,8 @@ MdPreview.show_tab = function(opts)
 
   -- Display images
   local download_rebuild_timer = nil
-  local image_state = display_utils.setup_images(win, content, function()
+  local image_state
+  image_state = display_utils.setup_images(win, content, function()
     if download_rebuild_timer then
       download_rebuild_timer:stop()
     end
@@ -531,7 +533,8 @@ MdPreview.show_pager = function(opts)
 
   -- Display images
   local download_rebuild_timer = nil
-  local image_state = display_utils.setup_images(win, content, function()
+  local image_state
+  image_state = display_utils.setup_images(win, content, function()
     if download_rebuild_timer then
       download_rebuild_timer:stop()
     end
