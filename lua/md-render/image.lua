@@ -679,16 +679,53 @@ function M.get_cached(url)
     os.remove(cache_path)
     return nil
   end
+  -- Try video extensions (file may have been renamed by finalize_download)
+  local hash = cache_path:match("/([^/]+)%.[^.]+$")
+  if hash then
+    for _, ext in ipairs({ "mp4", "webm", "avi" }) do
+      local alt_path = get_cache_dir() .. "/" .. hash .. "." .. ext
+      if vim.fn.filereadable(alt_path) == 1 and M.is_video_content(alt_path) then
+        _url_cache[url] = alt_path
+        return alt_path
+      end
+    end
+  end
+  return nil
+end
+
+--- Detect video format from magic bytes and return the correct extension.
+---@param path string
+---@return string? ext  "mp4", "webm", or "avi"
+local function detect_video_ext(path)
+  local h = read_header(path, 12)
+  if not h or #h < 8 then return nil end
+  if h:sub(5, 8) == "ftyp" then return "mp4" end
+  if h:byte(1) == 0x1A and h:byte(2) == 0x45 and h:byte(3) == 0xDF and h:byte(4) == 0xA3 then return "webm" end
+  if h:sub(1, 4) == "RIFF" and #h >= 12 and h:sub(9, 11) == "AVI" then return "avi" end
   return nil
 end
 
 --- Validate a downloaded file and update cache, then invoke callback.
+--- If the file is video with a wrong extension, rename it to the correct one.
 ---@param url string
 ---@param cache_path string
 ---@param callback fun(path: string?)
 local function finalize_download(url, cache_path, callback)
   if vim.fn.filereadable(cache_path) == 1 then
-    if M.image_dimensions(cache_path) or M.is_video_content(cache_path) then
+    if M.image_dimensions(cache_path) then
+      _url_cache[url] = cache_path
+      callback(cache_path)
+      return
+    end
+    -- Check if it's a video with wrong extension
+    local video_ext = detect_video_ext(cache_path)
+    if video_ext then
+      local current_ext = cache_path:match("%.(%w+)$")
+      if current_ext and current_ext ~= video_ext then
+        local correct_path = cache_path:gsub("%." .. current_ext .. "$", "." .. video_ext)
+        os.rename(cache_path, correct_path)
+        cache_path = correct_path
+      end
       _url_cache[url] = cache_path
       callback(cache_path)
       return

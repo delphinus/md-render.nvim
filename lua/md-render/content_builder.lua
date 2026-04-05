@@ -2123,13 +2123,11 @@ function ContentBuilder:render_document(lines, opts)
                 display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
                 is_animated = image.is_animated_gif(resolved)
               elseif image.is_video_content(resolved) then
-                -- URL without video extension resolved to a video file
+                -- URL without video extension resolved to a video file;
+                -- use placeholder sizes to avoid sync ffprobe call.
+                -- display_utils will get dimensions asynchronously.
                 is_video = true
                 is_animated = true
-                orig_img_w, orig_img_h = image.video_dimensions(resolved)
-                if orig_img_w and orig_img_h then
-                  display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
-                end
               end
             end
             if not display_cols then

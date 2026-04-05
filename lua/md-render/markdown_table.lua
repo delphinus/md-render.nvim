@@ -431,8 +431,9 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
                   if resolved then
                     img_w, img_h = image_mod.image_dimensions(resolved)
                     if not img_w and image_mod.is_video_content(resolved) then
+                      -- Auto-detected video: skip sync ffprobe, use placeholder sizing.
+                      -- display_utils will get dimensions asynchronously.
                       is_video = true
-                      img_w, img_h = image_mod.video_dimensions(resolved)
                     end
                   end
                 end
