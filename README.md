@@ -7,7 +7,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 <table>
 <tr>
 <td width="50%"><img src="assets/screenshot-rendering.png" alt="Markdown rendering features" /></td>
-<td width="50%"><video src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" autoplay loop muted></video></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" alt="Images, video, and Mermaid diagrams" /></td>
 </tr>
 <tr>
 <td align="center"><em>Inline formatting, tables, callouts, code blocks, and CJK line-breaking</em></td>
@@ -159,7 +159,7 @@ Neovim で Markdown をリッチにレンダリングするエンジンです。
 <table>
 <tr>
 <td width="50%"><img src="assets/screenshot-rendering.png" alt="Markdown レンダリング機能" /></td>
-<td width="50%"><video src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" autoplay loop muted></video></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" alt="Images, video, and Mermaid diagrams" /></td>
 </tr>
 <tr>
 <td align="center"><em>インライン書式、テーブル、コールアウト、コードブロック、CJK 折り返し</em></td>
