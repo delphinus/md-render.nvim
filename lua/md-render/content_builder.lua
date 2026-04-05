@@ -2131,7 +2131,7 @@ function ContentBuilder:render_document(lines, opts)
               end
             end
             if not display_cols then
-              if src_url then
+              if src_url or is_video then
                 display_cols = math.floor(img_max_cols * 0.8)
                 display_rows = 15
               end

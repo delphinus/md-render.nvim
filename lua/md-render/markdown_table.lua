@@ -446,6 +446,14 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
                   }
                   col_image_widths[col] = math.max(col_image_widths[col] or 0, display_cols)
                   has_image_cells = true
+                elseif resolved and is_video then
+                  -- Auto-detected video with resolved path but no dimensions yet
+                  if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
+                  row_images_cache[row_idx][col] = {
+                    alt = alt, url = url, resolved = resolved, video = true,
+                  }
+                  col_image_widths[col] = math.max(col_image_widths[col] or 0, initial_max_per_col)
+                  has_image_cells = true
                 elseif src_url then
                   if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
                   row_images_cache[row_idx][col] = {
