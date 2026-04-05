@@ -128,17 +128,35 @@ local function split_katakana_compound(text, min_chars)
       score = score + moraic_n_bonus
     end
 
+    -- Penalty for splitting right after ッ + consonant kana.
+    -- "ッ" (geminate) bonds tightly with the following kana, and the next
+    -- character often continues the same morpheme (e.g. シンタック|ス is wrong;
+    -- シンタックス|ハイライト is correct).  Strong boundaries like
+    -- コードブロック|ヘッダ still pass because their base score is high enough.
+    if i >= 3 and chars[i - 2] == "ッ" then
+      score = score - math.floor(budoux_model.base_score * 0.35)
+    end
+
     boundary_scores[i] = score
   end
 
+  -- Only consider boundaries with scores above a quality threshold.
+  -- BudouX scores are unreliable for pure katakana strings (all scores tend
+  -- to be deeply negative).  A relaxed threshold filters out noise while
+  -- keeping genuinely strong boundaries (e.g. "コードブロック|ヘッダ",
+  -- "フローティング|プレビュー").
+  -- When no boundary passes, fall back to kinsoku-grouped segments.
+  local score_threshold = -math.floor(budoux_model.base_score * 0.95)
+
   -- Collect candidate split positions sorted by score (highest first),
   -- filtering out positions that would split before kinsoku characters
-  -- (small kana, ー, ッ, ン).
+  -- (small kana, ー, ッ, ン) and positions below the quality threshold.
   local candidates = {}
   for i = 2, #chars do
     local w1 = chars[i]
     -- Don't split before small kana, ー, ッ, ン (these attach to preceding char)
-    if not NO_BREAK_START[w1] and w1 ~= "ッ" and w1 ~= "ン" and w1 ~= "ー" then
+    if not NO_BREAK_START[w1] and w1 ~= "ッ" and w1 ~= "ン" and w1 ~= "ー"
+        and boundary_scores[i] > score_threshold then
       candidates[#candidates + 1] = { pos = i, score = boundary_scores[i] }
     end
   end
@@ -173,7 +191,19 @@ local function split_katakana_compound(text, min_chars)
   table.sort(selected)
 
   if #selected == 0 then
-    return { text }
+    -- No reliable boundary found: split into kinsoku-grouped segments.
+    -- Each NO_BREAK_START character (small kana, ー, ッ, etc.) is attached
+    -- to the preceding character, preventing cascading 追い出し issues in
+    -- wrap_words while still allowing flexible line breaking.
+    local grouped = {}
+    for _, c in ipairs(chars) do
+      if (NO_BREAK_START[c] or c == "ン" or c == "ん") and #grouped > 0 then
+        grouped[#grouped] = grouped[#grouped] .. c
+      else
+        grouped[#grouped + 1] = c
+      end
+    end
+    return grouped
   end
 
   -- Build result chunks
@@ -248,9 +278,7 @@ local function split_by_script(chunk)
     if cls ~= "O" and cls ~= prev_cls then
       if prev_cls == "K" then
         should_split = true
-      elseif prev_cls == "C" and cls == "H" then
-        should_split = kanji_run >= 2
-      elseif prev_cls == "C" then
+      elseif prev_cls == "C" and cls ~= "H" then
         should_split = true
       end
     end

@@ -137,8 +137,41 @@ local function wrap_cell_text(text, max_display_width)
           table.insert(result, { text = current_text, byte_start = line_starts[i] + current_byte })
         end
       else
-        -- Syllable splitting didn't help; add as-is (build_wrapped_row will truncate)
-        table.insert(result, { text = line, byte_start = line_starts[i] })
+        -- CJK emergency splitting: break into individual characters,
+        -- grouping NO_BREAK_START characters (small kana, ー, punctuation)
+        -- with their preceding character to respect kinsoku rules.
+        local cjk_groups = {}
+        for c in line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
+          if wrap_mod.NO_BREAK_START[c] and #cjk_groups > 0 then
+            cjk_groups[#cjk_groups] = cjk_groups[#cjk_groups] .. c
+          else
+            cjk_groups[#cjk_groups + 1] = c
+          end
+        end
+        if #cjk_groups > 1 then
+          local current_text = ""
+          local current_byte = 0
+          local byte_offset = 0
+          for _, g in ipairs(cjk_groups) do
+            if current_text ~= "" and vim.fn.strdisplaywidth(current_text .. g) > max_display_width then
+              table.insert(result, { text = current_text, byte_start = line_starts[i] + current_byte })
+              current_byte = byte_offset
+              current_text = g
+            else
+              if current_text == "" then
+                current_byte = byte_offset
+              end
+              current_text = current_text .. g
+            end
+            byte_offset = byte_offset + #g
+          end
+          if current_text ~= "" then
+            table.insert(result, { text = current_text, byte_start = line_starts[i] + current_byte })
+          end
+        else
+          -- Single character wider than column; add as-is (build_wrapped_row will truncate)
+          table.insert(result, { text = line, byte_start = line_starts[i] })
+        end
       end
     else
       table.insert(result, { text = line, byte_start = line_starts[i] })
@@ -448,10 +481,20 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
       if budget < num_cols then
         budget = num_cols
       end
+      -- In expanded mode, content wraps so no column needs more than the full
+      -- budget.  Cap each column's width for proportion calculation to prevent
+      -- columns with very long content from starving shorter columns.
+      local capped_sum = 0
+      local capped_widths = {}
+      for col = 1, num_cols do
+        local cap = expanded and math.min(col_widths[col], budget) or col_widths[col]
+        capped_widths[col] = cap
+        capped_sum = capped_sum + cap
+      end
       local new_widths = {}
       local assigned = 0
       for col = 1, num_cols do
-        local proportion = col_widths[col] / content_sum
+        local proportion = capped_widths[col] / capped_sum
         local w = math.max(1, math.floor(proportion * budget))
         new_widths[col] = w
         assigned = assigned + w
