@@ -455,6 +455,33 @@ function M.setup_images(win, content, on_download, ns)
     end
   end
 
+  -- Update only animated placements (called from animation timer).
+  -- Unlike place_images(), this does NOT touch static images, avoiding flicker.
+  local function update_anim_frames()
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+    image.begin_batch()
+    local ok, err = pcall(function()
+      for _, placement in ipairs(state.placements) do
+        local anim = state.anims[placement.path]
+        if anim then
+          -- Clear all frame placements for this animation
+          for _, fid in ipairs(anim.frame_ids) do
+            image.clear_placements(fid)
+          end
+          -- Place the current frame
+          local id = anim.frame_ids[anim.current]
+          if id then
+            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+          end
+        end
+      end
+    end)
+    image.flush_batch()
+    if not ok then
+      vim.notify("md-render: anim update error: " .. tostring(err), vim.log.levels.WARN)
+    end
+  end
+
   -- Pause all animation timers (during scroll/redraw to avoid racing with redraw!)
   local function pause_anim_timers()
     for _, anim in pairs(state.anims) do
@@ -584,9 +611,10 @@ function M.setup_images(win, content, on_download, ns)
             return
           end
           anim.current = anim.current % #anim.frame_ids + 1
-          -- Re-place ALL images (static + animated) to prevent static
-          -- images from disappearing after TUI refresh clears placements.
-          place_images()
+          -- Only update animated frames; static images are left untouched
+          -- to avoid flicker. Static images are re-placed by schedule_redraw()
+          -- on scroll/resize events.
+          update_anim_frames()
         end))
       else
         -- Single frame: just display it like a static image
