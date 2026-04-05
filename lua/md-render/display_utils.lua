@@ -457,22 +457,37 @@ function M.setup_images(win, content, on_download, ns)
 
   -- Update only animated placements (called from animation timer).
   -- Unlike place_images(), this does NOT touch static images, avoiding flicker.
+  -- Only clears the previous frame (not all frames) and skips off-screen placements.
   local function update_anim_frames()
     if not vim.api.nvim_win_is_valid(state.win) then return end
+
+    local win_height = vim.api.nvim_win_get_height(state.win)
+    local wininfo = vim.fn.getwininfo(state.win)[1]
+    local topline = wininfo.topline - 1  -- 0-indexed
+
     image.begin_batch()
     local ok, err = pcall(function()
       for _, placement in ipairs(state.placements) do
         local anim = state.anims[placement.path]
         if anim then
-          -- Clear all frame placements for this animation
-          for _, fid in ipairs(anim.frame_ids) do
-            image.clear_placements(fid)
+          -- Skip off-screen animations
+          local img_end = placement.line + placement.rows - 1
+          if img_end < topline or placement.line >= topline + win_height then
+            goto continue
+          end
+
+          -- Clear only the previous frame (not all frames)
+          local prev = (anim.current - 2) % #anim.frame_ids + 1
+          local prev_id = anim.frame_ids[prev]
+          if prev_id then
+            image.clear_placements(prev_id)
           end
           -- Place the current frame
           local id = anim.frame_ids[anim.current]
           if id then
             image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
           end
+          ::continue::
         end
       end
     end)
