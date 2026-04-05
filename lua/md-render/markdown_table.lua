@@ -887,6 +887,13 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
             display_cols = display_cols, display_rows = display_rows,
             video = img.video,
           }
+        elseif img.resolved and img.video then
+          -- Auto-detected video: resolved path but no dimensions yet
+          row_images[col] = {
+            alt = img.alt, url = img.url, resolved = img.resolved,
+            display_cols = col_widths[col], display_rows = 10,
+            video = true,
+          }
         elseif img.src_url then
           row_images[col] = {
             alt = img.alt, url = img.url, resolved = nil, src_url = img.src_url,
