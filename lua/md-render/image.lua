@@ -278,10 +278,16 @@ function M.is_video_content(path)
   return false
 end
 
+-- In-memory cache for video dimensions (avoids repeated ffprobe calls)
+local _video_dim_cache = {}
+
 --- Get video dimensions synchronously using ffprobe.
+--- Results are cached in memory keyed by path.
 ---@param path string absolute path to video file
 ---@return integer? width, integer? height
 function M.video_dimensions(path)
+  local cached = _video_dim_cache[path]
+  if cached then return cached[1], cached[2] end
   if vim.fn.executable("ffprobe") ~= 1 then return nil, nil end
   local result = vim.system(
     {
@@ -294,7 +300,11 @@ function M.video_dimensions(path)
   ):wait()
   if result.code == 0 and result.stdout then
     local w, h = result.stdout:match("(%d+)x(%d+)")
-    if w and h then return tonumber(w), tonumber(h) end
+    if w and h then
+      local tw, th = tonumber(w), tonumber(h)
+      _video_dim_cache[path] = { tw, th }
+      return tw, th
+    end
   end
   return nil, nil
 end
