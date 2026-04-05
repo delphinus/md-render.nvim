@@ -752,18 +752,40 @@ function M.setup_images(win, content, on_download, ns)
   -- Initial display of already-cached images
   schedule_redraw()
 
-  -- Re-display on scroll (WinScrolled covers all scroll-related changes;
-  -- CursorMoved was removed because it triggered unnecessary full redraws
-  -- on every cursor movement, causing image flicker with animations).
+  -- Lightweight re-place: just place images without redraw! (no clear cycle).
+  -- Used by CursorMoved to repair placements lost to TUI refreshes.
+  local function schedule_replace()
+    if state.redraw_timer then return end  -- full redraw pending, skip
+    image.begin_batch()
+    local ok, err = pcall(place_images)
+    image.flush_batch()
+    if not ok then
+      vim.notify("md-render: image replace error: " .. tostring(err), vim.log.levels.WARN)
+    end
+  end
+
+  -- Re-display on scroll and cursor movement
   local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
+  -- WinScrolled: full redraw (redraw! + place) for scroll position changes
   local scroll_id = vim.api.nvim_create_autocmd("WinScrolled", {
     group = augroup,
     callback = function(ev)
       if tostring(ev.match) ~= tostring(state.win) then return end
-      schedule_redraw("autocmd:WinScrolled")
+      schedule_redraw()
     end,
   })
   table.insert(state.autocmd_ids, scroll_id)
+  -- CursorMoved: lightweight re-place only (repairs lost placements without redraw!)
+  for _, event in ipairs({ "CursorMoved", "CursorMovedI" }) do
+    local id = vim.api.nvim_create_autocmd(event, {
+      group = augroup,
+      callback = function()
+        if vim.api.nvim_get_current_win() ~= state.win then return end
+        schedule_replace()
+      end,
+    })
+    table.insert(state.autocmd_ids, id)
+  end
 
   return state
 end
