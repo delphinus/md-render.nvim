@@ -429,6 +429,7 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
         src_url = p.src_url,
         img_w = p.img_w,
         img_h = p.img_h,
+        video = p.video,
       })
     end
   end

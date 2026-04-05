@@ -1092,6 +1092,35 @@ local function process_html_tags(text, highlights, links)
         end
       end
 
+      -- Try <video src="...">...</video> or <video><source src="...">...</video>
+      if not matched then
+        local video_tag = rest:match "^(<video[%s>].-</video>)"
+        if video_tag then
+          local src = video_tag:match 'src="([^"]*)"' or video_tag:match "src='([^']*)'"
+          if not src then
+            src = video_tag:match '<source[^>]*src="([^"]*)"'
+              or video_tag:match "<source[^>]*src='([^']*)'>"
+          end
+          if src then
+            local icons_mod = require "md-render.icons"
+            local raw_icon, icon_hl = icons_mod.get_image_icon(src)
+            local img_icon = icons_mod.pad_icon(raw_icon) .. " "
+            local display_name = src:match "([^/]+)$" or src
+            local display = img_icon .. display_name
+            table.insert(removals, { start = i - 1, count = #video_tag })
+            local start_col = #processed
+            processed = processed .. display
+            if icon_hl then
+              table.insert(highlights, { col = start_col, end_col = start_col + #img_icon - 1, hl = icon_hl })
+            end
+            table.insert(highlights, { col = start_col + #img_icon, end_col = start_col + #display, hl = "Underlined" })
+            table.insert(links, { col_start = start_col, col_end = start_col + #display, url = src })
+            i = i + #video_tag
+            matched = true
+          end
+        end
+      end
+
       -- Try paired HTML tags (<b>, <strong>, <em>, etc.)
       if not matched then
         local tag_name = rest:match "^<(%a+)[%s>]"

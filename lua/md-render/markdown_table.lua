@@ -334,25 +334,42 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
     return text:gsub("<!%-%-.-%-%->" , ""):match "^%s*(.-)%s*$"
   end
 
-  --- Check if a cell contains only an image reference ![alt](url) or <img> tag
+  --- Check if a cell contains only an image reference ![alt](url), <img>, or <video> tag
   --- Also handles cells with leading HTML comments like <!-- ... -->![alt](url)
   ---@param _cell MdRender.MarkdownTable.ParsedCell
   ---@param raw_text string original cell text before markdown rendering
-  ---@return string? alt, string? url
+  ---@return string? alt, string? url, boolean? is_video
   local function cell_image(_cell, raw_text)
     local stripped = strip_html_comments(raw_text)
     local alt, url = stripped:match "^!%[(.-)%]%((.-)%)$"
-    if alt and url then return alt, url end
+    if alt and url then
+      local image_mod = require "md-render.image"
+      return alt, url, image_mod.is_video_file(url)
+    end
     -- Try <img src="..." alt="..."> tag
     local img_tag = stripped:match "^(<img%s[^>]*>)%s*$"
     if img_tag then
       local src = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
       if src then
         alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'" or ""
-        return alt, src
+        local image_mod = require "md-render.image"
+        return alt, src, image_mod.is_video_file(src)
       end
     end
-    return nil, nil
+    -- Try <video src="...">...</video> or <video><source src="...">...</video>
+    local video_tag = stripped:match "^(<video[%s>].-</video>)%s*$"
+    if video_tag then
+      local src = video_tag:match 'src="([^"]*)"' or video_tag:match "src='([^']*)'"
+      if not src then
+        src = video_tag:match '<source[^>]*src="([^"]*)"'
+          or video_tag:match "<source[^>]*src='([^']*)'>"
+      end
+      if src then
+        alt = src:match "([^/]+)$" or src
+        return alt, src, true
+      end
+    end
+    return nil, nil, nil
   end
 
   -- Collect raw cell texts for image detection
@@ -389,26 +406,45 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
           for col = 1, num_cols do
             local raw = raw_rows[row_idx][col]
             if raw then
-              local alt, url = cell_image(row[col], raw)
+              local alt, url, is_video = cell_image(row[col], raw)
               if alt and url and not image_mod.is_badge_url(url) then
-                local resolved = image_mod.resolve(url, buf_dir)
-                local src_url = image_mod.is_url(url) and url or nil
-                if resolved then
-                  local img_w, img_h = image_mod.image_dimensions(resolved)
-                  if img_w and img_h then
-                    local display_cols = image_mod.calc_display_size(img_w, img_h, initial_max_per_col, 15)
-                    if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
-                    row_images_cache[row_idx][col] = {
-                      alt = alt, url = url, resolved = resolved,
-                      img_w = img_w, img_h = img_h,
-                    }
-                    col_image_widths[col] = math.max(col_image_widths[col] or 0, display_cols)
-                    has_image_cells = true
+                local resolved, src_url, img_w, img_h
+                if is_video then
+                  src_url = image_mod.is_url(url) and url or nil
+                  if src_url then
+                    resolved = image_mod.get_video_cached(src_url)
+                  else
+                    local video_path = vim.fn.expand(url)
+                    if video_path:sub(1, 1) ~= "/" and buf_dir then
+                      video_path = buf_dir .. "/" .. video_path
+                    end
+                    if vim.fn.filereadable(video_path) == 1 then
+                      resolved = video_path
+                    end
                   end
+                  if resolved then
+                    img_w, img_h = image_mod.video_dimensions(resolved)
+                  end
+                else
+                  resolved = image_mod.resolve(url, buf_dir)
+                  src_url = image_mod.is_url(url) and url or nil
+                  if resolved then
+                    img_w, img_h = image_mod.image_dimensions(resolved)
+                  end
+                end
+                if resolved and img_w and img_h then
+                  local display_cols = image_mod.calc_display_size(img_w, img_h, initial_max_per_col, 15)
+                  if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
+                  row_images_cache[row_idx][col] = {
+                    alt = alt, url = url, resolved = resolved,
+                    img_w = img_w, img_h = img_h, video = is_video,
+                  }
+                  col_image_widths[col] = math.max(col_image_widths[col] or 0, display_cols)
+                  has_image_cells = true
                 elseif src_url then
                   if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
                   row_images_cache[row_idx][col] = {
-                    alt = alt, url = url, resolved = nil, src_url = src_url,
+                    alt = alt, url = url, resolved = nil, src_url = src_url, video = is_video,
                   }
                   col_image_widths[col] = math.max(col_image_widths[col] or 0, initial_max_per_col)
                   has_image_cells = true
@@ -426,7 +462,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
           if cells then
             for _, cell_text in ipairs(cells) do
               local trimmed = strip_html_comments(cell_text)
-              if trimmed and (trimmed:match "^!%[.-%]%(.-%)" or trimmed:match "^<img%s") then
+              if trimmed and (trimmed:match "^!%[.-%]%(.-%)" or trimmed:match "^<img%s" or trimmed:match "^<video[%s>]") then
                 has_image_cells = true
                 break
               end
@@ -836,11 +872,13 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
           row_images[col] = {
             alt = img.alt, url = img.url, resolved = img.resolved,
             display_cols = display_cols, display_rows = display_rows,
+            video = img.video,
           }
         elseif img.src_url then
           row_images[col] = {
             alt = img.alt, url = img.url, resolved = nil, src_url = img.src_url,
             display_cols = col_widths[col], display_rows = 10,
+            video = img.video,
           }
         end
       end
@@ -930,6 +968,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
           cols = img_cols,
           img_w = cached_img and cached_img.img_w or nil,
           img_h = cached_img and cached_img.img_h or nil,
+          video = img.video,
         })
       end
 
