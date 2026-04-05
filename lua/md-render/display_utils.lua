@@ -752,24 +752,18 @@ function M.setup_images(win, content, on_download, ns)
   -- Initial display of already-cached images
   schedule_redraw()
 
-  -- Re-display on scroll and cursor movement
+  -- Re-display on scroll (WinScrolled covers all scroll-related changes;
+  -- CursorMoved was removed because it triggered unnecessary full redraws
+  -- on every cursor movement, causing image flicker with animations).
   local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
-  for _, event in ipairs({ "WinScrolled", "CursorMoved", "CursorMovedI" }) do
-    local id = vim.api.nvim_create_autocmd(event, {
-      group = augroup,
-      callback = function(ev)
-        -- WinScrolled: check if it's our window
-        if event == "WinScrolled" then
-          if tostring(ev.match) ~= tostring(state.win) then return end
-        else
-          -- CursorMoved: check if cursor is in our window
-          if vim.api.nvim_get_current_win() ~= state.win then return end
-        end
-        schedule_redraw()
-      end,
-    })
-    table.insert(state.autocmd_ids, id)
-  end
+  local scroll_id = vim.api.nvim_create_autocmd("WinScrolled", {
+    group = augroup,
+    callback = function(ev)
+      if tostring(ev.match) ~= tostring(state.win) then return end
+      schedule_redraw("autocmd:WinScrolled")
+    end,
+  })
+  table.insert(state.autocmd_ids, scroll_id)
 
   return state
 end
