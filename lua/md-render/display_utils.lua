@@ -514,7 +514,7 @@ function M.setup_images(win, content, on_download, ns)
             return
           end
           anim.current = anim.current % #anim.frame_ids + 1
-          place_images()
+          update_anim_frames()
         end))
       end
     end
