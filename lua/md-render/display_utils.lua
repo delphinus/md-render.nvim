@@ -607,6 +607,11 @@ function M.setup_images(win, content, on_download, ns)
       -- Save original placeholder row count before recalculation
       local placeholder_rows = placement.rows
 
+      -- Auto-detect video content when not already flagged (e.g. URL without extension)
+      if not placement.video and image.is_video_content(path) then
+        placement.video = true
+      end
+
       if placement.video then
         -- Video: always animated, get dimensions via ffprobe
         placement.animated = true

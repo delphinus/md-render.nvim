@@ -2122,10 +2122,21 @@ function ContentBuilder:render_document(lines, opts)
               if orig_img_w and orig_img_h then
                 display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
                 is_animated = image.is_animated_gif(resolved)
+              elseif image.is_video_content(resolved) then
+                -- URL without video extension resolved to a video file
+                is_video = true
+                is_animated = true
+                orig_img_w, orig_img_h = image.video_dimensions(resolved)
+                if orig_img_w and orig_img_h then
+                  display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
+                end
               end
-            elseif src_url then
-              display_cols = math.floor(img_max_cols * 0.8)
-              display_rows = 15
+            end
+            if not display_cols then
+              if src_url then
+                display_cols = math.floor(img_max_cols * 0.8)
+                display_rows = 15
+              end
             end
           end
 

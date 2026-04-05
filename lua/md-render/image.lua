@@ -262,6 +262,22 @@ function M.is_video_file(path)
   return VIDEO_EXTENSIONS[ext:lower()] == true
 end
 
+--- Check if a file contains video content by examining magic bytes.
+--- Detects MP4 (ftyp), WebM/MKV (EBML), AVI (RIFF+AVI).
+---@param path string
+---@return boolean
+function M.is_video_content(path)
+  local h = read_header(path, 12)
+  if not h or #h < 8 then return false end
+  -- MP4/M4V: bytes 5-8 are "ftyp"
+  if h:sub(5, 8) == "ftyp" then return true end
+  -- WebM/MKV: starts with EBML header (0x1A45DFA3)
+  if h:byte(1) == 0x1A and h:byte(2) == 0x45 and h:byte(3) == 0xDF and h:byte(4) == 0xA3 then return true end
+  -- AVI: RIFF....AVI
+  if h:sub(1, 4) == "RIFF" and #h >= 12 and h:sub(9, 11) == "AVI" then return true end
+  return false
+end
+
 --- Get video dimensions synchronously using ffprobe.
 ---@param path string absolute path to video file
 ---@return integer? width, integer? height
@@ -643,8 +659,8 @@ end
 ---@return string? cached_path
 function M.get_cached(url)
   if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then
-    -- Validate cached file is a recognized image format
-    if M.image_dimensions(_url_cache[url]) then
+    -- Validate cached file is a recognized image or video format
+    if M.image_dimensions(_url_cache[url]) or M.is_video_content(_url_cache[url]) then
       return _url_cache[url]
     end
     -- Stale/corrupt cache entry: remove file and clear in-memory cache
@@ -654,8 +670,8 @@ function M.get_cached(url)
   end
   local cache_path = url_to_cache_path(url)
   if vim.fn.filereadable(cache_path) == 1 then
-    -- Validate cached file is a recognized image format
-    if M.image_dimensions(cache_path) then
+    -- Validate cached file is a recognized image or video format
+    if M.image_dimensions(cache_path) or M.is_video_content(cache_path) then
       _url_cache[url] = cache_path
       return cache_path
     end
@@ -671,13 +687,15 @@ end
 ---@param cache_path string
 ---@param callback fun(path: string?)
 local function finalize_download(url, cache_path, callback)
-  if vim.fn.filereadable(cache_path) == 1 and M.image_dimensions(cache_path) then
-    _url_cache[url] = cache_path
-    callback(cache_path)
-  else
-    os.remove(cache_path)
-    callback(nil)
+  if vim.fn.filereadable(cache_path) == 1 then
+    if M.image_dimensions(cache_path) or M.is_video_content(cache_path) then
+      _url_cache[url] = cache_path
+      callback(cache_path)
+      return
+    end
   end
+  os.remove(cache_path)
+  callback(nil)
 end
 
 --- Download a URL to a local file asynchronously.
