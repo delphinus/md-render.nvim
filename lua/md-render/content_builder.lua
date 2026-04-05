@@ -2012,6 +2012,21 @@ function ContentBuilder:render_document(lines, opts)
               img_alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'"
             end
           end
+          -- HTML video: <video src="url">...</video> or <video><source src="url">...</video>
+          if not img_path then
+            local video_tag = line:match "^%s*(<video[%s>].-</video>)%s*$"
+            if video_tag then
+              img_path = video_tag:match 'src="([^"]*)"' or video_tag:match "src='([^']*)'"
+              -- If no src on <video>, check for <source src="...">
+              if not img_path then
+                img_path = video_tag:match '<source[^>]*src="([^"]*)"'
+                  or video_tag:match "<source[^>]*src='([^']*)'>"
+              end
+              if img_path then
+                img_alt = img_path:match "([^/]+)$" or img_path
+              end
+            end
+          end
           -- Obsidian embed: ![[file]]
           if not img_path then
             local embed = line:match "^%s*!%[%[(.-)%]%]%s*$"
@@ -2065,18 +2080,42 @@ function ContentBuilder:render_document(lines, opts)
         for _, img_entry in ipairs(img_entries) do
           local image = require "md-render.image"
           local buf_dir = vim.fn.expand("%:p:h")
-          local resolved = image.resolve(img_entry.path, buf_dir)
+          local is_video = image.is_video_file(img_entry.path)
 
-          local display_name = (img_entry.alt and img_entry.alt ~= "") and img_entry.alt or (img_entry.path:match "([^/]+)$" or img_entry.path)
-          if image.supports_kitty() then
-            local display_cols, display_rows
-            local is_animated = false
-            local src_url = image.is_url(img_entry.path) and img_entry.path or nil
+          local resolved, src_url, display_cols, display_rows, is_animated
+          local orig_img_w, orig_img_h
 
-            -- Standalone image: use full width and center
+          if is_video then
+            -- Video files: skip image_dimensions validation
+            src_url = image.is_url(img_entry.path) and img_entry.path or nil
+            if src_url then
+              resolved = image.get_video_cached(src_url)
+            else
+              local video_path = vim.fn.expand(img_entry.path)
+              if video_path:sub(1, 1) ~= "/" and buf_dir then
+                video_path = buf_dir .. "/" .. video_path
+              end
+              if vim.fn.filereadable(video_path) == 1 then
+                resolved = video_path
+              end
+            end
+            is_animated = true
             local img_max_cols = max_width - 2
-
-            local orig_img_w, orig_img_h
+            if resolved then
+              orig_img_w, orig_img_h = image.video_dimensions(resolved)
+              if orig_img_w and orig_img_h then
+                display_cols, display_rows = image.calc_display_size(orig_img_w, orig_img_h, img_max_cols, 25)
+              end
+            end
+            if not display_cols then
+              -- Video not yet cached or ffprobe unavailable: use placeholder size
+              display_cols = math.floor(img_max_cols * 0.8)
+              display_rows = 15
+            end
+          else
+            resolved = image.resolve(img_entry.path, buf_dir)
+            src_url = image.is_url(img_entry.path) and img_entry.path or nil
+            local img_max_cols = max_width - 2
             if resolved then
               orig_img_w, orig_img_h = image.image_dimensions(resolved)
               if orig_img_w and orig_img_h then
@@ -2084,11 +2123,13 @@ function ContentBuilder:render_document(lines, opts)
                 is_animated = image.is_animated_gif(resolved)
               end
             elseif src_url then
-              -- URL not yet cached: use estimated placeholder size
               display_cols = math.floor(img_max_cols * 0.8)
               display_rows = 15
             end
+          end
 
+          local display_name = (img_entry.alt and img_entry.alt ~= "") and img_entry.alt or (img_entry.path:match "([^/]+)$" or img_entry.path)
+          if image.supports_kitty() then
             if display_cols and display_rows then
               local raw_icon, icon_hl = icons.get_image_icon(img_entry.path)
               local img_icon = pad_icon(raw_icon)
@@ -2108,7 +2149,14 @@ function ContentBuilder:render_document(lines, opts)
               -- Show placeholder with background highlight while the image is loading.
               -- The image overlay (Kitty graphics) will cover this once loaded.
               local indent_width = vim.fn.strdisplaywidth(indent)
-              local placeholder_msg = is_animated and "Loading animation..." or "Loading image..."
+              local placeholder_msg
+              if is_video then
+                placeholder_msg = "Loading video..."
+              elseif is_animated then
+                placeholder_msg = "Loading animation..."
+              else
+                placeholder_msg = "Loading image..."
+              end
               local msg_width = vim.fn.strdisplaywidth(placeholder_msg)
               local mid_row = math.floor(display_rows / 2) + 1
               for r = 1, display_rows do
@@ -2140,7 +2188,8 @@ function ContentBuilder:render_document(lines, opts)
                 img_w = orig_img_w,
                 img_h = orig_img_h,
                 animated = is_animated,
-                src_url = src_url,  -- for async download
+                src_url = src_url,
+                video = is_video,
               })
               lines_shown = lines_shown + 1 + display_rows
               handled = true

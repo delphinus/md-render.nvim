@@ -551,6 +551,50 @@ function M.setup_images(win, content, on_download, ns)
     end
   end
 
+  --- Transmit animated frames and set up animation timer.
+  --- Shared by both animated GIF and video processing paths.
+  ---@param path string
+  ---@param placement MdRender.ImagePlacement
+  ---@param placeholder_rows integer
+  local function setup_animation(path, placement, placeholder_rows)
+    image.transmit_animated_async(path, function(frame_ids, tmp_dir, frame_w, frame_h)
+      if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
+      -- Update img dimensions to match actual transmitted frame size
+      -- (frames are resized to 800x800> during extraction)
+      if frame_w and frame_h then
+        placement.img_w = frame_w
+        placement.img_h = frame_h
+      end
+      -- Clear all placeholder lines (using original count before recalculation)
+      clear_placeholder_text(placement, placeholder_rows)
+      state.image_ids[path] = frame_ids[1]
+      local anim = {
+        frame_ids = frame_ids,
+        current = 1,
+        tmp_dir = tmp_dir,
+      }
+      state.anims[path] = anim
+      -- Only start animation timer for multi-frame sequences
+      if #frame_ids > 1 then
+        local timer = (vim.uv or vim.loop).new_timer()
+        anim.timer = timer
+        timer:start(0, 200, vim.schedule_wrap(function()
+          if not vim.api.nvim_win_is_valid(state.win) then
+            timer:stop()
+            return
+          end
+          anim.current = anim.current % #anim.frame_ids + 1
+          -- Re-place ALL images (static + animated) to prevent static
+          -- images from disappearing after TUI refresh clears placements.
+          place_images()
+        end))
+      else
+        -- Single frame: just display it like a static image
+        schedule_redraw()
+      end
+    end)
+  end
+
   --- Process a single placement: download (if URL), convert, transmit, and display.
   ---@param placement MdRender.ImagePlacement
   process_placement = function(placement)
@@ -559,10 +603,28 @@ function M.setup_images(win, content, on_download, ns)
       if not vim.api.nvim_win_is_valid(state.win) then return end
 
       placement.path = path
-      placement.animated = image.is_animated_gif(path)
 
       -- Save original placeholder row count before recalculation
       local placeholder_rows = placement.rows
+
+      if placement.video then
+        -- Video: always animated, get dimensions via ffprobe
+        placement.animated = true
+        image.video_dimensions_async(path, function(img_w, img_h)
+          if not vim.api.nvim_win_is_valid(state.win) then return end
+          if img_w and img_h then
+            if not placement.img_w then
+              placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
+            end
+            placement.img_w = img_w
+            placement.img_h = img_h
+          end
+          setup_animation(path, placement, placeholder_rows)
+        end)
+        return
+      end
+
+      placement.animated = image.is_animated_gif(path)
 
       -- Recalculate display size with real dimensions (skip if table renderer
       -- already pre-computed them — recalculating would undo symmetric centering).
@@ -576,42 +638,7 @@ function M.setup_images(win, content, on_download, ns)
       end
 
       if placement.animated then
-        image.transmit_animated_async(path, function(frame_ids, tmp_dir, frame_w, frame_h)
-          if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
-          -- Update img dimensions to match actual transmitted frame size
-          -- (frames are resized to 800x800> during extraction)
-          if frame_w and frame_h then
-            placement.img_w = frame_w
-            placement.img_h = frame_h
-          end
-          -- Clear all placeholder lines (using original count before recalculation)
-          clear_placeholder_text(placement, placeholder_rows)
-          state.image_ids[path] = frame_ids[1]
-          local anim = {
-            frame_ids = frame_ids,
-            current = 1,
-            tmp_dir = tmp_dir,
-          }
-          state.anims[path] = anim
-          -- Only start animation timer for multi-frame GIFs
-          if #frame_ids > 1 then
-            local timer = (vim.uv or vim.loop).new_timer()
-            anim.timer = timer
-            timer:start(0, 200, vim.schedule_wrap(function()
-              if not vim.api.nvim_win_is_valid(state.win) then
-                timer:stop()
-                return
-              end
-              anim.current = anim.current % #anim.frame_ids + 1
-              -- Re-place ALL images (static + animated) to prevent static
-              -- images from disappearing after TUI refresh clears placements.
-              place_images()
-            end))
-          else
-            -- Single frame: just display it like a static image
-            schedule_redraw()
-          end
-        end)
+        setup_animation(path, placement, placeholder_rows)
       else
         image.transmit_image_async(path, function(id)
           if not id or not vim.api.nvim_win_is_valid(state.win) then return end
@@ -634,13 +661,23 @@ function M.setup_images(win, content, on_download, ns)
         end
       end)
     elseif placement.src_url then
-      image.download_async(placement.src_url, function(path)
-        if path and on_download then
-          on_download()
-        else
-          on_path_ready(path)
-        end
-      end)
+      if placement.video then
+        image.download_video_async(placement.src_url, function(path)
+          if path and on_download then
+            on_download()
+          else
+            on_path_ready(path)
+          end
+        end)
+      else
+        image.download_async(placement.src_url, function(path)
+          if path and on_download then
+            on_download()
+          else
+            on_path_ready(path)
+          end
+        end)
+      end
     end
   end
 

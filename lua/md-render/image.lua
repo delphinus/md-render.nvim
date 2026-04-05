@@ -248,6 +248,68 @@ function M.is_animated_gif(path)
   return false
 end
 
+--- Video file extensions supported for frame extraction
+local VIDEO_EXTENSIONS = {
+  mp4 = true, webm = true, mov = true, avi = true, mkv = true, m4v = true,
+}
+
+--- Check if a file path points to a video file (by extension).
+---@param path string
+---@return boolean
+function M.is_video_file(path)
+  local ext = path:match("%.(%w+)$")
+  if not ext then return false end
+  return VIDEO_EXTENSIONS[ext:lower()] == true
+end
+
+--- Get video dimensions synchronously using ffprobe.
+---@param path string absolute path to video file
+---@return integer? width, integer? height
+function M.video_dimensions(path)
+  if vim.fn.executable("ffprobe") ~= 1 then return nil, nil end
+  local result = vim.system(
+    {
+      "ffprobe", "-v", "error",
+      "-select_streams", "v:0",
+      "-show_entries", "stream=width,height",
+      "-of", "csv=p=0:s=x", path,
+    },
+    { text = true, timeout = 5000 }
+  ):wait()
+  if result.code == 0 and result.stdout then
+    local w, h = result.stdout:match("(%d+)x(%d+)")
+    if w and h then return tonumber(w), tonumber(h) end
+  end
+  return nil, nil
+end
+
+--- Get video dimensions asynchronously using ffprobe.
+---@param path string absolute path to video file
+---@param callback fun(width: integer?, height: integer?)
+function M.video_dimensions_async(path, callback)
+  vim.system(
+    {
+      "ffprobe", "-v", "error",
+      "-select_streams", "v:0",
+      "-show_entries", "stream=width,height",
+      "-of", "csv=p=0:s=x", path,
+    },
+    { text = true, timeout = 10000 },
+    function(result)
+      vim.schedule(function()
+        if result.code == 0 and result.stdout then
+          local w, h = result.stdout:match("(%d+)x(%d+)")
+          if w and h then
+            callback(tonumber(w), tonumber(h))
+            return
+          end
+        end
+        callback(nil, nil)
+      end)
+    end
+  )
+end
+
 ---@param path string
 ---@return integer? width, integer? height
 function M.image_dimensions(path)
@@ -652,6 +714,69 @@ function M.download_async(url, callback)
       vim.schedule(function()
         if result.code == 0 then
           finalize_download(url, cache_path, callback)
+        else
+          os.remove(cache_path)
+          callback(nil)
+        end
+      end)
+    end
+  )
+end
+
+--- Check if a video URL is already cached (in-memory or on disk).
+--- Unlike get_cached(), this does not validate with image_dimensions().
+---@param url string
+---@return string? cached_path
+function M.get_video_cached(url)
+  if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then
+    return _url_cache[url]
+  end
+  local cache_path = url_to_cache_path(url)
+  if vim.fn.filereadable(cache_path) == 1 then
+    _url_cache[url] = cache_path
+    return cache_path
+  end
+  return nil
+end
+
+--- Download a video URL to a local file asynchronously.
+--- Unlike download_async(), this uses larger limits and skips image_dimensions validation.
+---@param url string
+---@param callback fun(path: string?)  called with local path on success, nil on failure
+function M.download_video_async(url, callback)
+  local cached = M.get_video_cached(url)
+  if cached then
+    callback(cached)
+    return
+  end
+
+  local cache_path = url_to_cache_path(url)
+
+  -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
+  if _custom_download_fn then
+    local handled = _custom_download_fn(url, cache_path, function(ok)
+      vim.schedule(function()
+        if ok and vim.fn.filereadable(cache_path) == 1 then
+          _url_cache[url] = cache_path
+          callback(cache_path)
+        else
+          os.remove(cache_path)
+          callback(nil)
+        end
+      end)
+    end)
+    if handled then return end
+  end
+
+  -- Default: download with curl (larger limits for video)
+  vim.system(
+    { "curl", "-sfL", "--max-time", "30", "--max-filesize", "104857600", "-o", cache_path, url },
+    { text = true },
+    function(result)
+      vim.schedule(function()
+        if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
+          _url_cache[url] = cache_path
+          callback(cache_path)
         else
           os.remove(cache_path)
           callback(nil)
