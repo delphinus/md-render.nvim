@@ -1006,6 +1006,8 @@ end
 -- ============================================================================
 
 local _image_id = 100
+local _image_paths = {}  -- image_id → file path (for Ghostty a=T workaround)
+local _temp_image_paths = {}  -- image_id → true for temp files that need cleanup
 local _session_cleared = false
 
 --- Transmit image data to terminal (store without displaying).
@@ -1034,9 +1036,12 @@ function M.transmit_image(path)
   term_write(message)
 
   if is_temp and is_ghostty() then
-    vim.defer_fn(function() os.remove(png_path) end, 1000)
+    -- Ghostty uses a=T (re-reads the file on each placement), so keep temp
+    -- files alive until the image is deleted.  Mark for deferred cleanup.
+    _temp_image_paths[id] = true
   end
 
+  _image_paths[id] = png_path
   return id
 end
 
@@ -1161,6 +1166,7 @@ function M.transmit_animated(path)
       "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
       id, b64_path
     ))
+    _image_paths[id] = frame_path
     table.insert(frame_ids, id)
   end
 
@@ -1191,8 +1197,9 @@ function M.transmit_image_async(path, callback)
       t, id, b64_path
     ))
     if is_temp and is_ghostty() then
-      vim.defer_fn(function() os.remove(png_path) end, 1000)
+      _temp_image_paths[id] = true
     end
+    _image_paths[id] = png_path
     callback(id)
   end)
 end
@@ -1272,6 +1279,7 @@ function M.transmit_animated_async(path, callback)
           "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
           all_ids[i], b64_path
         ))
+        _image_paths[all_ids[i]] = frames[i]
       end
       M.flush_batch()
       idx = end_idx + 1
@@ -1464,9 +1472,12 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   end
 
   local message
-  if anim_path then
-    -- Animated GIF: transmit and display in one step to preserve animation
-    local b64_path = vim.base64.encode(anim_path)
+  local img_path = anim_path or (is_ghostty() and _image_paths[image_id] or nil)
+  if img_path then
+    -- Transmit and display in one step (a=T).
+    -- Used for animated GIFs and as a Ghostty workaround: Ghostty does not
+    -- reliably place images with a=p after a=t, so we re-transmit each time.
+    local b64_path = vim.base64.encode(img_path)
     message = string.format(
       "\x1b_Ga=T,f=100,t=f,i=%d,c=%d,r=%d%s,C=1,q=2;%s\x1b\\",
       image_id, display_cols, display_rows, crop_params, b64_path
@@ -1496,6 +1507,13 @@ end
 function M.delete_all()
   if not M.supports_kitty() then return end
   term_write("\x1b_Ga=d,d=A,q=2\x1b\\")
+  for id, path in pairs(_image_paths) do
+    if _temp_image_paths[id] then
+      os.remove(path)
+    end
+  end
+  _image_paths = {}
+  _temp_image_paths = {}
 end
 
 --- Delete a stored image from terminal memory
@@ -1503,6 +1521,11 @@ end
 function M.delete_image(image_id)
   if not M.supports_kitty() then return end
   term_write(string.format("\x1b_Ga=d,d=i,i=%d\x1b\\", image_id))
+  if _temp_image_paths[image_id] and _image_paths[image_id] then
+    os.remove(_image_paths[image_id])
+    _temp_image_paths[image_id] = nil
+  end
+  _image_paths[image_id] = nil
 end
 
 --- Delete multiple images
@@ -1512,6 +1535,11 @@ function M.delete_images(image_ids)
   local parts = {}
   for _, id in ipairs(image_ids) do
     table.insert(parts, string.format("\x1b_Ga=d,d=i,i=%d\x1b\\", id))
+    if _temp_image_paths[id] and _image_paths[id] then
+      os.remove(_image_paths[id])
+      _temp_image_paths[id] = nil
+    end
+    _image_paths[id] = nil
   end
   term_write(table.concat(parts))
 end
@@ -1525,8 +1553,15 @@ function M.clear_all()
   if not M.supports_kitty() then return end
   -- d=A: delete all stored image data and placements
   term_write("\x1b_Ga=d,d=A\x1b\\")
-  -- Reset ID counter to ensure clean state
+  -- Reset ID counter and path mapping to ensure clean state
   _image_id = 100
+  for id, path in pairs(_image_paths) do
+    if _temp_image_paths[id] then
+      os.remove(path)
+    end
+  end
+  _image_paths = {}
+  _temp_image_paths = {}
 
   -- Ensure images are cleaned up when Neovim exits (e.g. :restart in Kitty)
   vim.api.nvim_create_autocmd("VimLeavePre", {
