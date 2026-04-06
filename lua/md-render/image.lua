@@ -278,16 +278,19 @@ function M.is_video_content(path)
   return false
 end
 
--- In-memory cache for video dimensions (avoids repeated ffprobe calls)
-local _video_dim_cache = {}
-
---- Get video dimensions synchronously using ffprobe.
+--- Get video frame dimensions by reading the first cached frame PNG header.
+--- Falls back to ffprobe if no frame cache exists.
 --- Results are cached in memory keyed by path.
 ---@param path string absolute path to video file
 ---@return integer? width, integer? height
 function M.video_dimensions(path)
-  local cached = _video_dim_cache[path]
-  if cached then return cached[1], cached[2] end
+  -- Try cached frame PNG first (instant: reads a few bytes from file header)
+  local cache_dir = vim.fn.stdpath("cache") .. "/md-render/images/frames_" .. vim.fn.sha256(path):sub(1, 16)
+  local first_frame = cache_dir .. "/frame_0001.png"
+  if vim.fn.filereadable(first_frame) == 1 then
+    return M.image_dimensions(first_frame)
+  end
+  -- No frame cache: fall back to ffprobe (sync, ~20ms)
   if vim.fn.executable("ffprobe") ~= 1 then return nil, nil end
   local result = vim.system(
     {
@@ -300,19 +303,25 @@ function M.video_dimensions(path)
   ):wait()
   if result.code == 0 and result.stdout then
     local w, h = result.stdout:match("(%d+)x(%d+)")
-    if w and h then
-      local tw, th = tonumber(w), tonumber(h)
-      _video_dim_cache[path] = { tw, th }
-      return tw, th
-    end
+    if w and h then return tonumber(w), tonumber(h) end
   end
   return nil, nil
 end
 
---- Get video dimensions asynchronously using ffprobe.
+--- Get video frame dimensions asynchronously.
+--- Tries cached frame PNG first (instant), falls back to ffprobe.
 ---@param path string absolute path to video file
 ---@param callback fun(width: integer?, height: integer?)
 function M.video_dimensions_async(path, callback)
+  -- Try cached frame PNG first
+  local cache_dir = vim.fn.stdpath("cache") .. "/md-render/images/frames_" .. vim.fn.sha256(path):sub(1, 16)
+  local first_frame = cache_dir .. "/frame_0001.png"
+  if vim.fn.filereadable(first_frame) == 1 then
+    local w, h = M.image_dimensions(first_frame)
+    callback(w, h)
+    return
+  end
+  -- No frame cache: use ffprobe async
   vim.system(
     {
       "ffprobe", "-v", "error",
