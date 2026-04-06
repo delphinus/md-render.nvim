@@ -1175,8 +1175,11 @@ function M.transmit_animated(path)
 end
 
 --- Transmit image asynchronously (converts to PNG if needed, then transmits).
+--- When the image is converted (e.g. JPEG→PNG with resize), the callback
+--- receives the actual transmitted image dimensions so callers can update
+--- their source rectangle parameters accordingly.
 ---@param path string absolute path to image file
----@param callback fun(image_id: integer?)
+---@param callback fun(image_id: integer?, tx_w: integer?, tx_h: integer?)
 function M.transmit_image_async(path, callback)
   if not M.supports_kitty() or not get_tty_path() then
     callback(nil)
@@ -1200,7 +1203,12 @@ function M.transmit_image_async(path, callback)
       _temp_image_paths[id] = true
     end
     _image_paths[id] = png_path
-    callback(id)
+    -- Return actual transmitted dimensions when conversion changed the size
+    local tx_w, tx_h
+    if is_temp then
+      tx_w, tx_h = M.image_dimensions(png_path)
+    end
+    callback(id, tx_w, tx_h)
   end)
 end
 

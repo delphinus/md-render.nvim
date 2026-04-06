@@ -724,8 +724,14 @@ function M.setup_images(win, content, on_download, ns)
       if placement.animated then
         setup_animation(path, placement, placeholder_rows)
       else
-        image.transmit_image_async(path, function(id)
+        image.transmit_image_async(path, function(id, tx_w, tx_h)
           if not id or not vim.api.nvim_win_is_valid(state.win) then return end
+          -- Update dimensions to match the actually transmitted image
+          -- (conversion may have resized it, e.g. large JPEG → 2000px PNG)
+          if tx_w and tx_h then
+            placement.img_w = tx_w
+            placement.img_h = tx_h
+          end
           -- Clear all placeholder lines (using original count before recalculation)
           clear_placeholder_text(placement, placeholder_rows)
           state.image_ids[path] = id
