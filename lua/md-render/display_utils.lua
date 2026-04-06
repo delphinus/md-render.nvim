@@ -455,48 +455,6 @@ function M.setup_images(win, content, on_download, ns)
     end
   end
 
-  -- Update only animated placements (called from animation timer).
-  -- Unlike place_images(), this does NOT touch static images, avoiding flicker.
-  -- Only clears the previous frame (not all frames) and skips off-screen placements.
-  local function update_anim_frames()
-    if not vim.api.nvim_win_is_valid(state.win) then return end
-
-    local win_height = vim.api.nvim_win_get_height(state.win)
-    local wininfo = vim.fn.getwininfo(state.win)[1]
-    local topline = wininfo.topline - 1  -- 0-indexed
-
-    image.begin_batch()
-    local ok, err = pcall(function()
-      for _, placement in ipairs(state.placements) do
-        local anim = state.anims[placement.path]
-        if anim then
-          -- Skip off-screen animations
-          local img_end = placement.line + placement.rows - 1
-          if img_end < topline or placement.line >= topline + win_height then
-            goto continue
-          end
-
-          -- Clear only the previous frame (not all frames)
-          local prev = (anim.current - 2) % #anim.frame_ids + 1
-          local prev_id = anim.frame_ids[prev]
-          if prev_id then
-            image.clear_placements(prev_id)
-          end
-          -- Place the current frame
-          local id = anim.frame_ids[anim.current]
-          if id then
-            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
-          end
-          ::continue::
-        end
-      end
-    end)
-    image.flush_batch()
-    if not ok then
-      vim.notify("md-render: anim update error: " .. tostring(err), vim.log.levels.WARN)
-    end
-  end
-
   -- Pause all animation timers (during scroll/redraw to avoid racing with redraw!)
   local function pause_anim_timers()
     for _, anim in pairs(state.anims) do
@@ -514,13 +472,16 @@ function M.setup_images(win, content, on_download, ns)
             return
           end
           anim.current = anim.current % #anim.frame_ids + 1
-          update_anim_frames()
+          -- Re-place ALL images (static + animated) to prevent static
+          -- images from disappearing after TUI refresh clears placements.
+          place_images()
         end))
       end
     end
   end
 
   local function redraw_images()
+    state.redraw_timer = nil
     if not vim.api.nvim_win_is_valid(state.win) then return end
     -- Pause animation during redraw! to prevent concurrent placement writes
     pause_anim_timers()
@@ -626,10 +587,9 @@ function M.setup_images(win, content, on_download, ns)
             return
           end
           anim.current = anim.current % #anim.frame_ids + 1
-          -- Only update animated frames; static images are left untouched
-          -- to avoid flicker. Static images are re-placed by schedule_redraw()
-          -- on scroll/resize events.
-          update_anim_frames()
+          -- Re-place ALL images (static + animated) to prevent static
+          -- images from disappearing after TUI refresh clears placements.
+          place_images()
         end))
       else
         -- Single frame: just display it like a static image
@@ -752,36 +712,20 @@ function M.setup_images(win, content, on_download, ns)
   -- Initial display of already-cached images
   schedule_redraw()
 
-  -- Lightweight re-place: just place images without redraw! (no clear cycle).
-  -- Used by CursorMoved to repair placements lost to TUI refreshes.
-  local function schedule_replace()
-    if state.redraw_timer then return end  -- full redraw pending, skip
-    image.begin_batch()
-    local ok, err = pcall(place_images)
-    image.flush_batch()
-    if not ok then
-      vim.notify("md-render: image replace error: " .. tostring(err), vim.log.levels.WARN)
-    end
-  end
-
   -- Re-display on scroll and cursor movement
   local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
-  -- WinScrolled: full redraw (redraw! + place) for scroll position changes
-  local scroll_id = vim.api.nvim_create_autocmd("WinScrolled", {
-    group = augroup,
-    callback = function(ev)
-      if tostring(ev.match) ~= tostring(state.win) then return end
-      schedule_redraw()
-    end,
-  })
-  table.insert(state.autocmd_ids, scroll_id)
-  -- CursorMoved: lightweight re-place only (repairs lost placements without redraw!)
-  for _, event in ipairs({ "CursorMoved", "CursorMovedI" }) do
+  for _, event in ipairs({ "WinScrolled", "CursorMoved", "CursorMovedI" }) do
     local id = vim.api.nvim_create_autocmd(event, {
       group = augroup,
-      callback = function()
-        if vim.api.nvim_get_current_win() ~= state.win then return end
-        schedule_replace()
+      callback = function(ev)
+        -- WinScrolled: check if it's our window
+        if event == "WinScrolled" then
+          if tostring(ev.match) ~= tostring(state.win) then return end
+        else
+          -- CursorMoved: check if cursor is in our window
+          if vim.api.nvim_get_current_win() ~= state.win then return end
+        end
+        schedule_redraw()
       end,
     })
     table.insert(state.autocmd_ids, id)
