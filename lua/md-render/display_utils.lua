@@ -454,29 +454,48 @@ function M.setup_images(win, content, on_download, ns)
     end
   end
 
+  -- Single shared animation timer for all animated images.
+  -- Having one timer (instead of per-animation timers) avoids redundant
+  -- place_images() calls that cause flickering when multiple animations
+  -- are visible at the same time.
+  local anim_timer = (vim.uv or vim.loop).new_timer()
+
+  local function start_anim_timer()
+    -- Check if any animation has multiple frames
+    local has_multi = false
+    for _, anim in pairs(state.anims) do
+      if #anim.frame_ids > 1 then
+        has_multi = true
+        break
+      end
+    end
+    if not has_multi then
+      anim_timer:stop()
+      return
+    end
+    if anim_timer:is_active() then return end
+    anim_timer:start(200, 200, vim.schedule_wrap(function()
+      if not vim.api.nvim_win_is_valid(state.win) then
+        anim_timer:stop()
+        return
+      end
+      for _, anim in pairs(state.anims) do
+        if #anim.frame_ids > 1 then
+          anim.current = anim.current % #anim.frame_ids + 1
+        end
+      end
+      place_images()
+    end))
+  end
+
   -- Pause all animation timers (during scroll/redraw to avoid racing with redraw!)
   local function pause_anim_timers()
-    for _, anim in pairs(state.anims) do
-      if anim.timer then anim.timer:stop() end
-    end
+    anim_timer:stop()
   end
 
   -- Resume all animation timers
   local function resume_anim_timers()
-    for _, anim in pairs(state.anims) do
-      if anim.timer and #anim.frame_ids > 1 then
-        anim.timer:start(200, 200, vim.schedule_wrap(function()
-          if not vim.api.nvim_win_is_valid(state.win) then
-            anim.timer:stop()
-            return
-          end
-          anim.current = anim.current % #anim.frame_ids + 1
-          -- Re-place ALL images (static + animated) to prevent static
-          -- images from disappearing after TUI refresh clears placements.
-          place_images()
-        end))
-      end
-    end
+    start_anim_timer()
   end
 
   local function redraw_images()
@@ -592,18 +611,7 @@ function M.setup_images(win, content, on_download, ns)
       state.anims[path] = anim
       -- Only start animation timer for multi-frame sequences
       if #frame_ids > 1 then
-        local timer = (vim.uv or vim.loop).new_timer()
-        anim.timer = timer
-        timer:start(0, 200, vim.schedule_wrap(function()
-          if not vim.api.nvim_win_is_valid(state.win) then
-            timer:stop()
-            return
-          end
-          anim.current = anim.current % #anim.frame_ids + 1
-          -- Re-place ALL images (static + animated) to prevent static
-          -- images from disappearing after TUI refresh clears placements.
-          place_images()
-        end))
+        start_anim_timer()
       else
         -- Single frame: just display it like a static image
         schedule_redraw()
@@ -783,7 +791,6 @@ function M.update_images(state, win, content)
   end
   for path, anim in pairs(state.anims) do
     if not new_paths[path] then
-      if anim.timer then anim.timer:stop(); anim.timer:close() end
       for _, fid in ipairs(anim.frame_ids) do
         image.delete_image(fid)
       end
@@ -791,6 +798,8 @@ function M.update_images(state, win, content)
       state.anims[path] = nil
     end
   end
+  -- Restart or stop shared timer based on remaining animations
+  start_anim_timer()
 
   -- Update placements to new positions
   state.placements = content.image_placements
@@ -830,12 +839,10 @@ function M.cleanup_images(state)
     table.insert(ids, id)
   end
 
-  -- Stop animation timers, delete frame images, clean up temp dirs
+  -- Stop shared animation timer, delete frame images, clean up temp dirs
+  anim_timer:stop()
+  if not anim_timer:is_closing() then anim_timer:close() end
   for _, anim in pairs(state.anims or {}) do
-    if anim.timer then
-      anim.timer:stop()
-      anim.timer:close()
-    end
     for _, fid in ipairs(anim.frame_ids) do
       table.insert(ids, fid)
     end
