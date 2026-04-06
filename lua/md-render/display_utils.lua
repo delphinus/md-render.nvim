@@ -421,17 +421,16 @@ function M.setup_images(win, content, on_download, ns)
     -- avoid per-image TTY open/close overhead and ensure atomicity.
     image.begin_batch()
     local ok, err = pcall(function()
-      -- Clear existing placements before re-placing. Kitty and Ghostty
-      -- keep placements across redraws (unlike WezTerm which clears on redraw!).
-      -- Clearing is harmless on WezTerm (already gone after redraw!).
+      -- Clear existing placements before re-placing.
       for _, id in pairs(state.image_ids) do
         image.clear_placements(id)
       end
-      -- Also clear placements for all animation frames (not just frame_ids[1]
-      -- stored in image_ids) to avoid stale frame ghosts.
+      -- Clear only the currently displayed animation frame (not all frames).
+      -- Previous frames have no active placement, so clearing them is unnecessary.
       for _, anim in pairs(state.anims) do
-        for _, fid in ipairs(anim.frame_ids) do
-          image.clear_placements(fid)
+        local current_id = anim.frame_ids[anim.current]
+        if current_id then
+          image.clear_placements(current_id)
         end
       end
       for _, placement in ipairs(state.placements) do
@@ -556,10 +555,22 @@ function M.setup_images(win, content, on_download, ns)
 
   --- Transmit animated frames and set up animation timer.
   --- Shared by both animated GIF and video processing paths.
+  --- If the same path was already transmitted, reuses frame IDs and
+  --- animation state (avoids duplicate frame transmission).
   ---@param path string
   ---@param placement MdRender.ImagePlacement
   ---@param placeholder_rows integer
   local function setup_animation(path, placement, placeholder_rows)
+    -- Reuse already-transmitted frames for the same path
+    local existing = state.anims[path]
+    if existing then
+      if existing.frame_w then placement.img_w = existing.frame_w end
+      if existing.frame_h then placement.img_h = existing.frame_h end
+      clear_placeholder_text(placement, placeholder_rows)
+      schedule_redraw()
+      return
+    end
+
     image.transmit_animated_async(path, function(frame_ids, tmp_dir, frame_w, frame_h)
       if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
       -- Update img dimensions to match actual transmitted frame size
@@ -575,6 +586,8 @@ function M.setup_images(win, content, on_download, ns)
         frame_ids = frame_ids,
         current = 1,
         tmp_dir = tmp_dir,
+        frame_w = frame_w,
+        frame_h = frame_h,
       }
       state.anims[path] = anim
       -- Only start animation timer for multi-frame sequences

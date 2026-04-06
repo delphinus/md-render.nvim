@@ -1251,27 +1251,44 @@ function M.transmit_animated_async(path, callback)
 
   local cache_dir = get_frames_cache_dir(path)
 
-  --- Transmit pre-extracted frames from cache_dir and invoke callback.
+  --- Transmit pre-extracted frames and invoke callback.
+  --- Sends frames in small batches (BATCH_SIZE), yielding to the event loop
+  --- between batches so Neovim stays responsive while the terminal processes
+  --- the image data. Callback is invoked after the first batch so animation
+  --- can start immediately with available frames.
   ---@param frames string[]
   local function transmit_frames(frames)
-    -- Read actual frame dimensions (may differ from original GIF due to resize)
     local frame_w, frame_h = M.image_dimensions(frames[1])
+    local total = #frames
+    local BATCH_SIZE = 10
 
-    local frame_ids = {}
-    M.begin_batch()
-    for _, frame_path in ipairs(frames) do
+    -- Pre-allocate all frame IDs so the callback receives the full list
+    local all_ids = {}
+    for i = 1, total do
       _image_id = _image_id + 1
-      local id = _image_id
-      local b64_path = vim.base64.encode(frame_path)
-      term_write(string.format(
-        "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
-        id, b64_path
-      ))
-      table.insert(frame_ids, id)
+      all_ids[i] = _image_id
     end
-    M.flush_batch()
-    -- cache_dir is persistent (not a tmp_dir), so pass nil for cleanup
-    callback(frame_ids, nil, frame_w, frame_h)
+
+    local idx = 1
+    local function send_next_batch()
+      local end_idx = math.min(idx + BATCH_SIZE - 1, total)
+      M.begin_batch()
+      for i = idx, end_idx do
+        local b64_path = vim.base64.encode(frames[i])
+        term_write(string.format(
+          "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
+          all_ids[i], b64_path
+        ))
+      end
+      M.flush_batch()
+      idx = end_idx + 1
+      if idx <= total then
+        vim.defer_fn(send_next_batch, 10)
+      end
+    end
+
+    send_next_batch()
+    callback(all_ids, nil, frame_w, frame_h)
   end
 
   -- Check frame cache first
