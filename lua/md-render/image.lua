@@ -1055,7 +1055,7 @@ function M.transmit_image(path)
   return id
 end
 
-local MAX_ANIM_FRAMES = 60  -- max frames to extract from animated GIFs
+local MAX_ANIM_FRAMES = 300  -- max frames to extract (= 60 seconds at 5 fps)
 
 --- Build a command to count frames in an animated GIF.
 ---@param tool string  "ffmpeg" or "magick"
@@ -1083,14 +1083,13 @@ end
 local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
   if tool == "ffmpeg" then
     local vf_parts = {}
-    if total_frames > MAX_ANIM_FRAMES then
-      local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
-      table.insert(vf_parts, string.format("select='not(mod(n\\,%d))'", step))
-    end
+    -- Convert to display frame rate (5 fps matches the 200 ms animation timer)
+    table.insert(vf_parts, "fps=5")
     table.insert(vf_parts, "scale='min(800,iw)':'min(800,ih)':force_original_aspect_ratio=decrease")
     return {
       "ffmpeg", "-y", "-i", path,
       "-vf", table.concat(vf_parts, ","),
+      "-frames:v", tostring(MAX_ANIM_FRAMES),
       "-vsync", "vfr",
       cache_dir .. "/frame_%04d.png",
     }
