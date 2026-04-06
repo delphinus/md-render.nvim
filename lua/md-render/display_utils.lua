@@ -459,6 +459,7 @@ function M.setup_images(win, content, on_download, ns)
   -- place_images() calls that cause flickering when multiple animations
   -- are visible at the same time.
   local anim_timer = (vim.uv or vim.loop).new_timer()
+  state.anim_timer = anim_timer
 
   local function start_anim_timer()
     -- Check if any animation has multiple frames
@@ -479,12 +480,43 @@ function M.setup_images(win, content, on_download, ns)
         anim_timer:stop()
         return
       end
+      -- Clear only animation previous frames, then re-place ALL images.
+      -- - Animation frames must be cleared for the new frame to show
+      --   (WezTerm doesn't visually replace overlapping placements).
+      -- - Static images are NOT cleared but still re-placed every tick
+      --   because WezTerm removes placements when TUI rewrites cells.
+      -- - Clearing must happen BEFORE placing (clear after put causes
+      --   WezTerm to remove the just-placed images too).
       for _, anim in pairs(state.anims) do
         if #anim.frame_ids > 1 then
+          local prev_id = anim.frame_ids[anim.current]
           anim.current = anim.current % #anim.frame_ids + 1
+          if prev_id then
+            image.clear_placements(prev_id)
+          end
         end
       end
-      place_images()
+      image.begin_batch()
+      local ok, err = pcall(function()
+        for _, placement in ipairs(state.placements) do
+          local anim = state.anims[placement.path]
+          if anim then
+            local id = anim.frame_ids[anim.current]
+            if id then
+              image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+            end
+          else
+            local id = state.image_ids[placement.path]
+            if id then
+              image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+            end
+          end
+        end
+      end)
+      image.flush_batch()
+      if not ok then
+        vim.notify("md-render: animation error: " .. tostring(err), vim.log.levels.WARN)
+      end
     end))
   end
 
@@ -611,6 +643,8 @@ function M.setup_images(win, content, on_download, ns)
       state.anims[path] = anim
       -- Only start animation timer for multi-frame sequences
       if #frame_ids > 1 then
+        -- Ensure all images (including static) get an initial full placement
+        schedule_redraw()
         start_anim_timer()
       else
         -- Single frame: just display it like a static image
@@ -840,8 +874,10 @@ function M.cleanup_images(state)
   end
 
   -- Stop shared animation timer, delete frame images, clean up temp dirs
-  anim_timer:stop()
-  if not anim_timer:is_closing() then anim_timer:close() end
+  if state.anim_timer then
+    state.anim_timer:stop()
+    if not state.anim_timer:is_closing() then state.anim_timer:close() end
+  end
   for _, anim in pairs(state.anims or {}) do
     for _, fid in ipairs(anim.frame_ids) do
       table.insert(ids, fid)

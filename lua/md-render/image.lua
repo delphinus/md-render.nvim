@@ -278,19 +278,12 @@ function M.is_video_content(path)
   return false
 end
 
---- Get video frame dimensions by reading the first cached frame PNG header.
---- Falls back to ffprobe if no frame cache exists.
+--- Get video frame dimensions using ffprobe.
+--- Returns the original video dimensions (not the downscaled frame size).
 --- Results are cached in memory keyed by path.
 ---@param path string absolute path to video file
 ---@return integer? width, integer? height
 function M.video_dimensions(path)
-  -- Try cached frame PNG first (instant: reads a few bytes from file header)
-  local cache_dir = vim.fn.stdpath("cache") .. "/md-render/images/frames_" .. vim.fn.sha256(path):sub(1, 16)
-  local first_frame = cache_dir .. "/frame_0001.png"
-  if vim.fn.filereadable(first_frame) == 1 then
-    return M.image_dimensions(first_frame)
-  end
-  -- No frame cache: fall back to ffprobe (sync, ~20ms)
   if vim.fn.executable("ffprobe") ~= 1 then return nil, nil end
   local result = vim.system(
     {
@@ -308,20 +301,12 @@ function M.video_dimensions(path)
   return nil, nil
 end
 
---- Get video frame dimensions asynchronously.
---- Tries cached frame PNG first (instant), falls back to ffprobe.
+--- Get video frame dimensions asynchronously using ffprobe.
+--- Returns the original video dimensions (not the downscaled frame size).
 ---@param path string absolute path to video file
 ---@param callback fun(width: integer?, height: integer?)
 function M.video_dimensions_async(path, callback)
-  -- Try cached frame PNG first
-  local cache_dir = vim.fn.stdpath("cache") .. "/md-render/images/frames_" .. vim.fn.sha256(path):sub(1, 16)
-  local first_frame = cache_dir .. "/frame_0001.png"
-  if vim.fn.filereadable(first_frame) == 1 then
-    local w, h = M.image_dimensions(first_frame)
-    callback(w, h)
-    return
-  end
-  -- No frame cache: use ffprobe async
+  -- Use ffprobe to get original video dimensions
   vim.system(
     {
       "ffprobe", "-v", "error",
@@ -1085,7 +1070,7 @@ local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
     local vf_parts = {}
     -- Convert to display frame rate (5 fps matches the 200 ms animation timer)
     table.insert(vf_parts, "fps=5")
-    table.insert(vf_parts, "scale='min(800,iw)':'min(800,ih)':force_original_aspect_ratio=decrease")
+    table.insert(vf_parts, "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease")
     return {
       "ffmpeg", "-y", "-i", path,
       "-vf", table.concat(vf_parts, ","),
