@@ -611,6 +611,11 @@ function M.setup_images(win, content, on_download, ns)
   ---@param path string
   ---@param placement MdRender.ImagePlacement
   ---@param placeholder_rows integer
+  -- Track pending transmit_animated_async calls to avoid duplicate
+  -- frame extraction for the same path (e.g. same video in English
+  -- and Japanese sections of the README).
+  local pending_anims = {} -- path -> { {placement, placeholder_rows}, ... }
+
   local function setup_animation(path, placement, placeholder_rows)
     -- Reuse already-transmitted frames for the same path
     local existing = state.anims[path]
@@ -622,16 +627,20 @@ function M.setup_images(win, content, on_download, ns)
       return
     end
 
+    -- If transmit is already in progress for this path, queue this
+    -- placement to be set up when the transmit completes.
+    if pending_anims[path] then
+      table.insert(pending_anims[path], { placement, placeholder_rows })
+      return
+    end
+
+    pending_anims[path] = { { placement, placeholder_rows } }
+
     image.transmit_animated_async(path, function(frame_ids, tmp_dir, frame_w, frame_h)
-      if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
-      -- Update img dimensions to match actual transmitted frame size
-      -- (frames are resized to 800x800> during extraction)
-      if frame_w and frame_h then
-        placement.img_w = frame_w
-        placement.img_h = frame_h
+      if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then
+        pending_anims[path] = nil
+        return
       end
-      -- Clear all placeholder lines (using original count before recalculation)
-      clear_placeholder_text(placement, placeholder_rows)
       state.image_ids[path] = frame_ids[1]
       local anim = {
         frame_ids = frame_ids,
@@ -641,6 +650,18 @@ function M.setup_images(win, content, on_download, ns)
         frame_h = frame_h,
       }
       state.anims[path] = anim
+
+      -- Apply to all queued placements for this path
+      for _, entry in ipairs(pending_anims[path]) do
+        local p, ph_rows = entry[1], entry[2]
+        if frame_w and frame_h then
+          p.img_w = frame_w
+          p.img_h = frame_h
+        end
+        clear_placeholder_text(p, ph_rows)
+      end
+      pending_anims[path] = nil
+
       -- Only start animation timer for multi-frame sequences
       if #frame_ids > 1 then
         -- Ensure all images (including static) get an initial full placement
@@ -749,6 +770,7 @@ function M.setup_images(win, content, on_download, ns)
   state.schedule_redraw = schedule_redraw
   state.process_placement = process_placement
   state.clear_placeholder_text = clear_placeholder_text
+  state.start_anim_timer = start_anim_timer
 
   -- Phase 1: Kick off async processing for all placements.
   -- Batch transmit commands so that synchronous transmits (local PNG files)
@@ -833,7 +855,7 @@ function M.update_images(state, win, content)
     end
   end
   -- Restart or stop shared timer based on remaining animations
-  start_anim_timer()
+  state.start_anim_timer()
 
   -- Update placements to new positions
   state.placements = content.image_placements
