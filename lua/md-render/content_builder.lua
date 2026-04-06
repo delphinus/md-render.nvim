@@ -597,6 +597,7 @@ local HTML_SKIP_TAGS = {
   details = true, summary = true,
   hr = true,
   figure = true,
+  p = true,
   dl = true,
   table = true, tr = true, td = true, th = true, thead = true, tbody = true,
 }
@@ -934,6 +935,7 @@ function ContentBuilder:render_document(lines, opts)
   local details_summary_parts = {}
   local in_figure = false
   local figure_caption = nil
+  local in_p_tag = false
   local skip_details_body = false
   local in_qiita_note = false
   local qiita_note_type = nil
@@ -1305,6 +1307,30 @@ function ContentBuilder:render_document(lines, opts)
       if line:match "^%s*<figure[^>]*>%s*$" then
         in_figure = true
         goto continue
+      end
+    end
+
+    -- Handle <p> blocks (outside code blocks)
+    -- Strip <p>/<p align="..."> wrapper tags and let inner content (e.g. <img>,
+    -- <em>) fall through to normal processing, similar to <figure>.
+    if not in_code_block and not in_callout_code_block then
+      if in_p_tag then
+        if line:match "^%s*</p>%s*$" then
+          in_p_tag = false
+          goto continue
+        end
+        -- Inner content falls through to normal processing
+      end
+
+      if line:match "^%s*<p[%s>]" and not line:match "</p>" then
+        in_p_tag = true
+        goto continue
+      end
+      -- Single-line <p>...</p>: extract inner content and process it
+      local p_inner = line:match "^%s*<p[^>]*>%s*(.-)%s*</p>%s*$"
+      if p_inner and p_inner:match "%S" then
+        line = p_inner
+        -- Fall through with extracted content
       end
     end
 
