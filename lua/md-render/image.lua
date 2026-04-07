@@ -743,6 +743,11 @@ end
 ---@param url string
 ---@param callback fun(path: string?)  called with local path on success, nil on failure
 function M.download_async(url, callback)
+  if M.is_badge_url(url) then
+    callback(nil)
+    return
+  end
+
   local cached = M.get_cached(url)
   if cached then
     callback(cached)

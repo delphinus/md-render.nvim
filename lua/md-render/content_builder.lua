@@ -2125,6 +2125,13 @@ function ContentBuilder:render_document(lines, opts)
         for _, img_entry in ipairs(img_entries) do
           local image = require "md-render.image"
           local buf_dir = vim.fn.expand("%:p:h")
+
+          -- Skip badge/shield URLs entirely — they are too small to render
+          -- as block images and SVG badges cannot be displayed via Kitty protocol.
+          if image.is_url(img_entry.path) and image.is_badge_url(img_entry.path) then
+            goto continue_img
+          end
+
           local is_video = image.is_video_file(img_entry.path)
 
           local resolved, src_url, display_cols, display_rows, is_animated
@@ -2269,6 +2276,7 @@ function ContentBuilder:render_document(lines, opts)
             lines_shown = lines_shown + 1
             handled = true
           end
+          ::continue_img::
         end
 
         -- Skip blank blockquote lines at callout boundaries (after header, before end)
