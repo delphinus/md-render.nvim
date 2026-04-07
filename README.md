@@ -17,7 +17,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 
 <table>
 <tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/f58a0bdb-9485-4302-a9a8-0200fbed33df" alt="Pager mode" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="Pager mode" /></td>
 </tr>
 <tr>
 <td align="center"><em>Pager mode — browse Markdown like <code>less</code></em></td>
@@ -178,7 +178,7 @@ Neovim で Markdown をリッチにレンダリングするエンジンです。
 
 <table>
 <tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/f58a0bdb-9485-4302-a9a8-0200fbed33df" alt="ページャーモード" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="ページャーモード" /></td>
 </tr>
 <tr>
 <td align="center"><em>ページャーモード — Markdown を <code>less</code> のように閲覧</em></td>
