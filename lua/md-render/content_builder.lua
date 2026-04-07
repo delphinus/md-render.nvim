@@ -1651,7 +1651,7 @@ function ContentBuilder:render_document(lines, opts)
 
     -- Indented code block: 4+ spaces, not in a list/blockquote/etc context
     if not in_code_block and not in_math_block and not current_alert_type
-        and line:match "^    " and not line:match "^    [%-*+]%s" and not line:match "^    %d+%.%s"
+        and line:match "^    " and not line:match "^    [%-*+]%s" and not line:match "^    %d+[.)]%s"
         and (in_indented_code or not prev_list_marker_type) then
       in_indented_code = true
       local code_content = line:sub(5) -- strip 4-space indent

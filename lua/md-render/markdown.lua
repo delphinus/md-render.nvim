@@ -1423,9 +1423,9 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
     end
   end
 
-  -- List items (- * 1.) - detect marker
-  local list_marker = rendered_text:match "^(%s*[-*]%s)"
-    or rendered_text:match "^(%s*%d+%.%s)"
+  -- List items (- * + 1. 1)) - detect marker
+  local list_marker = rendered_text:match "^(%s*[-*+]%s)"
+    or rendered_text:match "^(%s*%d+[.)]%s)"
 
   -- Checkbox (- [ ] / - [x] / - [X] / - [-]) - replace marker + checkbox with icon
   local checkbox_hl = nil
@@ -1447,6 +1447,18 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
       local indent_part = list_marker:match "^(%s*)" or ""
       list_marker = indent_part .. icon
       rendered_text = list_marker .. after_marker:sub(#cb_match + 1)
+    end
+  end
+
+  -- Replace bullet markers with symbols based on nesting level
+  if list_marker and not checkbox_hl then
+    local indent_part = list_marker:match "^(%s*)" or ""
+    if list_marker:match "[-*+]" then
+      local bullet_icons = { "•", "◦", "▪" }
+      local nesting_level = math.floor(#indent_part / 2)
+      local icon = bullet_icons[(nesting_level % #bullet_icons) + 1] .. " "
+      list_marker = indent_part .. icon
+      rendered_text = list_marker .. rendered_text:sub(#(rendered_text:match "^%s*[-*+]%s" or "") + 1)
     end
   end
 

@@ -72,10 +72,11 @@ test("partial checkbox text", function()
   assert_eq(highlights[1].hl, "DiagnosticWarn", "partial: highlight should be DiagnosticWarn")
 end)
 
--- Normal list item (no checkbox)
-test("normal list item unchanged", function()
+-- Normal list item (no checkbox) - bullet replaced with •
+test("normal list item bullet symbol", function()
   local text, highlights, list_marker = render("- normal item")
-  assert_eq(list_marker, "- ", "normal: list_marker should be '- '")
+  assert_eq(list_marker:find "[-*+]", nil, "normal: list_marker should not contain raw bullet")
+  assert(list_marker:find "•", "normal: list_marker should contain •")
   assert(text:find "normal item", "normal: rendered text should contain 'normal item'")
   assert_eq(highlights[1].hl, "Special", "normal: highlight should be Special")
 end)
@@ -136,6 +137,64 @@ test("checkbox with bold content", function()
   end
   assert(has_checkbox, "bold: should have checkbox highlight")
   assert(has_bold, "bold: should have bold highlight")
+end)
+
+-- Bullet symbol replacement tests
+
+test("bullet: dash replaced with •", function()
+  local text, highlights, list_marker = render("- item")
+  assert(list_marker:find "•", "dash: should use • symbol")
+  assert_eq(list_marker:find "-", nil, "dash: should not contain raw -")
+end)
+
+test("bullet: asterisk replaced with •", function()
+  local text, highlights, list_marker = render("* item")
+  assert(list_marker:find "•", "asterisk: should use • symbol")
+end)
+
+test("bullet: plus replaced with •", function()
+  local text, highlights, list_marker = render("+ item")
+  assert(list_marker:find "•", "plus: should use • symbol")
+end)
+
+test("bullet: nested level 1 uses ◦", function()
+  local text, highlights, list_marker = render("  - nested item")
+  assert(list_marker:find "◦", "nested 1: should use ◦ symbol")
+end)
+
+test("bullet: nested level 2 uses ▪", function()
+  local text, highlights, list_marker = render("    - deep item")
+  assert(list_marker:find "▪", "nested 2: should use ▪ symbol")
+end)
+
+test("bullet: nested level 3 cycles back to •", function()
+  local text, highlights, list_marker = render("      - very deep item")
+  assert(list_marker:find "•", "nested 3: should cycle back to • symbol")
+end)
+
+test("bullet: preserves indent in list_marker", function()
+  local text, highlights, list_marker = render("  - nested")
+  assert_eq(list_marker:match "^(%s+)", "  ", "nested: should preserve 2-space indent")
+end)
+
+test("ordered list: 1) style detected", function()
+  local text, highlights, list_marker = render("1) item")
+  assert_eq(list_marker, "1) ", "1) style: list_marker should be '1) '")
+end)
+
+test("bullet in blockquote: symbol replaced", function()
+  local Markdown = require "md-render.markdown"
+  local text, highlights, links, special_type, list_marker = Markdown.render("> - item in quote")
+  assert_eq(special_type, "blockquote", "bq bullet: should be blockquote")
+  assert(list_marker and list_marker:find "•", "bq bullet: list_marker should contain •")
+  assert(text:find "item in quote", "bq bullet: should contain content")
+end)
+
+test("ordered list in blockquote: marker preserved", function()
+  local Markdown = require "md-render.markdown"
+  local text, highlights, links, special_type, list_marker = Markdown.render("> 1. first item")
+  assert_eq(special_type, "blockquote", "bq ordered: should be blockquote")
+  assert_eq(list_marker, "1. ", "bq ordered: list_marker should be '1. '")
 end)
 
 -- list_marker_type tests (CommonMark: same character/delimiter = same list)
