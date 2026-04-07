@@ -738,6 +738,7 @@ local function is_block_start(line)
   if line:match "^%$%$$" then return true end
   if line:match "^%%%%" then return true end
   if line:match "^:::" then return true end
+  if line:match "^    %S" then return true end -- indented code block (4+ spaces)
   return false
 end
 
@@ -1655,8 +1656,25 @@ function ContentBuilder:render_document(lines, opts)
       in_indented_code = true
       local code_content = line:sub(5) -- strip 4-space indent
       local indented_line = indent .. code_content
+      local display_width = vim.fn.strdisplaywidth(indented_line)
       local ib_lines_before = #self.lines
-      self:add_line(indented_line, { { col = 0, end_col = -1, hl = "String" } })
+      if display_width > max_width then
+        local target = max_width - vim.fn.strdisplaywidth("…")
+        local current_width = 0
+        local byte_pos = 0
+        for char in indented_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
+          local char_width = vim.fn.strdisplaywidth(char)
+          if current_width + char_width > target then
+            break
+          end
+          current_width = current_width + char_width
+          byte_pos = byte_pos + #char
+        end
+        local truncated_line = indented_line:sub(1, byte_pos) .. "…"
+        self:add_line(truncated_line, { { col = 0, end_col = -1, hl = "String" } })
+      else
+        self:add_line(indented_line, { { col = 0, end_col = -1, hl = "String" } })
+      end
       detect_urls_in_code_line(self, code_content, #indent, #indented_line)
       if in_details and details_summary_rendered and not skip_details_body then
         apply_details_body_prefix(ib_lines_before, #self.lines)
