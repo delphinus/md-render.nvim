@@ -31,6 +31,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **Callouts & folds** — GitHub and Obsidian alert types with colored borders, icons, and click-to-toggle folding
 - **Code blocks** — fenced blocks with treesitter syntax highlighting; expandable when truncated
 - **Images** — local and web images (PNG, JPEG, WebP, GIF, animated GIF) displayed inline via terminal graphics protocol
+- **Video** — local and web video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
 - **Mermaid diagrams** — rendered as images inline
 - **CJK-aware word wrapping** — JIS X 4051 kinsoku shori + optional [BudouX](https://github.com/google/budoux) phrase segmentation via [budoux.lua](https://github.com/delphinus/budoux.lua)
 - **Clickable links** — mouse click to open URLs; OSC 8 hyperlink support for compatible terminals
@@ -49,20 +50,21 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 
 | Dependency | Purpose | Fallback |
 |---|---|---|
-| [curl](https://curl.se/) | Download web images | Custom function via `set_download_fn()` |
-| [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG conversion, animated GIF frame extraction | Falls back to ImageMagick |
-| [ImageMagick](https://imagemagick.org/) (`magick`) | Same as above | `sips` (macOS) handles static conversion; animated GIF requires ffmpeg or magick |
+| [curl](https://curl.se/) | Download web images and video | Custom function via `set_download_fn()` |
+| [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG conversion, animated GIF / video frame extraction | Falls back to ImageMagick (images only; video requires ffmpeg) |
+| [ImageMagick](https://imagemagick.org/) (`magick`) | JPEG/WebP → PNG, animated GIF frame extraction | `sips` (macOS) handles static conversion; animated GIF requires ffmpeg or magick |
 | [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Render Mermaid diagrams as images | Falls back to `npx -y @mermaid-js/mermaid-cli` |
 | [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK phrase-level line breaking (BudouX) | Character-level splitting (kinsoku rules still apply) |
 | Treesitter parsers | Syntax highlighting in code blocks | Code blocks rendered without highlighting |
 | [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) or [mini.icons](https://github.com/echasnovski/mini.icons) | File type icons in code block headers | Built-in icon table |
 
-For image format conversion and animated GIF support, the plugin tries tools in this order:
+For image/video format conversion and animation support, the plugin tries tools in this order:
 
 | Use case | 1st | 2nd | 3rd |
 |---|---|---|---|
 | Static image conversion (JPEG/WebP → PNG) | `sips` (macOS) | `ffmpeg` | `magick` |
 | Animated GIF frame extraction | `ffmpeg` | `magick` | — |
+| Video frame extraction | `ffmpeg` | — | — |
 
 ## Installation
 
@@ -192,6 +194,7 @@ Neovim で Markdown をリッチにレンダリングするエンジンです。
 - **コールアウト & 折りたたみ** — GitHub / Obsidian のアラートタイプに対応。色付きボーダー・アイコン・クリックで折りたたみ切り替え
 - **コードブロック** — treesitter シンタックスハイライト付きフェンスコードブロック。省略時はクリックで展開
 - **画像** — ローカルおよび Web 画像（PNG, JPEG, WebP, GIF, アニメーション GIF）をターミナルグラフィクスプロトコルでインライン表示
+- **動画** — ローカルおよび Web 動画（MP4, WebM, MOV, AVI, MKV, M4V）をアニメーションフレームとしてインライン再生
 - **Mermaid ダイアグラム** — 画像としてインライン表示
 - **CJK 対応ワードラップ** — JIS X 4051 禁則処理 + [budoux.lua](https://github.com/delphinus/budoux.lua) によるオプションのフレーズ分割
 - **クリック可能リンク** — マウスクリックで URL を開く。対応ターミナルでは OSC 8 ハイパーリンク
@@ -210,20 +213,21 @@ Neovim で Markdown をリッチにレンダリングするエンジンです。
 
 | 依存 | 用途 | フォールバック |
 |---|---|---|
-| [curl](https://curl.se/) | Web 画像のダウンロード | `set_download_fn()` でカスタム関数を指定可 |
-| [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG 変換、アニメーション GIF のフレーム展開 | ImageMagick にフォールバック |
-| [ImageMagick](https://imagemagick.org/) (`magick`) | 同上 | macOS では `sips` が静止画変換を処理。アニメーション GIF には ffmpeg か magick が必要 |
+| [curl](https://curl.se/) | Web 画像・動画のダウンロード | `set_download_fn()` でカスタム関数を指定可 |
+| [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG 変換、アニメーション GIF / 動画のフレーム展開 | ImageMagick にフォールバック（画像のみ。動画には ffmpeg が必要） |
+| [ImageMagick](https://imagemagick.org/) (`magick`) | JPEG/WebP → PNG、アニメーション GIF フレーム展開 | macOS では `sips` が静止画変換を処理。アニメーション GIF には ffmpeg か magick が必要 |
 | [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Mermaid ダイアグラムを画像として描画 | `npx -y @mermaid-js/mermaid-cli` にフォールバック |
 | [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK フレーズ単位の改行（BudouX） | 1文字ずつ分割（禁則処理は維持） |
 | Treesitter パーサー | コードブロックのシンタックスハイライト | ハイライトなしで表示 |
 | [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) または [mini.icons](https://github.com/echasnovski/mini.icons) | コードブロックヘッダのファイルタイプアイコン | 内蔵アイコンテーブル |
 
-画像フォーマット変換とアニメーション GIF のサポートでは、以下の優先順位でツールを検索します：
+画像・動画のフォーマット変換とアニメーションのサポートでは、以下の優先順位でツールを検索します：
 
 | ユースケース | 1st | 2nd | 3rd |
 |---|---|---|---|
 | 静止画変換（JPEG/WebP → PNG） | `sips`（macOS） | `ffmpeg` | `magick` |
 | アニメーション GIF フレーム展開 | `ffmpeg` | `magick` | — |
+| 動画フレーム展開 | `ffmpeg` | — | — |
 
 ## インストール
 
