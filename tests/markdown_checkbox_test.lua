@@ -752,24 +752,24 @@ test("html multiline: inline <b> spanning lines", function()
   assert_eq(found, true, "multiline b: should join lines with space")
 end)
 
-test("html multiline: block <div> joins and strips tags", function()
+test("html multiline: block <div> strips wrapper and renders content", function()
   local lines = render_doc({
     "<div>",
     "line one",
     "line two",
     "</div>",
   })
-  local found = false
+  local has_content = false
   for _, l in ipairs(lines) do
-    if l:match("line one") and l:match("line two") then found = true end
+    if l:match("line one") or l:match("line two") then has_content = true end
   end
-  assert_eq(found, true, "multiline div: lines should be joined")
-  -- Tags are now kept with Comment highlight, not stripped
+  assert_eq(has_content, true, "multiline div: inner content should be rendered")
+  -- <div> wrapper tags should be stripped (not shown)
   local has_div = false
   for _, l in ipairs(lines) do
     if l:match("<div>") then has_div = true end
   end
-  assert_eq(has_div, true, "multiline div: <div> tags should be kept with Comment highlight")
+  assert_eq(has_div, false, "multiline div: <div> tags should be stripped")
 end)
 
 test("html multiline: nested same-type block", function()

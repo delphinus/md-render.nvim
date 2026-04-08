@@ -598,6 +598,7 @@ local HTML_SKIP_TAGS = {
   hr = true,
   figure = true,
   p = true,
+  div = true, span = true,
   dl = true,
   table = true, tr = true, td = true, th = true, thead = true, tbody = true,
 }
@@ -1098,6 +1099,43 @@ function ContentBuilder:render_document(lines, opts)
     -- Skip footnote definition lines (rendered in footnote section at end)
     if not in_code_block and markdown.is_footnote_def(line) then
       goto continue
+    end
+
+    -- Handle <div>/<span> wrapper tags (outside code blocks)
+    -- Strip wrapper tags and let inner content fall through to normal processing.
+    if not in_code_block and not in_callout_code_block then
+      -- Closing </div> or </span> on its own line
+      if line:match "^%s*</div>%s*$" or line:match "^%s*</span>%s*$" then
+        goto continue
+      end
+      -- Opening <div>/<span> with no content on the same line
+      if (line:match "^%s*<div>%s*$" or line:match "^%s*<div%s[^>]*>%s*$")
+        or (line:match "^%s*<span>%s*$" or line:match "^%s*<span%s[^>]*>%s*$") then
+        goto continue
+      end
+      -- Single-line <div>...</div>: extract inner content
+      local div_inner = line:match "^%s*<div[^>]*>%s*(.-)%s*</div>%s*$"
+      if div_inner and div_inner:match "%S" then
+        line = div_inner
+        -- Fall through with extracted content
+      end
+      -- Single-line <span>...</span>: extract inner content
+      local span_inner = line:match "^%s*<span[^>]*>%s*(.-)%s*</span>%s*$"
+      if span_inner and span_inner:match "%S" then
+        line = span_inner
+        -- Fall through with extracted content
+      end
+      -- Opening <div>/<span> with content after the tag (no closing on same line)
+      local div_rest = line:match "^%s*<div[^>]*>%s*(.+)$"
+      if div_rest and not line:match "</div>" then
+        line = div_rest
+        -- Fall through with extracted content
+      end
+      local span_rest = line:match "^%s*<span[^>]*>%s*(.+)$"
+      if span_rest and not line:match "</span>" then
+        line = span_rest
+        -- Fall through with extracted content
+      end
     end
 
     -- Detect setext heading: current non-blank line followed by === or ---
