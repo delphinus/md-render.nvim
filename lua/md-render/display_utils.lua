@@ -833,7 +833,7 @@ function M.setup_images(win, content, ns, opts)
   -- Initial display of already-cached images
   schedule_redraw()
 
-  -- Re-display on scroll and cursor movement
+  -- Re-display on scroll and cursor movement; clean up on window close
   local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
   for _, event in ipairs({ "WinScrolled", "CursorMoved", "CursorMovedI" }) do
     local id = vim.api.nvim_create_autocmd(event, {
@@ -851,6 +851,15 @@ function M.setup_images(win, content, ns, opts)
     })
     table.insert(state.autocmd_ids, id)
   end
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = augroup,
+    pattern = tostring(win),
+    once = true,
+    callback = function()
+      M.cleanup_images(state)
+    end,
+  })
 
   return state
 end

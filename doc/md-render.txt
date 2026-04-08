@@ -470,18 +470,9 @@ A complete example showing how to render Markdown and display it in a buffer:
   md.display_utils.apply_content_to_buffer(buf, ns, content)
 
   -- Display images (Kitty Graphics Protocol terminal required)
+  -- Images are automatically cleaned up when the window is closed.
   local win = vim.api.nvim_get_current_win()
-  local image_state =
-    md.display_utils.setup_images(win, content, ns)
-
-  -- Clean up images when the window is closed
-  vim.api.nvim_create_autocmd("WinClosed", {
-    pattern = tostring(win),
-    once = true,
-    callback = function()
-      md.display_utils.cleanup_images(image_state)
-    end,
-  })
+  md.display_utils.setup_images(win, content, ns)
 <
 
 ==============================================================================

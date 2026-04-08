@@ -193,17 +193,9 @@ local ns = vim.api.nvim_create_namespace("my_ns")
 md.display_utils.apply_content_to_buffer(buf, ns, content)
 
 -- Display images (requires a Kitty Graphics Protocol compatible terminal)
+-- Images are automatically cleaned up when the window is closed.
 local win = vim.api.nvim_get_current_win()
-local image_state = md.display_utils.setup_images(win, content, ns)
-
--- Clean up images when the window is closed
-vim.api.nvim_create_autocmd("WinClosed", {
-  pattern = tostring(win),
-  once = true,
-  callback = function()
-    md.display_utils.cleanup_images(image_state)
-  end,
-})
+md.display_utils.setup_images(win, content, ns)
 ```
 
 ## Development
@@ -415,17 +407,9 @@ local ns = vim.api.nvim_create_namespace("my_ns")
 md.display_utils.apply_content_to_buffer(buf, ns, content)
 
 -- 画像を表示（Kitty Graphics Protocol 対応ターミナルが必要）
+-- ウィンドウを閉じると自動的にクリーンアップされます。
 local win = vim.api.nvim_get_current_win()
-local image_state = md.display_utils.setup_images(win, content, ns)
-
--- ウィンドウを閉じたら画像をクリーンアップ
-vim.api.nvim_create_autocmd("WinClosed", {
-  pattern = tostring(win),
-  once = true,
-  callback = function()
-    md.display_utils.cleanup_images(image_state)
-  end,
-})
+md.display_utils.setup_images(win, content, ns)
 ```
 
 ## 開発

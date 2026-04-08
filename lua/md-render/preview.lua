@@ -236,12 +236,12 @@ MdPreview.show = function(opts)
     end,
   })
 
-  -- Sync source cursor back and clean up images when window closes
+  -- Sync source cursor back when window closes
+  -- (image cleanup is handled automatically by setup_images)
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win),
     once = true,
     callback = function()
-      display_utils.cleanup_images(image_state)
       -- Map the preview cursor position back to the source line
       local source_line_map = content.source_line_map
       if source_line_map and last_preview_line <= #source_line_map then
@@ -403,12 +403,12 @@ MdPreview.show_tab = function(opts)
     end,
   })
 
-  -- Sync source cursor back and clean up images when window closes
+  -- Sync source cursor back when window closes
+  -- (image cleanup is handled automatically by setup_images)
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win),
     once = true,
     callback = function()
-      display_utils.cleanup_images(image_state)
       local source_line_map = content.source_line_map
       if source_line_map and last_preview_line <= #source_line_map then
         local target_source_line = source_line_map[last_preview_line]
@@ -824,15 +824,6 @@ MdPreview.show_demo = function()
       }
       content = MdPreview.build_content(demo_lines, opts)
       return content
-    end,
-  })
-
-  vim.api.nvim_create_autocmd("WinClosed", {
-    pattern = tostring(win),
-    once = true,
-    callback = function()
-      display_utils.cleanup_images(image_state)
-      image_state = nil
     end,
   })
 
