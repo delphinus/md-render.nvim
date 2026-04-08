@@ -42,6 +42,29 @@ function M.previewer(opts)
       vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
       display_utils.apply_content_to_buffer(bufnr, ns, content)
 
+      -- Scroll to the matched source line
+      if entry.lnum and content.source_line_map then
+        local target = #content.source_line_map
+        for i, sl in ipairs(content.source_line_map) do
+          if sl >= entry.lnum then
+            target = i
+            break
+          end
+        end
+        vim.schedule(function()
+          if not vim.api.nvim_win_is_valid(winid) then return end
+          local win_buf = vim.api.nvim_win_get_buf(winid)
+          local buf_lines = vim.api.nvim_buf_line_count(win_buf)
+          target = math.max(1, math.min(target, buf_lines))
+          local win_height = vim.api.nvim_win_get_height(winid)
+          local top = math.max(0, target - 1 - math.floor(win_height / 2))
+          vim.api.nvim_win_call(winid, function()
+            vim.fn.winrestview { topline = top + 1 }
+          end)
+          vim.api.nvim_win_set_cursor(winid, { target, 0 })
+        end)
+      end
+
       -- Only set up images when the file changes
       if file_changed then
         image_state = display_utils.setup_images(winid, content, ns, {
