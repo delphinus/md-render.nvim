@@ -126,6 +126,29 @@ alias mdless='nvim +MdRenderPager'
 mdless README.md
 ```
 
+## Telescope Integration
+
+Use the built-in previewer to render Markdown (with images) in any
+[telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker:
+
+```lua
+local previewer = require("md-render.telescope").previewer()
+
+-- Use with any picker that accepts the `previewer` option
+require("telescope.builtin").find_files({ previewer = previewer })
+require("telescope.builtin").live_grep({ previewer = previewer })
+```
+
+The previewer automatically handles three kinds of files:
+
+| File type | Behavior |
+|---|---|
+| Markdown (`.md`, `.markdown`) | Full md-render rendering with highlights, links, and images |
+| Image / Video (PNG, JPEG, WebP, GIF, MP4, ...) | Inline display via Kitty graphics protocol |
+| Other files | Falls back to telescope's default previewer with syntax highlighting |
+
+For grep-based pickers, the preview scrolls to the matched line.
+
 ## Usage
 
 ### As a Library
@@ -158,7 +181,7 @@ md.display_utils.apply_content_to_buffer(buf, ns, content)
 
 -- Display images (requires a Kitty Graphics Protocol compatible terminal)
 local win = vim.api.nvim_get_current_win()
-local image_state = md.display_utils.setup_images(win, content, nil, ns)
+local image_state = md.display_utils.setup_images(win, content, ns)
 
 -- Clean up images when the window is closed
 vim.api.nvim_create_autocmd("WinClosed", {
@@ -312,6 +335,30 @@ alias mdless='nvim +MdRenderPager'
 mdless README.md
 ```
 
+## Telescope 連携
+
+組み込みの previewer を使うと、任意の
+[telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+picker で Markdown を画像付きでレンダリングできます：
+
+```lua
+local previewer = require("md-render.telescope").previewer()
+
+-- previewer オプションを受け付ける任意の picker で使用
+require("telescope.builtin").find_files({ previewer = previewer })
+require("telescope.builtin").live_grep({ previewer = previewer })
+```
+
+ファイルの種類に応じて自動的に表示方法を切り替えます：
+
+| ファイル種別 | 動作 |
+|---|---|
+| Markdown (`.md`, `.markdown`) | md-render によるフルレンダリング（ハイライト、リンク、画像） |
+| 画像・動画 (PNG, JPEG, WebP, GIF, MP4, ...) | Kitty graphics protocol でインライン表示 |
+| その他 | telescope のデフォルト previewer（シンタックスハイライト付き）にフォールバック |
+
+grep 系の picker では、マッチした行に自動スクロールします。
+
 ## 使い方
 
 ### ライブラリとして使う
@@ -344,7 +391,7 @@ md.display_utils.apply_content_to_buffer(buf, ns, content)
 
 -- 画像を表示（Kitty Graphics Protocol 対応ターミナルが必要）
 local win = vim.api.nvim_get_current_win()
-local image_state = md.display_utils.setup_images(win, content, nil, ns)
+local image_state = md.display_utils.setup_images(win, content, ns)
 
 -- ウィンドウを閉じたら画像をクリーンアップ
 vim.api.nvim_create_autocmd("WinClosed", {

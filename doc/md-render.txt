@@ -10,6 +10,7 @@ Requirements						|md-render-requirements|
 Installation						|md-render-installation|
 Mappings						    |md-render-mappings|
 Commands						    |md-render-commands|
+Telescope Integration					      |md-render-telescope|
 Usage							       |md-render-usage|
   Preview						     |md-render-preview|
   Library API							 |md-render-api|
@@ -148,6 +149,46 @@ COMMANDS						    *md-render-commands*
 								 *:MdRenderDemo*
 :MdRenderDemo ~
 	Show a demo window with all supported Markdown notations.
+
+==============================================================================
+TELESCOPE INTEGRATION					      *md-render-telescope*
+
+The `md-render.telescope` module provides a buffer previewer for
+telescope.nvim that renders Markdown with highlights, links, and images.
+
+							  *telescope.previewer()*
+telescope.previewer({opts}) ~
+	Create a telescope buffer previewer.
+
+	Parameters: ~
+	  {opts}  (table|nil) Optional settings:
+		  - {namespace}  (string) Extmark namespace name
+				 (default: "md_render_telescope")
+
+	Returns: ~
+	  A telescope-compatible buffer previewer
+
+	Example: >lua
+	  local previewer = require("md-render.telescope").previewer()
+	  require("telescope.builtin").find_files({ previewer = previewer })
+	  require("telescope.builtin").live_grep({ previewer = previewer })
+<
+
+The previewer handles three kinds of files:
+
+  Markdown (.md, .markdown)     Full md-render rendering with highlights,
+				links, and inline images.
+
+  Image / Video                 Inline display via the Kitty graphics
+  (PNG, JPEG, WebP, GIF,       protocol.  File name and dimensions are
+  MP4, WebM, AVI, ...)         shown as a header.
+
+  Other files                   Falls back to telescope's default
+				|buffer_previewer_maker| with syntax
+				highlighting.
+
+For grep-based pickers (e.g. `live_grep`, `grep_string`), the preview
+automatically scrolls to the matched source line.
 
 ==============================================================================
 USAGE							       *md-render-usage*
@@ -350,11 +391,18 @@ display_utils.supports_osc8() ~
 	Check whether the terminal supports OSC 8 hyperlinks.
 
 						  *display_utils.setup_images()*
-display_utils.setup_images({win}, {content}, ...) ~
+display_utils.setup_images({win}, {content}, {ns}, {opts}) ~
 	Initialize image display for a window.
 
-	All parameters: ~
-	  {win}, {content}, {on_download}, {ns}
+	Parameters: ~
+	  {win}      (integer) Window handle
+	  {content}  (table) Content from |ContentBuilder:result()|
+	  {ns}       (integer|nil) Extmark namespace
+	  {opts}     (table|nil) Optional settings:
+		     - {buf}  (integer) Buffer handle for auto-rebuild
+		     - {build_content}  (function) Called after URL image
+		       downloads to rebuild content with correct dimensions.
+		       Returns new content table.
 
 ------------------------------------------------------------------------------
 IMAGE							       *md-render-image*
@@ -413,7 +461,7 @@ A complete example showing how to render Markdown and display it in a buffer:
   -- Display images (Kitty Graphics Protocol terminal required)
   local win = vim.api.nvim_get_current_win()
   local image_state =
-    md.display_utils.setup_images(win, content, nil, ns)
+    md.display_utils.setup_images(win, content, ns)
 
   -- Clean up images when the window is closed
   vim.api.nvim_create_autocmd("WinClosed", {
