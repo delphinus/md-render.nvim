@@ -156,19 +156,31 @@ function M.apply_content_to_buffer(buf, ns, content, opts)
   end
 
   for _, link in ipairs(content.link_metadata) do
-    local hl
-    if link.url:match "^#" then
-      hl = "MdRenderLinkAnchor"
-    elseif link.url:match "^obsidian://" then
-      hl = "MdRenderLinkObsidian"
-    else
-      hl = "Underlined"
+    local line_text = content.lines[link.line + 1]
+    if line_text then
+      local col_start = link.col_start
+      local col_end = link.col_end
+      if col_start > #line_text then
+        goto next_link
+      end
+      if col_end > #line_text then
+        col_end = #line_text
+      end
+      local hl
+      if link.url:match "^#" then
+        hl = "MdRenderLinkAnchor"
+      elseif link.url:match "^obsidian://" then
+        hl = "MdRenderLinkObsidian"
+      else
+        hl = "Underlined"
+      end
+      vim.api.nvim_buf_set_extmark(buf, ns, link.line, col_start, {
+        end_col = col_end,
+        hl_group = hl,
+        url = link.url,
+      })
     end
-    vim.api.nvim_buf_set_extmark(buf, ns, link.line, link.col_start, {
-      end_col = link.col_end,
-      hl_group = hl,
-      url = link.url,
-    })
+    ::next_link::
   end
 
   if opts.title_url and content.title_line and content.title_text then
