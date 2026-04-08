@@ -128,15 +128,17 @@ mdless README.md
 
 ## Telescope Integration
 
-Use the built-in previewer to render Markdown (with images) in any
-[telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker:
+### Previewer
+
+`require("md-render.telescope").previewer()` creates a previewer that can be
+passed to any [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+picker — builtin, extension, or custom:
 
 ```lua
 local previewer = require("md-render.telescope").previewer()
 
--- Use with any picker that accepts the `previewer` option
 require("telescope.builtin").find_files({ previewer = previewer })
-require("telescope.builtin").live_grep({ previewer = previewer })
+require("telescope").extensions.egrepify.egrepify({ previewer = previewer })
 ```
 
 The previewer automatically handles three kinds of files:
@@ -148,6 +150,17 @@ The previewer automatically handles three kinds of files:
 | Other files | Falls back to telescope's default previewer with syntax highlighting |
 
 For grep-based pickers, the preview scrolls to the matched line.
+
+### `:Telescope md_render` Extension
+
+A shortcut for builtin pickers. Wraps `telescope.builtin` pickers with the
+md-render previewer. All arguments are passed through:
+
+```vim
+:Telescope md_render find_files
+:Telescope md_render live_grep cwd=~/notes
+:Telescope md_render grep_string search=TODO
+```
 
 ## Usage
 
@@ -337,16 +350,17 @@ mdless README.md
 
 ## Telescope 連携
 
-組み込みの previewer を使うと、任意の
-[telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
-picker で Markdown を画像付きでレンダリングできます：
+### Previewer
+
+`require("md-render.telescope").previewer()` で作成した previewer は、任意の
+[telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker
+（builtin、extension、カスタム問わず）に渡せます：
 
 ```lua
 local previewer = require("md-render.telescope").previewer()
 
--- previewer オプションを受け付ける任意の picker で使用
 require("telescope.builtin").find_files({ previewer = previewer })
-require("telescope.builtin").live_grep({ previewer = previewer })
+require("telescope").extensions.egrepify.egrepify({ previewer = previewer })
 ```
 
 ファイルの種類に応じて自動的に表示方法を切り替えます：
@@ -358,6 +372,17 @@ require("telescope.builtin").live_grep({ previewer = previewer })
 | その他 | telescope のデフォルト previewer（シンタックスハイライト付き）にフォールバック |
 
 grep 系の picker では、マッチした行に自動スクロールします。
+
+### `:Telescope md_render` Extension
+
+builtin picker 用のショートカットです。`telescope.builtin` の picker を md-render
+previewer 付きでラップします。引数はすべてそのまま渡されます：
+
+```vim
+:Telescope md_render find_files
+:Telescope md_render live_grep cwd=~/notes
+:Telescope md_render grep_string search=TODO
+```
 
 ## 使い方
 

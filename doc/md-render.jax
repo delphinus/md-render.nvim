@@ -155,12 +155,12 @@ lazy.nvim の場合: >lua
 ==============================================================================
 TELESCOPE 連携						      *md-render-telescope*
 
-`md-render.telescope` モジュールは、telescope.nvim 用のバッファプレビューアーを
-提供します。Markdown をハイライト・リンク・画像付きでレンダリングします。
-
 							  *telescope.previewer()*
+PREVIEWER ~
+
 telescope.previewer({opts}) ~
-	telescope バッファプレビューアーを作成します。
+	任意の telescope.nvim picker（builtin、extension、カスタム問わず）に
+	渡せるプレビューアーを作成します。
 
 	パラメータ: ~
 	  {opts}  (table|nil) オプション設定:
@@ -173,7 +173,7 @@ telescope.previewer({opts}) ~
 	使用例: >lua
 	  local previewer = require("md-render.telescope").previewer()
 	  require("telescope.builtin").find_files({ previewer = previewer })
-	  require("telescope.builtin").live_grep({ previewer = previewer })
+	  require("telescope").extensions.egrepify.egrepify({ previewer = previewer })
 <
 
 ファイルの種類に応じて自動的に表示方法を切り替えます：
@@ -191,6 +191,17 @@ telescope.previewer({opts}) ~
 
 grep 系の picker（`live_grep`、`grep_string` など）では、マッチしたソース行に
 自動スクロールします。
+
+						     *:Telescope_md_render*
+:TELESCOPE MD_RENDER EXTENSION ~
+
+builtin picker 用のショートカットです。`telescope.builtin` の picker を
+md-render previewer 付きでラップします。引数はすべてそのまま渡されます。
+>vim
+  :Telescope md_render find_files
+  :Telescope md_render live_grep cwd=~/notes
+  :Telescope md_render grep_string search=TODO
+<
 
 ==============================================================================
 使い方							       *md-render-usage*

@@ -153,12 +153,12 @@ COMMANDS						    *md-render-commands*
 ==============================================================================
 TELESCOPE INTEGRATION					      *md-render-telescope*
 
-The `md-render.telescope` module provides a buffer previewer for
-telescope.nvim that renders Markdown with highlights, links, and images.
-
 							  *telescope.previewer()*
+PREVIEWER ~
+
 telescope.previewer({opts}) ~
-	Create a telescope buffer previewer.
+	Create a previewer that can be passed to any telescope.nvim picker
+	-- builtin, extension, or custom.
 
 	Parameters: ~
 	  {opts}  (table|nil) Optional settings:
@@ -171,7 +171,7 @@ telescope.previewer({opts}) ~
 	Example: >lua
 	  local previewer = require("md-render.telescope").previewer()
 	  require("telescope.builtin").find_files({ previewer = previewer })
-	  require("telescope.builtin").live_grep({ previewer = previewer })
+	  require("telescope").extensions.egrepify.egrepify({ previewer = previewer })
 <
 
 The previewer handles three kinds of files:
@@ -189,6 +189,17 @@ The previewer handles three kinds of files:
 
 For grep-based pickers (e.g. `live_grep`, `grep_string`), the preview
 automatically scrolls to the matched source line.
+
+							     *:Telescope_md_render*
+:TELESCOPE MD_RENDER EXTENSION ~
+
+A shortcut for builtin pickers.  Wraps `telescope.builtin` pickers with
+the md-render previewer.  All arguments are passed through.
+>vim
+  :Telescope md_render find_files
+  :Telescope md_render live_grep cwd=~/notes
+  :Telescope md_render grep_string search=TODO
+<
 
 ==============================================================================
 USAGE							       *md-render-usage*
