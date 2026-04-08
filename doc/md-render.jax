@@ -329,25 +329,21 @@ Markdown.renumber_ordered_lists({lines}) ~
 DISPLAY UTILITIES				       *md-render-display-utils*
 
 				       *display_utils.apply_content_to_buffer()*
-display_utils.apply_content_to_buffer(
-		{buf}, {ns}, {content}, {opts}) ~
+display_utils.apply_content_to_buffer({buf}, {ns}, {content}, {opts}) ~
 	レンダリング済みコンテンツ（行、ハイライト、リンク）をバッファに適用し
 	ます。
 
 				   *display_utils.apply_treesitter_highlights()*
-display_utils.apply_treesitter_highlights(
-		{buf}, {ns}, {content}) ~
+display_utils.apply_treesitter_highlights({buf}, {ns}, {content}) ~
 	コードブロックに treesitter シンタックスハイライトを適用します。
 
 					     *display_utils.open_float_window()*
-display_utils.open_float_window(
-		{buf}, {content}, {float_win}, {opts}) ~
+display_utils.open_float_window({buf}, {content}, {float_win}, {opts}) ~
 	レンダリング済みコンテンツ用のフローティングウィンドウを作成・配置しま
 	す。
 
 					   *display_utils.setup_float_keymaps()*
-display_utils.setup_float_keymaps(
-		{buf}, {ns}, {win}, {content}, ...) ~
+display_utils.setup_float_keymaps({buf}, {ns}, {win}, {content}, ...) ~
 	フローティングウィンドウでインタラクティブなキーマップ（リン
 	ククリック、折りたたみ切り替えなど）を設定します。
 
