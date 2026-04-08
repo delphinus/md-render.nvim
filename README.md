@@ -157,6 +157,16 @@ local ns = vim.api.nvim_create_namespace("my_ns")
 md.display_utils.apply_content_to_buffer(buf, ns, content)
 ```
 
+## Development
+
+### Running Tests
+
+```bash
+make test
+```
+
+This runs all `tests/*_test.lua` files via `nvim --headless`. New test files matching the `*_test.lua` pattern are picked up automatically.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
@@ -319,6 +329,16 @@ local buf = vim.api.nvim_create_buf(false, true)
 local ns = vim.api.nvim_create_namespace("my_ns")
 md.display_utils.apply_content_to_buffer(buf, ns, content)
 ```
+
+## 開発
+
+### テストの実行
+
+```bash
+make test
+```
+
+`tests/*_test.lua` にマッチする全テストファイルを `nvim --headless` で実行します。新しいテストファイルは自動的に検出されます。
 
 ## ライセンス
 
