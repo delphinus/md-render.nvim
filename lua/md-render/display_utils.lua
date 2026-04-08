@@ -380,9 +380,10 @@ end
 --- Transmit all images and display them. Returns state for re-display and cleanup.
 ---@param win integer
 ---@param content MdRender.Content
----@param on_download? fun() callback when a URL image finishes downloading
+---@param ns integer?
+---@param opts? { buf?: integer, build_content?: fun(): MdRender.Content }
 ---@return MdRender.ImageState?
-function M.setup_images(win, content, on_download, ns)
+function M.setup_images(win, content, ns, opts)
   if not content.image_placements or #content.image_placements == 0 then
     return nil
   end
@@ -406,6 +407,31 @@ function M.setup_images(win, content, on_download, ns)
     redraw_timer = nil,
     autocmd_ids = {},
   }
+
+  -- When opts.buf and opts.build_content are provided, automatically rebuild
+  -- content after URL image downloads so that layout reflects actual image
+  -- dimensions. Debounced to avoid cascading rebuilds.
+  local on_download
+  if opts and opts.buf and opts.build_content then
+    on_download = function()
+      if state._rebuild_timer then
+        state._rebuild_timer:stop()
+      end
+      state._rebuild_timer = vim.defer_fn(function()
+        state._rebuild_timer = nil
+        if not vim.api.nvim_win_is_valid(win) then return end
+        local buf = opts.buf
+        if not vim.api.nvim_buf_is_valid(buf) then return end
+        local new_content = opts.build_content()
+        local was_modifiable = vim.bo[buf].modifiable
+        vim.bo[buf].modifiable = true
+        vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+        M.apply_content_to_buffer(buf, ns, new_content)
+        vim.bo[buf].modifiable = was_modifiable
+        M.update_images(state, win, new_content)
+      end, 150)
+    end
+  end
 
   -- Forward declaration (process_placement is defined after redraw_images
   -- but referenced from the retry logic inside redraw_images)
@@ -839,7 +865,7 @@ end
 function M.update_images(state, win, content)
   -- No previous state: full setup from scratch
   if not state then
-    return M.setup_images(win, content)
+    return M.setup_images(win, content, nil)
   end
 
   -- No images in new content: full cleanup
@@ -906,6 +932,11 @@ end
 function M.cleanup_images(state)
   if not state then return end
   local image = require "md-render.image"
+
+  -- Stop download-rebuild timer
+  if state._rebuild_timer then
+    state._rebuild_timer:stop()
+  end
 
   -- Delete static images from terminal
   local ids = {}

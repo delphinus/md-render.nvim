@@ -213,22 +213,16 @@ MdPreview.show = function(opts)
   vim.api.nvim_win_set_cursor(win, { target, 0 })
 
   -- Display images (transmit + put with auto-redraw on scroll)
-  -- Debounce on_download to prevent cascade when multiple URL images
-  -- complete in quick succession (each would trigger rebuild + cleanup).
-  local download_rebuild_timer = nil
   local image_state
-  image_state = display_utils.setup_images(win, content, function()
-    if download_rebuild_timer then
-      download_rebuild_timer:stop()
-    end
-    download_rebuild_timer = vim.defer_fn(function()
-      download_rebuild_timer = nil
-      if vim.api.nvim_win_is_valid(win) then
-        rebuild()
-        image_state = display_utils.update_images(image_state, win, content)
-      end
-    end, 150)
-  end, ns)
+  image_state = display_utils.setup_images(win, content, ns, {
+    buf = buf,
+    build_content = function()
+      opts.fold_state = fold_state
+      opts.expand_state = expand_state
+      content = MdPreview.build_content(source_lines, opts)
+      return content
+    end,
+  })
 
   -- Track preview cursor for sync-back on close
   local last_preview_line = target
@@ -386,20 +380,16 @@ MdPreview.show_tab = function(opts)
   vim.api.nvim_win_set_cursor(win, { target, 0 })
 
   -- Display images
-  local download_rebuild_timer = nil
   local image_state
-  image_state = display_utils.setup_images(win, content, function()
-    if download_rebuild_timer then
-      download_rebuild_timer:stop()
-    end
-    download_rebuild_timer = vim.defer_fn(function()
-      download_rebuild_timer = nil
-      if vim.api.nvim_win_is_valid(win) then
-        rebuild()
-        image_state = display_utils.update_images(image_state, win, content)
-      end
-    end, 150)
-  end, ns)
+  image_state = display_utils.setup_images(win, content, ns, {
+    buf = buf,
+    build_content = function()
+      opts.fold_state = fold_state
+      opts.expand_state = expand_state
+      content = MdPreview.build_content(source_lines, opts)
+      return content
+    end,
+  })
 
   -- Track preview cursor for sync-back on close
   local last_preview_line = target
@@ -532,20 +522,16 @@ MdPreview.show_pager = function(opts)
   end
 
   -- Display images
-  local download_rebuild_timer = nil
   local image_state
-  image_state = display_utils.setup_images(win, content, function()
-    if download_rebuild_timer then
-      download_rebuild_timer:stop()
-    end
-    download_rebuild_timer = vim.defer_fn(function()
-      download_rebuild_timer = nil
-      if vim.api.nvim_win_is_valid(win) then
-        rebuild()
-        image_state = display_utils.update_images(image_state, win, content)
-      end
-    end, 150)
-  end, ns)
+  image_state = display_utils.setup_images(win, content, ns, {
+    buf = buf,
+    build_content = function()
+      opts.fold_state = fold_state
+      opts.expand_state = expand_state
+      content = MdPreview.build_content(source_lines, opts)
+      return content
+    end,
+  })
 
   -- q quits Neovim (pager behavior)
   vim.keymap.set("n", "q", function()
@@ -828,11 +814,18 @@ MdPreview.show_demo = function()
     fold_state[fold.source_line] = fold.collapsed
   end
 
-  image_state = display_utils.setup_images(win, content, function()
-    if vim.api.nvim_win_is_valid(win) then
-      rebuild()
-    end
-  end, ns)
+  image_state = display_utils.setup_images(win, content, ns, {
+    buf = buf,
+    build_content = function()
+      opts.fold_state = fold_state
+      opts.expand_state = expand_state
+      opts.autolinks = {
+        { key_prefix = "JIRA-", url_template = "https://jira.example.com/browse/JIRA-<num>" },
+      }
+      content = MdPreview.build_content(demo_lines, opts)
+      return content
+    end,
+  })
 
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win),
