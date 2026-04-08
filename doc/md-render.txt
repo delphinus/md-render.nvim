@@ -17,6 +17,7 @@ Usage							       |md-render-usage|
   Markdown						    |md-render-markdown|
   Display Utilities				       |md-render-display-utils|
   Image							       |md-render-image|
+Example							     |md-render-example|
 Highlight Groups					  |md-render-highlights|
 Optional Dependencies					|md-render-dependencies|
 
@@ -379,7 +380,11 @@ image.reset_cache() ~
 image.supports_kitty() ~
 	Check whether the terminal supports the Kitty graphics protocol.
 
-Example: >lua
+==============================================================================
+EXAMPLE							     *md-render-example*
+
+A complete example showing how to render Markdown and display it in a buffer:
+>lua
 
   local md = require("md-render")
 
@@ -408,6 +413,20 @@ Example: >lua
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace("my_ns")
   md.display_utils.apply_content_to_buffer(buf, ns, content)
+
+  -- Display images (Kitty Graphics Protocol terminal required)
+  local win = vim.api.nvim_get_current_win()
+  local image_state =
+    md.display_utils.setup_images(win, content, nil, ns)
+
+  -- Clean up images when the window is closed
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern = tostring(win),
+    once = true,
+    callback = function()
+      md.display_utils.cleanup_images(image_state)
+    end,
+  })
 <
 
 ==============================================================================

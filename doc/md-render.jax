@@ -18,6 +18,7 @@ License: MIT
   Markdown						    |md-render-markdown|
   Display Utilities				       |md-render-display-utils|
   Image							       |md-render-image|
+使用例							     |md-render-example|
 ハイライトグループ					  |md-render-highlights|
 オプション依存						|md-render-dependencies|
 
@@ -384,7 +385,11 @@ image.reset_cache() ~
 image.supports_kitty() ~
 	ターミナルが Kitty graphics protocol に対応しているかチェックします。
 
-使用例: >lua
+==============================================================================
+使用例							     *md-render-example*
+
+Markdown をレンダリングしてバッファに表示する完全な例です:
+>lua
 
   local md = require("md-render")
 
@@ -413,6 +418,20 @@ image.supports_kitty() ~
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace("my_ns")
   md.display_utils.apply_content_to_buffer(buf, ns, content)
+
+  -- 画像を表示（Kitty Graphics Protocol 対応ターミナルが必要）
+  local win = vim.api.nvim_get_current_win()
+  local image_state =
+    md.display_utils.setup_images(win, content, nil, ns)
+
+  -- ウィンドウを閉じたら画像をクリーンアップ
+  vim.api.nvim_create_autocmd("WinClosed", {
+    pattern = tostring(win),
+    once = true,
+    callback = function()
+      md.display_utils.cleanup_images(image_state)
+    end,
+  })
 <
 
 ==============================================================================
