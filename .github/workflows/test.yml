@@ -14,10 +14,4 @@ jobs:
           neovim: true
           version: stable
       - name: Run tests
-        run: |
-          nvim --headless -u NONE --noplugin -l tests/tty_test.lua
-          nvim --headless -u NONE --noplugin -l tests/link_types_test.lua
-          nvim --headless -u NONE --noplugin -l tests/markdown_checkbox_test.lua
-          nvim --headless -u NONE --noplugin -l tests/html_table_test.lua
-          nvim --headless -u NONE --noplugin -l tests/image_test.lua
-          nvim --headless -u NONE --noplugin -l tests/pty_image_test.lua
+        run: make test
