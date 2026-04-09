@@ -10,7 +10,8 @@ Requirements						|md-render-requirements|
 Installation						|md-render-installation|
 Mappings						    |md-render-mappings|
 Commands						    |md-render-commands|
-Telescope Integration					      |md-render-telescope|
+Telescope Integration					   |md-render-telescope|
+Snacks.nvim Integration					      |md-render-snacks|
 Usage							       |md-render-usage|
   Preview						     |md-render-preview|
   Library API							 |md-render-api|
@@ -151,19 +152,19 @@ COMMANDS						    *md-render-commands*
 	Show a demo window with all supported Markdown notations.
 
 ==============================================================================
-TELESCOPE INTEGRATION					      *md-render-telescope*
+TELESCOPE INTEGRATION					   *md-render-telescope*
 
-							  *telescope.previewer()*
+							 *telescope.previewer()*
 PREVIEWER ~
 
 telescope.previewer({opts}) ~
-	Create a previewer that can be passed to any telescope.nvim picker
-	-- builtin, extension, or custom.
+	Create a previewer that can be passed to any telescope.nvim picker --
+	builtin, extension, or custom.
 
 	Parameters: ~
 	  {opts}  (table|nil) Optional settings:
-		  - {namespace}  (string) Extmark namespace name
-				 (default: "md_render_telescope")
+	    - {namespace}  (string) Extmark namespace name
+				    (default: "md_render_telescope")
 
 	Returns: ~
 	  A telescope-compatible buffer previewer
@@ -171,35 +172,89 @@ telescope.previewer({opts}) ~
 	Example: >lua
 	  local previewer = require("md-render.telescope").previewer()
 	  require("telescope.builtin").find_files({ previewer = previewer })
-	  require("telescope").extensions.egrepify.egrepify({ previewer = previewer })
+	  require("telescope").extensions.egrepify.egrepify({
+	    previewer = previewer,
+	  })
 <
 
 The previewer handles three kinds of files:
 
-  Markdown (.md, .markdown)     Full md-render rendering with highlights,
-				links, and inline images.
+  Markdown (.md, .markdown)     md-render rendering with highlights, links,
+				and inline images.
 
-  Image / Video                 Inline display via the Kitty graphics
-  (PNG, JPEG, WebP, GIF,       protocol.  File name and dimensions are
-  MP4, WebM, AVI, ...)         shown as a header.
+  Image / Video                 Inline display via Kitty graphics protocol.
+  (PNG, JPEG, WebP, GIF,        File name and dimensions are shown as a
+  MP4, WebM, AVI, ...)          header.
 
-  Other files                   Falls back to telescope's default
-				|buffer_previewer_maker| with syntax
-				highlighting.
+  Other files                   Falls back to telescope's default previewer
+				with syntax highlighting.
 
 For grep-based pickers (e.g. `live_grep`, `grep_string`), the preview
 automatically scrolls to the matched source line.
 
-							     *:Telescope_md_render*
+							  *:Telescope_md_render*
 :TELESCOPE MD_RENDER EXTENSION ~
 
-A shortcut for builtin pickers.  Wraps `telescope.builtin` pickers with
-the md-render previewer.  All arguments are passed through.
+A shortcut for builtin pickers.  Wraps `telescope.builtin` pickers with the
+md-render previewer.  All arguments are passed through.
 >vim
   :Telescope md_render find_files
   :Telescope md_render live_grep cwd=~/notes
   :Telescope md_render grep_string search=TODO
 <
+
+==============================================================================
+SNACKS.NVIM INTEGRATION					      *md-render-snacks*
+
+							      *snacks.preview()*
+PREVIEW ~
+
+snacks.preview({opts}) ~
+	Create a preview function for snacks.nvim pickers.  It handles the
+	same three file types as the telescope previewer (Markdown rendering,
+	image/video display, and fallback to snacks' default file previewer).
+
+	Parameters: ~
+	  {opts}  (table|nil) Optional settings:
+	    - {namespace}  (string) Extmark namespace name
+				    (default: "md_render_snacks")
+
+	Returns: ~
+	  A snacks.nvim-compatible preview function
+
+	Example (global): >lua
+	  require("snacks").setup({
+	    picker = {
+	      preview = require("md-render.snacks").preview(),
+	    },
+	  })
+<
+
+	Example (per-source): >lua
+	  require("snacks").setup({
+	    picker = {
+	      sources = {
+	        files = { preview = require("md-render.snacks").preview() },
+	        grep = { preview = require("md-render.snacks").preview() },
+	      },
+	    },
+	  })
+<
+
+The preview function handles three kinds of files:
+
+  Markdown (.md, .markdown)     md-render rendering with highlights, links,
+				and inline images.
+
+  Image / Video                 Inline display via Kitty graphics protocol.
+  (PNG, JPEG, WebP, GIF,        File name and dimensions are shown as a
+  MP4, WebM, AVI, ...)          header.
+
+  Other files                   Falls back to snacks' default previewer with
+				syntax highlighting.
+
+For grep-based pickers the preview automatically scrolls to the matched
+source line.
 
 ==============================================================================
 USAGE							       *md-render-usage*
@@ -266,12 +321,12 @@ LIBRARY API							 *md-render-api*
 
 The main module `require("md-render")` re-exports the following submodules:
 
-  `ContentBuilder`				     |md-render-content-builder|
-  `Markdown`						    |md-render-markdown|
+  `ContentBuilder`   |md-render-content-builder|
+  `Markdown`         |md-render-markdown|
   `MarkdownTable`    Table parsing and rendering
   `FloatWin`         Floating window management
   `TabWin`           Tab window management
-  `display_utils`				       |md-render-display-utils|
+  `display_utils`    |md-render-display-utils|
   `preview`          |md-render-preview| (lazy-loaded)
 
 ------------------------------------------------------------------------------
@@ -508,11 +563,10 @@ ALERTS / CALLOUTS ~
 For each alert type ({Type} = Note, Tip, Important, Warning, Caution,
 Abstract, Todo, Success, Question, Failure, Danger, Bug, Example, Quote):
 
-							   *MdRenderAlert{Type}*
-	Alert header text color (bold, derived from corresponding diagnostic
-	highlight)
-							 *MdRenderAlert{Type}Bg*
-	Alert background color (blended from alert fg and NormalFloat bg)
+  *MdRenderAlert{Type}*   Alert header text color (bold, derived from
+                        corresponding diagnostic highlight)
+  *MdRenderAlert{Type}Bg* Alert background color (blended from alert
+                        fg and NormalFloat bg)
 
 DETAILS ~
 
@@ -521,18 +575,20 @@ DETAILS ~
 
 IMAGE ~
 
-						      *MdRenderImagePlaceholder*
-	Placeholder shown while images are loading
+  *MdRenderImagePlaceholder*
+                        Placeholder shown while images are loading
 
 ==============================================================================
 OPTIONAL DEPENDENCIES					*md-render-dependencies*
 
   nvim-web-devicons    File type icons in code block headers.
-  (or mini.icons)      Falls back to a built-in icon table.
+  (or |mini.icons|)    Falls back to a built-in icon table.
+                       https://github.com/nvim-tree/nvim-web-devicons
+                       https://github.com/echasnovski/mini.icons
 
   budoux.lua           CJK phrase-level line breaking (BudouX).  Falls back
                        to character-level splitting (kinsoku rules still
-                       apply).
+                       apply).  https://github.com/delphinus/budoux.lua
 
   Treesitter parsers   Syntax highlighting in code blocks.  Code blocks
                        render without highlighting if parsers are missing.
@@ -550,6 +606,7 @@ OPTIONAL DEPENDENCIES					*md-render-dependencies*
 
   Mermaid CLI          Render Mermaid diagrams as images.  Falls back to
   (mmdc)               `npx -y @mermaid-js/mermaid-cli`.
+                       https://github.com/mermaid-js/mermaid-cli
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:
