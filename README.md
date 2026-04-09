@@ -15,15 +15,6 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 </tr>
 </table>
 
-<table>
-<tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="Pager mode" /></td>
-</tr>
-<tr>
-<td align="center"><em>Pager mode — browse Markdown like <code>less</code></em></td>
-</tr>
-</table>
-
 ## Highlights
 
 - **Rich inline formatting** — bold, strikethrough, inline code, links, Obsidian `==highlight==`, all rendered in-place
@@ -113,6 +104,15 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 
 ### Pager mode
 
+<table>
+<tr>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="Pager mode" /></td>
+</tr>
+<tr>
+<td align="center"><em>Pager mode — browse Markdown like <code>less</code></em></td>
+</tr>
+</table>
+
 Use `MdRenderPager` to view Markdown files like `less`:
 
 ```bash
@@ -127,6 +127,15 @@ mdless README.md
 ```
 
 ## Telescope Integration
+
+<table>
+<tr>
+<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" alt="Telescope integration" /></td>
+</tr>
+<tr>
+<td align="center"><em>Telescope previewer with md-render</em></td>
+</tr>
+</table>
 
 ### Previewer
 
@@ -259,15 +268,6 @@ Neovim で Markdown をリッチにレンダリングするエンジンです。
 </tr>
 </table>
 
-<table>
-<tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="ページャーモード" /></td>
-</tr>
-<tr>
-<td align="center"><em>ページャーモード — Markdown を <code>less</code> のように閲覧</em></td>
-</tr>
-</table>
-
 ## 主な機能
 
 - **リッチなインライン書式** — 太字、取り消し線、インラインコード、リンク、Obsidian `==highlight==` をその場でレンダリング
@@ -357,6 +357,15 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 
 ### ページャーモード
 
+<table>
+<tr>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="ページャーモード" /></td>
+</tr>
+<tr>
+<td align="center"><em>ページャーモード — Markdown を <code>less</code> のように閲覧</em></td>
+</tr>
+</table>
+
 `MdRenderPager` を使うと Markdown ファイルを `less` のように閲覧できます：
 
 ```bash
@@ -371,6 +380,15 @@ mdless README.md
 ```
 
 ## Telescope 連携
+
+<table>
+<tr>
+<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" alt="Telescope 連携" /></td>
+</tr>
+<tr>
+<td align="center"><em>md-render による Telescope プレビュー</em></td>
+</tr>
+</table>
 
 ### Previewer
 
