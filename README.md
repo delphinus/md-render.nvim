@@ -6,8 +6,8 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 
 <table>
 <tr>
-<td width="50%"><img src="assets/screenshot-rendering.png" alt="Markdown rendering features" /></td>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" alt="Images, video, and Mermaid diagrams" /></td>
+<td width="50%"><img src="assets/screenshot-rendering.png" width="672" height="751" alt="Markdown rendering features" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" width="686" height="750" alt="Images, video, and Mermaid diagrams" /></td>
 </tr>
 <tr>
 <td align="center"><em>Inline formatting, tables, callouts, code blocks, and CJK line-breaking</em></td>
@@ -106,7 +106,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 
 <table>
 <tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="Pager mode" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" width="682" height="446" alt="Pager mode" /></td>
 </tr>
 <tr>
 <td align="center"><em>Pager mode — browse Markdown like <code>less</code></em></td>
@@ -130,7 +130,7 @@ mdless README.md
 
 <table>
 <tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" alt="Telescope integration" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" width="472" height="457" alt="Telescope integration" /></td>
 </tr>
 <tr>
 <td align="center"><em>Telescope previewer with md-render</em></td>
@@ -259,8 +259,8 @@ Neovim で Markdown をリッチにレンダリングするエンジンです。
 
 <table>
 <tr>
-<td width="50%"><img src="assets/screenshot-rendering.png" alt="Markdown レンダリング機能" /></td>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" alt="Images, video, and Mermaid diagrams" /></td>
+<td width="50%"><img src="assets/screenshot-rendering.png" width="672" height="751" alt="Markdown レンダリング機能" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" width="686" height="750" alt="Images, video, and Mermaid diagrams" /></td>
 </tr>
 <tr>
 <td align="center"><em>インライン書式、テーブル、コールアウト、コードブロック、CJK 折り返し</em></td>
@@ -359,7 +359,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 
 <table>
 <tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" alt="ページャーモード" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" width="682" height="446" alt="ページャーモード" /></td>
 </tr>
 <tr>
 <td align="center"><em>ページャーモード — Markdown を <code>less</code> のように閲覧</em></td>
@@ -383,7 +383,7 @@ mdless README.md
 
 <table>
 <tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" alt="Telescope 連携" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" width="472" height="457" alt="Telescope 連携" /></td>
 </tr>
 <tr>
 <td align="center"><em>md-render による Telescope プレビュー</em></td>
