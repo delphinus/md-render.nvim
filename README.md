@@ -162,6 +162,36 @@ md-render previewer. All arguments are passed through:
 :Telescope md_render grep_string search=TODO
 ```
 
+## Snacks.nvim Integration
+
+`require("md-render.snacks").preview()` creates a preview function for
+[snacks.nvim](https://github.com/folke/snacks.nvim) pickers. It handles the
+same three file types as the telescope previewer (Markdown, image/video, and
+fallback).
+
+Configure it globally to apply to all pickers:
+
+```lua
+require("snacks").setup({
+  picker = {
+    preview = require("md-render.snacks").preview(),
+  },
+})
+```
+
+Or per-source:
+
+```lua
+require("snacks").setup({
+  picker = {
+    sources = {
+      files = { preview = require("md-render.snacks").preview() },
+      grep = { preview = require("md-render.snacks").preview() },
+    },
+  },
+})
+```
+
 ## Usage
 
 ### As a Library
@@ -374,6 +404,35 @@ previewer 付きでラップします。引数はすべてそのまま渡され�
 :Telescope md_render find_files
 :Telescope md_render live_grep cwd=~/notes
 :Telescope md_render grep_string search=TODO
+```
+
+## Snacks.nvim 連携
+
+`require("md-render.snacks").preview()` で
+[snacks.nvim](https://github.com/folke/snacks.nvim) の picker 用プレビュー関数を
+作成します。telescope 版と同じく Markdown、画像・動画、その他のファイルに対応します。
+
+グローバルに全 picker へ適用：
+
+```lua
+require("snacks").setup({
+  picker = {
+    preview = require("md-render.snacks").preview(),
+  },
+})
+```
+
+source ごとに個別設定：
+
+```lua
+require("snacks").setup({
+  picker = {
+    sources = {
+      files = { preview = require("md-render.snacks").preview() },
+      grep = { preview = require("md-render.snacks").preview() },
+    },
+  },
+})
 ```
 
 ## 使い方
