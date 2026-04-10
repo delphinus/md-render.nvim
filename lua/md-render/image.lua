@@ -870,6 +870,16 @@ function M.resolve(src, base_dir)
   if vim.fn.filereadable(resolved) == 1 then
     return resolved
   end
+
+  -- Fallback: try Obsidian vault resolution
+  if base_dir then
+    local obsidian = require "md-render.obsidian"
+    local vault_resolved = obsidian.resolve(src, base_dir)
+    if vault_resolved then
+      return vault_resolved
+    end
+  end
+
   return nil
 end
 

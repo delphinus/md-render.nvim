@@ -2110,15 +2110,18 @@ function ContentBuilder:render_document(lines, opts)
               end
             end
           end
-          -- Obsidian embed: ![[file]]
+          -- Obsidian embed: ![[file]] or ![[file|caption]]
           if not img_path then
             local embed = line:match "^%s*!%[%[(.-)%]%]%s*$"
             if embed then
-              local ext = embed:match "%.(%w+)$"
+              local target = embed:match "^([^|#]+)" or embed
+              local ext = target:match "%.(%w+)$"
               local img_exts = { png = true, jpg = true, jpeg = true, gif = true, webp = true, bmp = true, svg = true }
-              if ext and img_exts[ext:lower()] then
-                img_path = embed
-                img_alt = embed:match "([^/]+)$"
+              local vid_exts = { mp4 = true, webm = true, mov = true, avi = true, mkv = true, m4v = true }
+              if ext and (img_exts[ext:lower()] or vid_exts[ext:lower()]) then
+                img_path = target
+                local caption = embed:match "|(.+)$"
+                img_alt = caption or target:match "([^/]+)$"
               end
             end
           end
@@ -2187,6 +2190,11 @@ function ContentBuilder:render_document(lines, opts)
               end
               if vim.fn.filereadable(video_path) == 1 then
                 resolved = video_path
+              end
+              -- Fallback: try Obsidian vault resolution for local video files
+              if not resolved and buf_dir then
+                local obsidian = require "md-render.obsidian"
+                resolved = obsidian.resolve(img_entry.path, buf_dir)
               end
             end
             is_animated = true
