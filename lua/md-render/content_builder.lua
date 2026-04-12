@@ -326,12 +326,12 @@ function ContentBuilder:add_wrapped_markdown(rendered_text, md_highlights, md_li
     wrap_text = wrap_text:sub(#list_marker + 1)
     content_offset = content_offset + #list_marker
     list_prefix_len = #list_marker
-    list_cont_len = vim.fn.strdisplaywidth(list_marker)
+    list_cont_len = vim.api.nvim_strwidth(list_marker)
   end
 
   local content_max_width = max_width
   if quote_prefix ~= "" then
-    content_max_width = max_width - vim.fn.strdisplaywidth(quote_prefix)
+    content_max_width = max_width - vim.api.nvim_strwidth(quote_prefix)
   end
   if list_cont_len > 0 then
     content_max_width = content_max_width - list_cont_len
@@ -461,7 +461,7 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
   end
 
   local lines_before_fn = #self.lines
-  if vim.fn.strdisplaywidth(rendered_text) > max_width then
+  if vim.api.nvim_strwidth(rendered_text) > max_width then
     self:add_wrapped_markdown(rendered_text, md_highlights, md_links, indent, max_width, quote_prefix, list_marker)
   else
     self:add_simple_markdown(rendered_text, md_highlights, md_links, indent)
@@ -553,7 +553,7 @@ end
 ---@param icon string single icon character
 ---@return string
 local function pad_icon(icon)
-  if vim.fn.strdisplaywidth(icon) == 1 then
+  if vim.api.nvim_strwidth(icon) == 1 then
     return icon .. " "
   end
   return icon
@@ -1429,7 +1429,7 @@ function ContentBuilder:render_document(lines, opts)
               seg = seg:gsub("^%s+", ""):gsub("%s+$", "")
               if seg ~= "" then
                 local dd_rendered, dd_hls, dd_links = markdown.render(seg, repo_base_url, autolinks, ref_links)
-                if vim.fn.strdisplaywidth(dd_rendered) > max_width - 2 then
+                if vim.api.nvim_strwidth(dd_rendered) > max_width - 2 then
                   self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, max_width - 2, "")
                 else
                   self:add_simple_markdown(dd_rendered, dd_hls, dd_links, dd_indent)
@@ -1694,14 +1694,14 @@ function ContentBuilder:render_document(lines, opts)
       in_indented_code = true
       local code_content = line:sub(5) -- strip 4-space indent
       local indented_line = indent .. code_content
-      local display_width = vim.fn.strdisplaywidth(indented_line)
+      local display_width = vim.api.nvim_strwidth(indented_line)
       local ib_lines_before = #self.lines
       if display_width > max_width then
-        local target = max_width - vim.fn.strdisplaywidth("…")
+        local target = max_width - vim.api.nvim_strwidth("…")
         local current_width = 0
         local byte_pos = 0
         for char in indented_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-          local char_width = vim.fn.strdisplaywidth(char)
+          local char_width = vim.api.nvim_strwidth(char)
           if current_width + char_width > target then
             break
           end
@@ -1881,7 +1881,7 @@ function ContentBuilder:render_document(lines, opts)
               local placeholder_row = math.floor(display_rows / 2)
               for r = 1, display_rows do
                 if r == placeholder_row + 1 then
-                  local pad = math.max(0, math.floor((display_cols - vim.fn.strdisplaywidth(placeholder_msg)) / 2))
+                  local pad = math.max(0, math.floor((display_cols - vim.api.nvim_strwidth(placeholder_msg)) / 2))
                   local placeholder_line = indent .. string.rep(" ", img_col) .. string.rep(" ", pad) .. placeholder_msg
                   self:add_line(placeholder_line, {
                     { col = 0, end_col = #placeholder_line, hl = "Comment" },
@@ -1941,14 +1941,14 @@ function ContentBuilder:render_document(lines, opts)
     elseif in_code_block then
       table.insert(code_source_lines, line)
       local indented = indent .. line
-      local display_width = vim.fn.strdisplaywidth(indented)
+      local display_width = vim.api.nvim_strwidth(indented)
       if not expand_state[code_block_id] and display_width > max_width then
         code_block_has_truncation = true
-        local target = max_width - vim.fn.strdisplaywidth("…")
+        local target = max_width - vim.api.nvim_strwidth("…")
         local current_width = 0
         local byte_pos = 0
         for char in indented:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-          local char_width = vim.fn.strdisplaywidth(char)
+          local char_width = vim.api.nvim_strwidth(char)
           if current_width + char_width > target then
             break
           end
@@ -2032,14 +2032,14 @@ function ContentBuilder:render_document(lines, opts)
         elseif in_callout_code_block then
           table.insert(callout_code_source_lines, stripped)
           local code_line = callout_code_prefix .. stripped
-          local display_width = vim.fn.strdisplaywidth(code_line)
+          local display_width = vim.api.nvim_strwidth(code_line)
           if not expand_state[callout_code_block_id] and display_width > max_width then
             callout_code_has_truncation = true
-            local target = max_width - vim.fn.strdisplaywidth("…")
+            local target = max_width - vim.api.nvim_strwidth("…")
             local current_width = 0
             local byte_pos = 0
             for char in code_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-              local char_width = vim.fn.strdisplaywidth(char)
+              local char_width = vim.api.nvim_strwidth(char)
               if current_width + char_width > target then
                 break
               end
@@ -2257,7 +2257,7 @@ function ContentBuilder:render_document(lines, opts)
               local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
               -- Show placeholder with background highlight while the image is loading.
               -- The image overlay (Kitty graphics) will cover this once loaded.
-              local indent_width = vim.fn.strdisplaywidth(indent)
+              local indent_width = vim.api.nvim_strwidth(indent)
               local placeholder_msg
               if is_video then
                 placeholder_msg = "Loading video..."
@@ -2266,7 +2266,7 @@ function ContentBuilder:render_document(lines, opts)
               else
                 placeholder_msg = "Loading image..."
               end
-              local msg_width = vim.fn.strdisplaywidth(placeholder_msg)
+              local msg_width = vim.api.nvim_strwidth(placeholder_msg)
               local mid_row = math.floor(display_rows / 2) + 1
               for r = 1, display_rows do
                 local spaces_to_img = math.max(0, img_col - indent_width)
@@ -2431,13 +2431,13 @@ function ContentBuilder:render_document(lines, opts)
     for _, def in ipairs(footnote_defs) do
       local num = footnote_map[def.label]
       local prefix = indent .. to_superscript(num) .. " "
-      local prefix_display_width = vim.fn.strdisplaywidth(prefix)
+      local prefix_display_width = vim.api.nvim_strwidth(prefix)
       local rendered_text, md_highlights, md_links =
         markdown.render(def.text, repo_base_url, autolinks, ref_links, footnote_map)
 
       local full_text = prefix .. rendered_text
       local def_first_line = #self.lines -- 0-indexed line where this def starts
-      if vim.fn.strdisplaywidth(full_text) > max_width then
+      if vim.api.nvim_strwidth(full_text) > max_width then
         -- Wrap: use prefix on first line, spaces on continuation lines
         local content_max_width = max_width - prefix_display_width
         local wrapped_lines, line_starts = wrap_words(rendered_text, content_max_width)

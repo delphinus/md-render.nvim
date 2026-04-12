@@ -83,13 +83,13 @@ MdPreview.build_content = function(lines, opts)
         for _, entry in ipairs(entries) do
           local label = "  " .. entry.key
           local full_line = label .. ": " .. entry.value
-          local display_width = vim.fn.strdisplaywidth(full_line)
+          local display_width = vim.api.nvim_strwidth(full_line)
           if display_width > max_width then
-            local target = max_width - vim.fn.strdisplaywidth("…")
+            local target = max_width - vim.api.nvim_strwidth("…")
             local current_width = 0
             local byte_pos = 0
             for char in full_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-              local char_width = vim.fn.strdisplaywidth(char)
+              local char_width = vim.api.nvim_strwidth(char)
               if current_width + char_width > target then
                 break
               end

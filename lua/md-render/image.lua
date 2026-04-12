@@ -1400,7 +1400,7 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
       local left = border[8] -- 8th element = left border char
       if type(left) == "table" then left = left[1] end
       if left and left ~= "" then
-        border_left_width = vim.fn.strdisplaywidth(left)
+        border_left_width = vim.api.nvim_strwidth(left)
       end
       local top = border[2] -- 2nd element = top border char
       if type(top) == "table" then top = top[1] end
@@ -1408,7 +1408,7 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
         border_top_height = 1
       end
     elseif border ~= "none" and border ~= "" then
-      border_left_width = vim.fn.strdisplaywidth("│")
+      border_left_width = vim.api.nvim_strwidth("│")
       border_top_height = 1
     end
   end

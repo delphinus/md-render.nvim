@@ -327,11 +327,19 @@ end
 --- Half-width ASCII punctuation (single byte) is excluded so that it stays
 --- with adjacent ASCII words in split_segments (e.g. ".gitignore" stays as
 --- one segment).  Kinsoku rules for these chars still apply in wrap_words.
+--- Results are cached per character for performance (avoids repeated
+--- vim.api.nvim_strwidth calls on large CJK documents).
+local _is_cjk_cache = {}
 local function is_cjk_or_kinsoku(char)
+  local cached = _is_cjk_cache[char]
+  if cached ~= nil then return cached end
   if #char == 1 then
-    return vim.fn.strdisplaywidth(char) >= 2
+    _is_cjk_cache[char] = false
+    return false
   end
-  return vim.fn.strdisplaywidth(char) >= 2 or NO_BREAK_START[char] or NO_BREAK_END[char]
+  local result = vim.api.nvim_strwidth(char) >= 2 or NO_BREAK_START[char] or NO_BREAK_END[char]
+  _is_cjk_cache[char] = result
+  return result
 end
 
 --- Extract the first UTF-8 character from a string.
@@ -538,7 +546,7 @@ function M.wrap_words(text, max_width)
   local segments = split_segments(text)
 
   for i, seg in ipairs(segments) do
-    local seg_width = vim.fn.strdisplaywidth(seg.text)
+    local seg_width = vim.api.nvim_strwidth(seg.text)
     local space_width = (seg.has_leading_space and current ~= "") and 1 or 0
 
     if current_width + space_width + seg_width > max_width and current ~= "" then
@@ -555,7 +563,7 @@ function M.wrap_words(text, max_width)
         local sep = seg.has_leading_space and " " or ""
         current = last_seg_text .. sep .. seg.text
         current_start = last_seg_pos
-        current_width = vim.fn.strdisplaywidth(current)
+        current_width = vim.api.nvim_strwidth(current)
       elseif is_no_break_start then
         -- Kinsoku 追い込み fallback: keep the char on the current line
         -- even if it exceeds max_width, to avoid it starting a new line
@@ -580,7 +588,7 @@ function M.wrap_words(text, max_width)
       -- 追い出し could push it away and strand this char at line end.
       if NO_BREAK_END[last_char(seg.text)] and current ~= "" then
         local next_seg = segments[i + 1]
-        local next_width = next_seg and vim.fn.strdisplaywidth(next_seg.text) or 0
+        local next_width = next_seg and vim.api.nvim_strwidth(next_seg.text) or 0
         if current_width + space_width + seg_width + next_width >= max_width then
           table.insert(wrapped_lines, current)
           table.insert(line_starts, current_start)

@@ -207,7 +207,7 @@ function M.open_float_window(buf, content, float_win, opts)
 
   local width = 0
   for _, line in ipairs(content.lines) do
-    width = math.max(width, vim.fn.strdisplaywidth(line))
+    width = math.max(width, vim.api.nvim_strwidth(line))
   end
   width = math.min(width + 2, math.floor(vim.o.columns * 0.8))
   local height = math.min(#content.lines, math.floor(vim.o.lines * 0.8))

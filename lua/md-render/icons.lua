@@ -109,7 +109,7 @@ local DEFAULT_IMAGE_ICON = "󰋩"
 ---@param icon string single icon character
 ---@return string
 function M.pad_icon(icon)
-  if vim.fn.strdisplaywidth(icon) == 1 then
+  if vim.api.nvim_strwidth(icon) == 1 then
     return icon .. " "
   end
   return icon

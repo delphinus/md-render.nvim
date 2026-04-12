@@ -107,14 +107,14 @@ end
 ---@param max_display_width integer
 ---@return {text: string, byte_start: integer}[]
 local function wrap_cell_text(text, max_display_width)
-  if vim.fn.strdisplaywidth(text) <= max_display_width then
+  if vim.api.nvim_strwidth(text) <= max_display_width then
     return { { text = text, byte_start = 0 } }
   end
 
   local wrapped_lines, line_starts = wrap_mod.wrap_words(text, max_display_width)
   local result = {}
   for i, line in ipairs(wrapped_lines) do
-    if vim.fn.strdisplaywidth(line) > max_display_width then
+    if vim.api.nvim_strwidth(line) > max_display_width then
       -- Single word wider than column: try syllable-level V|C splitting
       local sub_segs = wrap_mod.split_ascii_syllables(line, 0, false)
       if #sub_segs > 1 then
@@ -122,7 +122,7 @@ local function wrap_cell_text(text, max_display_width)
         local current_text = ""
         local current_byte = 0
         for _, seg in ipairs(sub_segs) do
-          if current_text ~= "" and vim.fn.strdisplaywidth(current_text .. seg.text) > max_display_width then
+          if current_text ~= "" and vim.api.nvim_strwidth(current_text .. seg.text) > max_display_width then
             table.insert(result, { text = current_text, byte_start = line_starts[i] + current_byte })
             current_byte = seg.byte_pos
             current_text = seg.text
@@ -153,7 +153,7 @@ local function wrap_cell_text(text, max_display_width)
           local current_byte = 0
           local byte_offset = 0
           for _, g in ipairs(cjk_groups) do
-            if current_text ~= "" and vim.fn.strdisplaywidth(current_text .. g) > max_display_width then
+            if current_text ~= "" and vim.api.nvim_strwidth(current_text .. g) > max_display_width then
               table.insert(result, { text = current_text, byte_start = line_starts[i] + current_byte })
               current_byte = byte_offset
               current_text = g
@@ -187,11 +187,11 @@ end
 ---@return string truncated text
 ---@return integer byte_length of the kept portion (before "…")
 local function truncate_to_width(text, max_display_width)
-  local text_width = vim.fn.strdisplaywidth(text)
+  local text_width = vim.api.nvim_strwidth(text)
   if text_width <= max_display_width then
     return text, #text
   end
-  local ellipsis_width = vim.fn.strdisplaywidth("…")
+  local ellipsis_width = vim.api.nvim_strwidth("…")
   local target = max_display_width - ellipsis_width
   if target <= 0 then
     return "…", 0
@@ -199,7 +199,7 @@ local function truncate_to_width(text, max_display_width)
   local current_width = 0
   local byte_pos = 0
   for char in text:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-    local char_width = vim.fn.strdisplaywidth(char)
+    local char_width = vim.api.nvim_strwidth(char)
     if current_width + char_width > target then
       break
     end
@@ -216,7 +216,7 @@ end
 ---@return string padded text
 ---@return integer left_pad number of spaces added on the left
 local function pad_cell(text, width, align)
-  local text_width = vim.fn.strdisplaywidth(text)
+  local text_width = vim.api.nvim_strwidth(text)
   local total_pad = width - text_width
   if total_pad <= 0 then
     return text, 0
@@ -283,10 +283,10 @@ function MarkdownTable.parse(lines, repo_base_url, autolinks)
   -- Calculate column widths (display width)
   local col_widths = {}
   for col = 1, #alignments do
-    local w = vim.fn.strdisplaywidth(headers[col].text)
+    local w = vim.api.nvim_strwidth(headers[col].text)
     for _, row in ipairs(rows) do
       if row[col] then
-        w = math.max(w, vim.fn.strdisplaywidth(row[col].text))
+        w = math.max(w, vim.api.nvim_strwidth(row[col].text))
       end
     end
     col_widths[col] = w
@@ -325,7 +325,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
   local out_links = {}
   local num_cols = #parsed_table.col_widths
   local col_widths = vim.deepcopy(parsed_table.col_widths)
-  local sep_width = vim.fn.strdisplaywidth("│") -- border char display width (varies with ambiwidth)
+  local sep_width = vim.api.nvim_strwidth("│") -- border char display width (varies with ambiwidth)
 
   --- Strip leading HTML comments from text
   ---@param text string
@@ -395,7 +395,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
     local image_mod = require "md-render.image"
     if image_mod.supports_kitty() then
       local buf_dir = vim.fn.expand("%:p:h")
-      local indent_width = vim.fn.strdisplaywidth(indent)
+      local indent_width = vim.api.nvim_strwidth(indent)
       local overhead = indent_width + num_cols * (sep_width + 2) + sep_width
       local effective_max = max_width and max_width < 1e6 and max_width or 1e6
       local total_budget = effective_max - overhead
@@ -493,7 +493,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
 
   -- Adjust column widths to fit max_width
   if max_width then
-    local indent_width = vim.fn.strdisplaywidth(indent)
+    local indent_width = vim.api.nvim_strwidth(indent)
     -- Total = indent + num_cols * ("│ " + col_width + " ") + "│"
     --       = indent + num_cols * (sep_width + 2) + sum(col_widths) + sep_width
     local overhead = indent_width + num_cols * (sep_width + 2) + sep_width
@@ -516,7 +516,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
           for col, img in pairs(imgs) do
             local icons_mod = require "md-render.icons"
             local raw_icon = icons_mod.get_image_icon(img.url or "")
-            local label_width = vim.fn.strdisplaywidth(icons_mod.pad_icon(raw_icon) .. " " .. img.alt)
+            local label_width = vim.api.nvim_strwidth(icons_mod.pad_icon(raw_icon) .. " " .. img.alt)
             col_widths[col] = math.max(col_widths[col], label_width)
           end
         end
@@ -601,7 +601,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
       local truncated_byte_len = #display_text
 
       -- Truncate cell text if it exceeds the (possibly shrunk) column width
-      if vim.fn.strdisplaywidth(display_text) > col_widths[col] then
+      if vim.api.nvim_strwidth(display_text) > col_widths[col] then
         display_text, truncated_byte_len = truncate_to_width(display_text, col_widths[col])
         -- Clip highlights to the kept portion
         local clipped_hls = {}
@@ -741,7 +741,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
         -- If a wrapped line still exceeds column width (single word wider
         -- than column), truncate it to prevent border misalignment
         local kept_byte_len = #display_text
-        if wrap and vim.fn.strdisplaywidth(display_text) > col_widths[col] then
+        if wrap and vim.api.nvim_strwidth(display_text) > col_widths[col] then
           display_text, kept_byte_len = truncate_to_width(display_text, col_widths[col])
           padded, left_pad = pad_cell(display_text, col_widths[col], col_align)
           cell_start = byte_pos + left_pad
@@ -964,7 +964,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
       for col, img in pairs(row_images) do
         -- Calculate the display column offset of this column's content area
         -- (put_image uses display columns, not byte offsets)
-        local col_display_offset = vim.fn.strdisplaywidth(indent)
+        local col_display_offset = vim.api.nvim_strwidth(indent)
         for c = 1, col - 1 do
           col_display_offset = col_display_offset + sep_width + 2 + col_widths[c] -- "│" + " " + width + " "
         end

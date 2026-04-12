@@ -341,7 +341,7 @@ end
 ---@param icon string single icon character
 ---@return string
 local function pad_icon(icon)
-  if vim.fn.strdisplaywidth(icon) == 1 then
+  if vim.api.nvim_strwidth(icon) == 1 then
     return icon .. " "
   end
   return icon
@@ -841,12 +841,12 @@ local function process_bare_urls(text, max_url_width, highlights, links)
         local start_col = #processed
         local display_url
 
-        if vim.fn.strdisplaywidth(url) > max_url_width then
-          local target = max_url_width - vim.fn.strdisplaywidth("…")
+        if vim.api.nvim_strwidth(url) > max_url_width then
+          local target = max_url_width - vim.api.nvim_strwidth("…")
           local current_width = 0
           local byte_pos = 0
           for char in url:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-            local char_width = vim.fn.strdisplaywidth(char)
+            local char_width = vim.api.nvim_strwidth(char)
             if current_width + char_width > target then
               break
             end
@@ -1471,12 +1471,26 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   -- Remove inline HTML comments (<!-- ... -->)
   rendered_text = rendered_text:gsub("<!%-%-.-%-*%-%->", "")
 
-  -- Protect code spans before any inline processing (code spans take precedence)
+  -- Fast path: skip all inline processing for plain text lines that contain
+  -- no markdown-significant characters.  This dramatically speeds up rendering
+  -- of large documents (e.g. classical Chinese texts) where most lines are
+  -- pure prose with no formatting.
+  local needs_inline = rendered_text:find("[%*_~`%[<>=!$\\&#%%]")
+    or rendered_text:find("https?://")
+    or (autolinks and #autolinks > 0)
+    or (footnote_map and next(footnote_map) and rendered_text:find("%[%^"))
+  -- Declare locals before the fast-path goto so they are in scope at ::finalize::
   local code_spans
+  local backslash_escapes
+
+  if not needs_inline then
+    goto finalize
+  end
+
+  -- Protect code spans before any inline processing (code spans take precedence)
   rendered_text, code_spans = protect_code_spans(rendered_text)
 
   -- Escape backslash sequences before inline processing
-  local backslash_escapes
   rendered_text, backslash_escapes = escape_backslashes(rendered_text)
 
   -- Process inline elements (embeds and wikilinks before standard links)
@@ -1513,6 +1527,8 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
 
   -- Decode HTML character references (&amp; &#123; &#x1F; etc.)
   rendered_text = decode_html_entities(rendered_text, highlights, links)
+
+  ::finalize::
 
   -- Add heading icon and highlight
   if heading_level then

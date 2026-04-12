@@ -131,8 +131,34 @@ function M.previewer(opts)
         last_filepath = filepath
       end
 
-      local lines = vim.fn.readfile(filepath)
+      -- Limit source lines to prevent UI freeze on very large Markdown files.
+      -- The telescope preview window only shows a few dozen lines, so
+      -- rendering the entire document is wasteful and can block the UI.
+      local MAX_PREVIEW_LINES = 500
+      local lines = vim.fn.readfile(filepath, "", MAX_PREVIEW_LINES)
       if not lines or #lines == 0 then return end
+
+      -- If the target line is beyond the rendered range, fall back to
+      -- telescope's default previewer (raw markdown with line navigation).
+      if entry.lnum and entry.lnum > MAX_PREVIEW_LINES then
+        if image_state then
+          display_utils.cleanup_images(image_state)
+          image_state = nil
+        end
+        last_filepath = nil
+        local conf = require("telescope.config").values
+        conf.buffer_previewer_maker(filepath, bufnr, {
+          bufname = self.state.bufname,
+          winid = winid,
+          callback = function(buf)
+            pcall(vim.api.nvim_buf_call, buf, function()
+              pcall(vim.api.nvim_win_set_cursor, 0, { entry.lnum, 0 })
+              vim.cmd "normal! zz"
+            end)
+          end,
+        })
+        return
+      end
 
       require("md-render").setup_highlights()
       local preview = require "md-render.preview"
