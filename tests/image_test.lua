@@ -146,6 +146,57 @@ test("calc_display_size: small image stays within bounds", function()
   assert_true(rows <= 20, "rows within bounds")
 end)
 
+-- Aspect ratio preservation tests with mocked cell size
+test("calc_display_size: square image stays square (cell 8x16)", function()
+  image._test_cell_size = { cell_w = 8, cell_h = 16 }
+  local cols, rows = image.calc_display_size(640, 640, 30, 15)
+  -- 640/640 = 1.0; display should also be ~1.0
+  local display_ratio = (cols * 8) / (rows * 16)
+  assert_eq(display_ratio, 1.0, "square image should display as square, got " .. display_ratio)
+  image._test_cell_size = nil
+end)
+
+test("calc_display_size: landscape 4:3 aspect ratio preserved (cell 9x18)", function()
+  image._test_cell_size = { cell_w = 9, cell_h = 18 }
+  local cols, rows = image.calc_display_size(640, 480, 30, 15)
+  local display_ratio = (cols * 9) / (rows * 18)
+  local target_ratio = 640 / 480
+  local error_pct = math.abs(display_ratio - target_ratio) / target_ratio * 100
+  assert_true(error_pct < 5, "4:3 aspect error should be <5%, got " .. string.format("%.1f%%", error_pct))
+  assert_true(cols <= 30, "cols within max")
+  assert_true(rows <= 15, "rows within max")
+  image._test_cell_size = nil
+end)
+
+test("calc_display_size: 750x600 image in table column (cell 9x18)", function()
+  image._test_cell_size = { cell_w = 9, cell_h = 18 }
+  local cols, rows = image.calc_display_size(750, 600, 30, 15)
+  local display_ratio = (cols * 9) / (rows * 18)
+  local target_ratio = 750 / 600
+  local error_pct = math.abs(display_ratio - target_ratio) / target_ratio * 100
+  assert_true(error_pct < 5, "750x600 aspect error should be <5%, got " .. string.format("%.1f%%", error_pct))
+  image._test_cell_size = nil
+end)
+
+test("calc_display_size: 16:9 widescreen aspect ratio (cell 9x18)", function()
+  image._test_cell_size = { cell_w = 9, cell_h = 18 }
+  local cols, rows = image.calc_display_size(1920, 1080, 30, 15)
+  local display_ratio = (cols * 9) / (rows * 18)
+  local target_ratio = 1920 / 1080
+  local error_pct = math.abs(display_ratio - target_ratio) / target_ratio * 100
+  assert_true(error_pct < 8, "16:9 aspect error should be <8%, got " .. string.format("%.1f%%", error_pct))
+  image._test_cell_size = nil
+end)
+
+test("calc_display_size: tall portrait image constrained by max_rows", function()
+  image._test_cell_size = { cell_w = 8, cell_h = 16 }
+  local cols, rows = image.calc_display_size(400, 1200, 30, 15)
+  assert_true(rows <= 15, "rows should not exceed max_rows")
+  assert_true(cols <= 30, "cols should not exceed max_cols")
+  assert_true(cols >= 1, "cols should be at least 1")
+  image._test_cell_size = nil
+end)
+
 -- ============================================================================
 -- transmit_image: escape sequence tests
 -- ============================================================================

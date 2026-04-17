@@ -403,6 +403,7 @@ function M.setup_images(win, content, ns, opts)
     placements = content.image_placements,
     image_ids = {},
     anims = {},
+    tx_dims = {},   -- path → {w, h}: actual transmitted image dimensions
     win = win,
     redraw_timer = nil,
     autocmd_ids = {},
@@ -770,6 +771,9 @@ function M.setup_images(win, content, ns, opts)
             placement.img_w = tx_w
             placement.img_h = tx_h
           end
+          -- Persist transmitted dimensions so rebuilds can restore them
+          -- on fresh placement objects (avoids JPEG→PNG dimension mismatch).
+          state.tx_dims[path] = { placement.img_w, placement.img_h }
           -- Clear all placeholder lines (using original count before recalculation)
           clear_placeholder_text(placement, placeholder_rows)
           state.image_ids[path] = id
@@ -785,7 +789,12 @@ function M.setup_images(win, content, ns, opts)
       image.render_mermaid_async(placement.mermaid_source, function(path)
         if path then
           placement.mermaid_source = nil
-          on_path_ready(path)
+          -- Rebuild content so placeholder rows match actual image dimensions
+          if on_download then
+            on_download()
+          else
+            on_path_ready(path)
+          end
         end
       end)
     elseif placement.src_url then
@@ -919,6 +928,19 @@ function M.update_images(state, win, content)
   for _, placement in ipairs(state.placements) do
     if placement.path then
       if state.image_ids[placement.path] or state.anims[placement.path] then
+        -- Restore transmitted dimensions on fresh placement objects so that
+        -- cropping calculations in put_image use the actual image size (JPEG→PNG
+        -- conversion may have changed dimensions, e.g. EXIF rotation applied).
+        local dims = state.tx_dims[placement.path]
+        if dims then
+          placement.img_w = dims[1]
+          placement.img_h = dims[2]
+        end
+        local anim = state.anims[placement.path]
+        if anim then
+          if anim.frame_w then placement.img_w = anim.frame_w end
+          if anim.frame_h then placement.img_h = anim.frame_h end
+        end
         -- Already transmitted — just clear placeholder text so it doesn't
         -- show through the graphics overlay.
         state.clear_placeholder_text(placement, placement.rows)

@@ -127,6 +127,7 @@ local TIOCGWINSZ = (vim.fn.has("mac") == 1 or vim.fn.has("bsd") == 1) and 0x4008
 
 ---@return { cell_w: number, cell_h: number }?
 function M.get_cell_size()
+  if M._test_cell_size then return M._test_cell_size end
   ensure_ffi()
   local sz = ffi.new("winsize")
   -- Try stdout (fd 1) first; after :restart it may be /dev/null,
@@ -993,6 +994,36 @@ function M.ensure_png_async(path, callback)
   )
 end
 
+--- Choose the rounding direction (floor vs ceil) for the dependent dimension
+--- that best preserves the original pixel aspect ratio.
+---@param fixed_cells integer  the already-determined cell count (cols or rows)
+---@param fixed_cell_px number  pixel size of the fixed dimension's cell
+---@param dep_px number  target pixel size of the dependent dimension
+---@param dep_cell_px number  pixel size of the dependent dimension's cell
+---@param dep_max integer  upper bound for the dependent cell count
+---@param img_w integer  original image width
+---@param img_h integer  original image height
+---@param fixed_is_cols boolean  true when fixed dimension is columns
+---@return integer
+local function best_round(fixed_cells, fixed_cell_px, dep_px, dep_cell_px, dep_max, img_w, img_h, fixed_is_cols)
+  local r_floor = math.max(1, math.floor(dep_px / dep_cell_px))
+  local r_ceil = math.min(dep_max, math.ceil(dep_px / dep_cell_px))
+  if r_floor == r_ceil then return r_floor end
+  local target = img_w / img_h
+  local fl_ratio, cl_ratio
+  if fixed_is_cols then
+    fl_ratio = (fixed_cells * fixed_cell_px) / (r_floor * dep_cell_px)
+    cl_ratio = (fixed_cells * fixed_cell_px) / (r_ceil * dep_cell_px)
+  else
+    fl_ratio = (r_floor * dep_cell_px) / (fixed_cells * fixed_cell_px)
+    cl_ratio = (r_ceil * dep_cell_px) / (fixed_cells * fixed_cell_px)
+  end
+  if math.abs(fl_ratio - target) <= math.abs(cl_ratio - target) then
+    return r_floor
+  end
+  return r_ceil
+end
+
 ---@param img_w integer
 ---@param img_h integer
 ---@param max_cols integer
@@ -1001,19 +1032,31 @@ end
 function M.calc_display_size(img_w, img_h, max_cols, max_rows)
   local cell = M.get_cell_size()
   if not cell then return math.min(20, max_cols), math.min(10, max_rows) end
-  local cols = math.ceil(img_w / cell.cell_w)
-  local rows = math.ceil(img_h / cell.cell_h)
-  if cols > max_cols then
-    local scale = max_cols / cols
-    cols = max_cols
-    rows = math.ceil(rows * scale)
+
+  -- Work in pixel space to minimize aspect-ratio distortion from rounding.
+  local max_w = max_cols * cell.cell_w
+  local max_h = max_rows * cell.cell_h
+
+  -- Scale to fit within bounds (don't upscale)
+  local scale = math.min(max_w / img_w, max_h / img_h, 1.0)
+
+  local pixel_w = img_w * scale
+  local pixel_h = img_h * scale
+
+  -- Determine the constraining dimension and compute the other
+  -- with optimal rounding to best preserve the aspect ratio.
+  local cols, rows
+  if max_w / img_w <= max_h / img_h then
+    -- Width-constrained: fix cols, compute rows
+    cols = math.min(max_cols, math.ceil(pixel_w / cell.cell_w))
+    rows = best_round(cols, cell.cell_w, pixel_h, cell.cell_h, max_rows, img_w, img_h, true)
+  else
+    -- Height-constrained: fix rows, compute cols
+    rows = math.min(max_rows, math.ceil(pixel_h / cell.cell_h))
+    cols = best_round(rows, cell.cell_h, pixel_w, cell.cell_w, max_cols, img_w, img_h, false)
   end
-  if rows > max_rows then
-    local scale = max_rows / rows
-    rows = max_rows
-    cols = math.ceil(cols * scale)
-  end
-  return cols, rows
+
+  return math.max(1, cols), math.max(1, rows)
 end
 
 -- ============================================================================
