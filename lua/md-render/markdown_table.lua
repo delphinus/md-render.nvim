@@ -319,7 +319,7 @@ end
 ---@return string[] lines
 ---@return MdRender.Highlight.Group[][] per_line_highlights
 ---@return {line: integer, col_start: integer, col_end: integer, url: string}[][] per_line_links
-function MarkdownTable.render(parsed_table, indent, max_width, expanded)
+function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir)
   local out_lines = {}
   local out_highlights = {}
   local out_links = {}
@@ -394,7 +394,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded)
   do
     local image_mod = require "md-render.image"
     if image_mod.supports_kitty() then
-      local buf_dir = vim.fn.expand("%:p:h")
+      buf_dir = buf_dir or vim.fn.expand("%:p:h")
       local indent_width = vim.api.nvim_strwidth(indent)
       local overhead = indent_width + num_cols * (sep_width + 2) + sep_width
       local effective_max = max_width and max_width < 1e6 and max_width or 1e6

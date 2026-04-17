@@ -392,7 +392,7 @@ end
 ---@param max_width integer
 ---@param repo_base_url? string
 ---@param autolinks? MdRender.Autolink[]
-function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url, autolinks, expanded)
+function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url, autolinks, expanded, buf_dir)
   local markdown_table = require "md-render.markdown_table"
   local parsed = markdown_table.parse(table_lines, repo_base_url, autolinks)
   if not parsed then
@@ -403,7 +403,7 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
     return
   end
   local lines, per_line_hls, per_line_links, tbl_image_placements =
-    markdown_table.render(parsed, indent, max_width, expanded)
+    markdown_table.render(parsed, indent, max_width, expanded, buf_dir)
   local base_line = #self.lines
   for i, line in ipairs(lines) do
     self:add_line(line, #per_line_hls[i] > 0 and per_line_hls[i] or nil)
@@ -897,6 +897,7 @@ function ContentBuilder:render_document(lines, opts)
   local fold_state = opts.fold_state or {}
   local expand_state = opts.expand_state or {}
   local source_line_offset = opts.source_line_offset or 0
+  local buf_dir = opts.buf_dir or vim.fn.expand("%:p:h")
 
   local in_code_block = false
   local code_block_lang = nil
@@ -952,7 +953,7 @@ function ContentBuilder:render_document(lines, opts)
     if #table_buf > 0 then
       local lines_before_tbl = #self.lines
       local tbl_expanded = table_buf_start_idx and expand_state[table_buf_start_idx]
-      self:add_table(table_buf, indent, max_width, repo_base_url, autolinks, tbl_expanded or false)
+      self:add_table(table_buf, indent, max_width, repo_base_url, autolinks, tbl_expanded or false, buf_dir)
       local lines_added = #self.lines - lines_before_tbl
       lines_shown = lines_shown + lines_added
       local has_truncation = false
@@ -1534,7 +1535,7 @@ function ContentBuilder:render_document(lines, opts)
               lines_shown = lines_shown + 1
             end
             local tbl_lines_before = #self.lines
-            self:add_table(pipe_lines, indent, max_width, repo_base_url, autolinks)
+            self:add_table(pipe_lines, indent, max_width, repo_base_url, autolinks, nil, buf_dir)
             lines_shown = lines_shown + (#self.lines - tbl_lines_before)
             if in_details and details_summary_rendered and not skip_details_body then
               apply_details_body_prefix(tbl_lines_before, #self.lines)
@@ -2165,7 +2166,6 @@ function ContentBuilder:render_document(lines, opts)
 
         for _, img_entry in ipairs(img_entries) do
           local image = require "md-render.image"
-          local buf_dir = vim.fn.expand("%:p:h")
 
           -- Skip badge/shield URLs entirely — they are too small to render
           -- as block images and SVG badges cannot be displayed via Kitty protocol.
@@ -2528,6 +2528,7 @@ end
 ---@field fold_state? table<integer, boolean> Callout fold state by source line
 ---@field expand_state? table<integer, boolean> Expandable region state by block id
 ---@field source_line_offset? integer Offset added to src_idx for source_line_map (default: 0)
+---@field buf_dir? string Directory of the source buffer for resolving relative paths (default: vim.fn.expand("%:p:h"))
 
 local M = {}
 M.ContentBuilder = ContentBuilder

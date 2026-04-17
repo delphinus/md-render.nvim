@@ -123,6 +123,7 @@ MdPreview.build_content = function(lines, opts)
     expand_state = opts.expand_state,
     autolinks = opts.autolinks,
     source_line_offset = body_start - 1,
+    buf_dir = opts.buf_dir,
   })
 
   return b:result()
@@ -149,6 +150,7 @@ MdPreview.show = function(opts)
   local fold_state = {}
   local expand_state = {}
   opts = opts or {}
+  opts.buf_dir = vim.fn.fnamemodify(name, ":h")
 
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace "md_render_preview"
@@ -304,6 +306,7 @@ MdPreview.show_tab = function(opts)
   local fold_state = {}
   local expand_state = {}
   opts = opts or {}
+  opts.buf_dir = vim.fn.fnamemodify(name, ":h")
 
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace "md_render_preview_tab"
@@ -464,6 +467,7 @@ MdPreview.show_pager = function(opts)
   local fold_state = {}
   local expand_state = {}
   opts = opts or {}
+  opts.buf_dir = vim.fn.fnamemodify(name, ":h")
 
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace "md_render_pager"
@@ -768,7 +772,7 @@ MdPreview.show_demo = function()
 
   local fold_state = {}
   local expand_state = {}
-  local opts = {}
+  local opts = { buf_dir = plugin_root }
   local image_state = nil
 
   local buf = vim.api.nvim_create_buf(false, true)
