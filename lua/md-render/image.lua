@@ -454,7 +454,7 @@ function M.render_mermaid(source)
   local result = vim.system(cmd, { text = true, timeout = 30000 }):wait()
   os.remove(tmp_input)
 
-  if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
+  if vim.fn.filereadable(cache_path) == 1 then
     return cache_path
   end
   return nil
@@ -490,7 +490,7 @@ function M.render_mermaid_async(source, callback)
   vim.system(cmd, { text = true, timeout = 30000 }, function(result)
     vim.schedule(function()
       os.remove(tmp_input)
-      if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
+      if vim.fn.filereadable(cache_path) == 1 then
         callback(cache_path)
       else
         callback(nil)

@@ -948,6 +948,8 @@ function M.update_images(state, win, content)
         -- New image: transmit, clear placeholder, and register in state
         state.process_placement(placement)
       end
+    elseif placement.mermaid_source or placement.src_url then
+      state.process_placement(placement)
     end
   end
   image.flush_batch()
