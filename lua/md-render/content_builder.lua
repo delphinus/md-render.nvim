@@ -435,6 +435,45 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
   end
 end
 
+--- Emit an image/video header line (icon + display name) with wrapping.
+---@param self MdRender.ContentBuilder
+---@param indent string
+---@param img_icon string Padded icon string
+---@param icon_hl? string Highlight group for the icon
+---@param display_name string Alt text or filename
+---@param max_width integer
+---@param name_hl string Highlight group for the display name text
+---@return integer lines_added Number of lines emitted
+function ContentBuilder:_emit_image_header(indent, img_icon, icon_hl, display_name, max_width, name_hl)
+  local icon_start = #indent
+  local icon_end = icon_start + #img_icon
+  local icon_display_width = vim.api.nvim_strwidth(img_icon)
+  local cont_width = icon_display_width + 1
+  local available = math.max(1, max_width - vim.api.nvim_strwidth(indent) - cont_width)
+
+  local wrapped, _ = wrap_words(display_name, available)
+
+  for idx, segment in ipairs(wrapped) do
+    if idx == 1 then
+      local header = indent .. img_icon .. " " .. segment
+      local hls = {
+        { col = icon_end, end_col = #header, hl = name_hl },
+      }
+      if icon_hl then
+        table.insert(hls, 1, { col = icon_start, end_col = icon_end, hl = icon_hl })
+      end
+      self:add_line(header, hls)
+    else
+      local cont_pad = string.rep(" ", cont_width)
+      local line = indent .. cont_pad .. segment
+      self:add_line(line, {
+        { col = #indent + #cont_pad, end_col = #line, hl = name_hl },
+      })
+    end
+  end
+  return #wrapped
+end
+
 --- Add a markdown-rendered line with wrapping support
 ---@param self MdRender.ContentBuilder
 ---@param text string
@@ -1320,17 +1359,66 @@ function ContentBuilder:render_document(lines, opts)
       if in_figure then
         if line:match "^%s*</figure>%s*$" then
           in_figure = false
-          -- Render figcaption centered (captured during figure body processing)
+          -- Render figcaption centered (captured during figure body processing).
+          -- Process inline markdown so tags like <em>/<strong> render properly,
+          -- and wrap long captions instead of overflowing the window.
           if figure_caption then
-            local caption_text = figure_caption
-            local caption_width = vim.api.nvim_strwidth(caption_text)
-            local pad = math.max(0, math.floor((max_width - caption_width) / 2) - #indent)
-            local byte_start = #indent + pad
-            local padded_caption = indent .. string.rep(" ", pad) .. caption_text
-            self:add_line(padded_caption, {
-              { col = byte_start, end_col = byte_start + #caption_text, hl = "Comment" },
+            local rendered_text, md_highlights, md_links =
+              markdown.render(figure_caption, repo_base_url, autolinks, ref_links, footnote_map)
+            -- Apply Comment as the base highlight covering the whole caption
+            table.insert(md_highlights, 1, {
+              col = 0,
+              end_col = #rendered_text,
+              hl = "Comment",
             })
-            lines_shown = lines_shown + 1
+
+            local indent_width = vim.api.nvim_strwidth(indent)
+            local available = math.max(1, max_width - indent_width)
+            local wrapped_lines, line_starts
+            if vim.api.nvim_strwidth(rendered_text) > available then
+              wrapped_lines, line_starts = wrap_words(rendered_text, available)
+            else
+              wrapped_lines, line_starts = { rendered_text }, { 0 }
+            end
+
+            local base_line = #self.lines
+            for idx, wline in ipairs(wrapped_lines) do
+              local line_width = vim.api.nvim_strwidth(wline)
+              local pad = math.max(0, math.floor((max_width - line_width) / 2) - indent_width)
+              local prefix_len = #indent + pad
+              local padded = indent .. string.rep(" ", pad) .. wline
+              local line_start = line_starts[idx] or 0
+              local line_end_pos = line_start + #wline
+
+              local line_hls = {}
+              for _, hl in ipairs(md_highlights) do
+                if hl.end_col > line_start and hl.col < line_end_pos then
+                  local local_start = math.max(0, hl.col - line_start)
+                  local local_end = math.min(#wline, hl.end_col - line_start)
+                  table.insert(line_hls, {
+                    col = prefix_len + local_start,
+                    end_col = prefix_len + local_end,
+                    hl = hl.hl,
+                  })
+                end
+              end
+              self:add_line(padded, #line_hls > 0 and line_hls or nil)
+
+              for _, link in ipairs(md_links) do
+                if link.col_end > line_start and link.col_start < line_end_pos then
+                  local local_start = math.max(0, link.col_start - line_start)
+                  local local_end = math.min(#wline, link.col_end - line_start)
+                  table.insert(self.link_metadata, {
+                    line = base_line + idx - 1,
+                    col_start = prefix_len + local_start,
+                    col_end = prefix_len + local_end,
+                    url = link.url,
+                  })
+                end
+              end
+
+              lines_shown = lines_shown + 1
+            end
             figure_caption = nil
           end
           goto continue
@@ -2242,16 +2330,7 @@ function ContentBuilder:render_document(lines, opts)
             if display_cols and display_rows then
               local raw_icon, icon_hl = icons.get_image_icon(img_entry.path)
               local img_icon = pad_icon(raw_icon)
-              local icon_start = #indent
-              local icon_end = icon_start + #img_icon
-              local header = indent .. img_icon .. " " .. display_name
-              local hls = {
-                { col = icon_end, end_col = #header, hl = "Comment" },
-              }
-              if icon_hl then
-                table.insert(hls, 1, { col = icon_start, end_col = icon_end, hl = icon_hl })
-              end
-              self:add_line(header, hls)
+              local header_lines_added = self:_emit_image_header(indent, img_icon, icon_hl, display_name, max_width, "Comment")
               local img_start_line = #self.lines
               -- Center the image horizontally
               local img_col = math.max(0, math.floor((max_width - display_cols) / 2))
@@ -2300,7 +2379,7 @@ function ContentBuilder:render_document(lines, opts)
                 src_url = src_url,
                 video = is_video,
               })
-              lines_shown = lines_shown + 1 + display_rows
+              lines_shown = lines_shown + header_lines_added + display_rows
               handled = true
             end
           end
@@ -2309,17 +2388,8 @@ function ContentBuilder:render_document(lines, opts)
             -- Fallback: text-only display
             local raw_icon, icon_hl = icons.get_image_icon(img_entry.path)
             local img_icon = pad_icon(raw_icon)
-            local icon_start = #indent
-            local icon_end = icon_start + #img_icon
-            local fallback = indent .. img_icon .. " " .. display_name
-            local fb_hls = {
-              { col = icon_end, end_col = #fallback, hl = "Underlined" },
-            }
-            if icon_hl then
-              table.insert(fb_hls, 1, { col = icon_start, end_col = icon_end, hl = icon_hl })
-            end
-            self:add_line(fallback, fb_hls)
-            lines_shown = lines_shown + 1
+            local fb_lines = self:_emit_image_header(indent, img_icon, icon_hl, display_name, max_width, "Underlined")
+            lines_shown = lines_shown + fb_lines
             handled = true
           end
           ::continue_img::

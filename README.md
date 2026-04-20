@@ -4,16 +4,9 @@
 
 A Markdown rendering engine for Neovim. Transforms raw Markdown into richly highlighted, interactive content — right inside your editor. Supports floating windows, tab views, and a pager mode for `less`-like usage from the command line.
 
-<table>
-<tr>
-<td width="50%"><img src="assets/screenshot-rendering.png" width="672" height="751" alt="Markdown rendering features" /></td>
-<td width="50%"><img src="https://github.com/user-attachments/assets/6c51f971-84bb-49fe-aaff-21db40712187" width="985" height="750" alt="Images, video, and Mermaid diagrams" /></td>
-</tr>
-<tr>
-<td align="center"><em>Inline formatting, tables, callouts, code blocks, and CJK line-breaking</em></td>
-<td align="center"><em>Local/web images (including animated GIF), video, and Mermaid diagrams</em></td>
-</tr>
-</table>
+<figure align="center">
+  <img src="https://github.com/user-attachments/assets/6c51f971-84bb-49fe-aaff-21db40712187" width="900" height="685" alt="md-render.nvim showcase: inline formatting, tables, callouts, code blocks, images, video, and Mermaid diagrams" />
+</figure>
 
 ## Highlights
 
@@ -28,6 +21,11 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **Clickable links** — mouse click to open URLs; OSC 8 hyperlink support for compatible terminals
 - **`<details>` support** — collapsible sections with click-to-toggle, respecting the `open` attribute
 - **Library API** — use the rendering engine programmatically from your own plugins
+
+<figure align="center">
+  <img src="assets/screenshot-rendering.png" width="672" height="751" alt="Inline formatting, tables, callouts, code blocks, and CJK line-breaking" />
+  <figcaption><em>Static preview: inline formatting, tables, callouts, code blocks, and CJK line-breaking</em></figcaption>
+</figure>
 
 ## Try it yourself
 
@@ -161,14 +159,10 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 
 ### Pager mode
 
-<table>
-<tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" width="682" height="446" alt="Pager mode" /></td>
-</tr>
-<tr>
-<td align="center"><em>Pager mode — browse Markdown like <code>less</code></em></td>
-</tr>
-</table>
+<figure>
+  <img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" width="682" height="446" alt="Pager mode" />
+  <figcaption><em>Pager mode — browse Markdown like <code>less</code></em></figcaption>
+</figure>
 
 Use `MdRenderPager` to view Markdown files like `less`:
 
@@ -185,14 +179,10 @@ mdless README.md
 
 ## Telescope Integration
 
-<table>
-<tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" width="472" height="457" alt="Telescope integration" /></td>
-</tr>
-<tr>
-<td align="center"><em>Telescope previewer with md-render</em></td>
-</tr>
-</table>
+<figure>
+  <img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" width="472" height="457" alt="Telescope integration" />
+  <figcaption><em>Telescope previewer with md-render</em></figcaption>
+</figure>
 
 ### Previewer
 
