@@ -1,13 +1,13 @@
 # md-render.nvim
 
-[日本語版はこちら](#日本語)
+[日本語版はこちら / Japanese version](README.ja.md) — Full Japanese/CJK support with kinsoku shori and BudouX phrase segmentation.
 
 A Markdown rendering engine for Neovim. Transforms raw Markdown into richly highlighted, interactive content — right inside your editor. Supports floating windows, tab views, and a pager mode for `less`-like usage from the command line.
 
 <table>
 <tr>
 <td width="50%"><img src="assets/screenshot-rendering.png" width="672" height="751" alt="Markdown rendering features" /></td>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" width="686" height="750" alt="Images, video, and Mermaid diagrams" /></td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/6c51f971-84bb-49fe-aaff-21db40712187" width="985" height="750" alt="Images, video, and Mermaid diagrams" /></td>
 </tr>
 <tr>
 <td align="center"><em>Inline formatting, tables, callouts, code blocks, and CJK line-breaking</em></td>
@@ -29,15 +29,33 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **`<details>` support** — collapsible sections with click-to-toggle, respecting the `open` attribute
 - **Library API** — use the rendering engine programmatically from your own plugins
 
+## Try it yourself
+
+The repo bundles a showcase Markdown file demonstrating every feature. After cloning, view it with the pager:
+
+```bash
+git clone https://github.com/delphinus/md-render.nvim
+cd md-render.nvim
+nvim +MdRenderPager assets/showcase.md
+```
+
+Or, once the plugin is installed, run `:MdRenderDemo` to see a built-in demo of every supported notation.
+
 ## Requirements
 
 - Neovim >= 0.10
-- A terminal that supports the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) (required for inline images):
-  - [WezTerm](https://wezfurlong.org/wezterm/)
-  - [Kitty](https://sw.kovidgoyal.net/kitty/)
-  - [Ghostty](https://ghostty.org/)
 
-### Optional dependencies
+> [!IMPORTANT]
+> A terminal that supports the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is required for inline images and video:
+>
+> - [WezTerm](https://wezfurlong.org/wezterm/)
+> - [Kitty](https://sw.kovidgoyal.net/kitty/)
+> - [Ghostty](https://ghostty.org/)
+>
+> Without a compatible terminal, all other features (formatting, tables, callouts, code blocks, CJK wrapping) still work — only inline media is unavailable.
+
+<details>
+<summary><strong>Optional dependencies</strong></summary>
 
 | Dependency | Purpose | Fallback |
 |---|---|---|
@@ -56,6 +74,8 @@ For image/video format conversion and animation support, the plugin tries tools 
 | Static image conversion (JPEG/WebP → PNG) | `sips` (macOS) | `ffmpeg` | `magick` |
 | Animated GIF frame extraction | `ffmpeg` | `magick` | — |
 | Video frame extraction | `ffmpeg` | — | — |
+
+</details>
 
 ## Installation
 
@@ -76,6 +96,43 @@ For image/video format conversion and animation support, the plugin tries tools 
   },
 }
 ```
+
+### vim.pack (Neovim 0.12+)
+
+```lua
+vim.pack.add({
+  "https://github.com/delphinus/md-render.nvim",
+  -- optional:
+  "https://github.com/nvim-tree/nvim-web-devicons",
+  "https://github.com/delphinus/budoux.lua",
+})
+```
+
+### mini.deps
+
+```lua
+local add = MiniDeps.add
+add({
+  source = "delphinus/md-render.nvim",
+  depends = {
+    "nvim-tree/nvim-web-devicons", -- optional
+    "delphinus/budoux.lua",        -- optional
+  },
+})
+```
+
+## Comparison with similar plugins
+
+<details>
+<summary><strong>Why not other Markdown previewers?</strong></summary>
+
+- **[markdown-preview.nvim](https://github.com/iamcco/markdown-preview.nvim)** — Excellent for true browser-quality rendering, but requires a browser context. md-render runs entirely inside the terminal.
+- **[render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim)** — Beautiful in-buffer rendering, but modifies the editing buffer itself. md-render keeps your editing buffer untouched and renders into a separate floating/tab window or pager view.
+- **[mcat](https://github.com/Skardyy/mcat)** — Closest in spirit (a pure-terminal Markdown renderer), but lacks complex layout features like auto-folding tables, click-to-toggle folds, and CJK word wrapping.
+
+md-render.nvim aims to be a dedicated previewer that runs entirely in the terminal, with rich layout support and first-class CJK handling.
+
+</details>
 
 ## Keymaps
 
@@ -201,9 +258,47 @@ require("snacks").setup({
 })
 ```
 
-## Usage
+## FAQ / Troubleshooting
 
-### As a Library
+<details>
+<summary><strong>Images don't show — only their alt text or filenames appear</strong></summary>
+
+Inline image display requires a terminal that supports the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/). Verify you're using **WezTerm**, **Kitty**, or **Ghostty**. tmux and other multiplexers may strip the image escape sequences unless explicitly configured to pass them through.
+
+</details>
+
+<details>
+<summary><strong>Videos appear as a single static frame</strong></summary>
+
+Video frame extraction requires `ffmpeg` to be installed and available in `$PATH`. Without it, the plugin falls back to displaying just the first frame as a still image. Install it via your package manager (e.g. `brew install ffmpeg`).
+
+</details>
+
+<details>
+<summary><strong>Mermaid diagrams don't render</strong></summary>
+
+Mermaid rendering requires the `mmdc` binary from [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli). If `mmdc` isn't installed globally, the plugin falls back to `npx -y @mermaid-js/mermaid-cli`, which is significantly slower on first invocation. Install it globally with `npm install -g @mermaid-js/mermaid-cli` for faster rendering.
+
+</details>
+
+<details>
+<summary><strong>Japanese text wrapping looks unnatural</strong></summary>
+
+By default, md-render applies JIS X 4051 kinsoku shori (forbidden line-break rules) at the character level. For phrase-level segmentation that respects natural word boundaries in Japanese, install [budoux.lua](https://github.com/delphinus/budoux.lua) — the plugin will automatically detect and use it.
+
+</details>
+
+<details>
+<summary><strong>Code blocks have no syntax highlighting</strong></summary>
+
+Syntax highlighting requires the corresponding treesitter parser to be installed. For example, to highlight Lua code blocks, install the `lua` parser via `:TSInstall lua` (with [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter)) or via Neovim 0.11+'s built-in parser management.
+
+</details>
+
+## Usage as a library
+
+<details>
+<summary><strong>Programmatic API</strong></summary>
 
 Use the rendering engine to build highlighted content programmatically:
 
@@ -237,6 +332,8 @@ local win = vim.api.nvim_get_current_win()
 md.display_utils.setup_images(win, content, ns)
 ```
 
+</details>
+
 ## Development
 
 ### Running Tests
@@ -250,255 +347,3 @@ This runs all `tests/*_test.lua` files via `nvim --headless`. New test files mat
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-# 日本語
-
-Neovim で Markdown をリッチにレンダリングするエンジンです。生の Markdown テキストをハイライト付きのインタラクティブなコンテンツに変換して、エディタ内で表示します。フローティングウィンドウ、タブ表示、コマンドラインからの `less` ライクなページャーモードに対応しています。
-
-<table>
-<tr>
-<td width="50%"><img src="assets/screenshot-rendering.png" width="672" height="751" alt="Markdown レンダリング機能" /></td>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3126fce6-db21-452a-b40b-67626e5ce5b1" width="686" height="750" alt="Images, video, and Mermaid diagrams" /></td>
-</tr>
-<tr>
-<td align="center"><em>インライン書式、テーブル、コールアウト、コードブロック、CJK 折り返し</em></td>
-<td align="center"><em>ローカル/Web 画像（アニメーション GIF 含む）、動画、Mermaid ダイアグラム</em></td>
-</tr>
-</table>
-
-## 主な機能
-
-- **リッチなインライン書式** — 太字、取り消し線、インラインコード、リンク、Obsidian `==highlight==` をその場でレンダリング
-- **テーブル** — 罫線文字による描画、列アラインメント、比例サイズ調整、セル内インライン書式
-- **コールアウト & 折りたたみ** — GitHub / Obsidian のアラートタイプに対応。色付きボーダー・アイコン・クリックで折りたたみ切り替え
-- **コードブロック** — treesitter シンタックスハイライト付きフェンスコードブロック。省略時はクリックで展開
-- **画像** — ローカルおよび Web 画像（PNG, JPEG, WebP, GIF, アニメーション GIF）をターミナルグラフィクスプロトコルでインライン表示
-- **動画** — ローカルおよび Web 動画（MP4, WebM, MOV, AVI, MKV, M4V）をアニメーションフレームとしてインライン再生
-- **Mermaid ダイアグラム** — 画像としてインライン表示
-- **CJK 対応ワードラップ** — JIS X 4051 禁則処理 + [budoux.lua](https://github.com/delphinus/budoux.lua) によるオプションのフレーズ分割
-- **クリック可能リンク** — マウスクリックで URL を開く。対応ターミナルでは OSC 8 ハイパーリンク
-- **`<details>` 対応** — クリックで折りたたみ可能なセクション。`open` 属性にも対応
-- **ライブラリ API** — レンダリングエンジンを自作プラグインからプログラム的に利用可能
-
-## 必要要件
-
-- Neovim >= 0.10
-- [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) に対応したターミナル（画像のインライン表示に必要）：
-  - [WezTerm](https://wezfurlong.org/wezterm/)
-  - [Kitty](https://sw.kovidgoyal.net/kitty/)
-  - [Ghostty](https://ghostty.org/)
-
-### オプション依存
-
-| 依存 | 用途 | フォールバック |
-|---|---|---|
-| [curl](https://curl.se/) | Web 画像・動画のダウンロード | `set_download_fn()` でカスタム関数を指定可 |
-| [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG 変換、アニメーション GIF / 動画のフレーム展開 | ImageMagick にフォールバック（画像のみ。動画には ffmpeg が必要） |
-| [ImageMagick](https://imagemagick.org/) (`magick`) | JPEG/WebP → PNG、アニメーション GIF フレーム展開 | macOS では `sips` が静止画変換を処理。アニメーション GIF には ffmpeg か magick が必要 |
-| [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Mermaid ダイアグラムを画像として描画 | `npx -y @mermaid-js/mermaid-cli` にフォールバック |
-| [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK フレーズ単位の改行（BudouX） | 1文字ずつ分割（禁則処理は維持） |
-| Treesitter パーサー | コードブロックのシンタックスハイライト | ハイライトなしで表示 |
-| [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) または [mini.icons](https://github.com/echasnovski/mini.icons) | コードブロックヘッダのファイルタイプアイコン | 内蔵アイコンテーブル |
-
-画像・動画のフォーマット変換とアニメーションのサポートでは、以下の優先順位でツールを検索します：
-
-| ユースケース | 1st | 2nd | 3rd |
-|---|---|---|---|
-| 静止画変換（JPEG/WebP → PNG） | `sips`（macOS） | `ffmpeg` | `magick` |
-| アニメーション GIF フレーム展開 | `ffmpeg` | `magick` | — |
-| 動画フレーム展開 | `ffmpeg` | — | — |
-
-## インストール
-
-### lazy.nvim
-
-```lua
-{
-  "delphinus/md-render.nvim",
-  version = "*",
-  dependencies = {
-    { "nvim-tree/nvim-web-devicons", version = "*" }, -- optional: file type icons in code blocks
-    { "delphinus/budoux.lua", version = "*" }, -- optional: CJK phrase-level line breaking
-  },
-  keys = {
-    { "<leader>mp", "<Plug>(md-render-preview)",     desc = "Markdown preview (toggle)" },
-    { "<leader>mt", "<Plug>(md-render-preview-tab)", desc = "Markdown preview in tab (toggle)" },
-    { "<leader>md", "<Plug>(md-render-demo)",        desc = "Markdown render demo" },
-  },
-}
-```
-
-## キーマップ
-
-このプラグインは `<Plug>` マッピングを提供しますが、デフォルトのキーバインドは設定**しません**。自分でマッピングしてください：
-
-```lua
-vim.keymap.set("n", "<leader>mp", "<Plug>(md-render-preview)",     { desc = "Markdown preview (toggle)" })
-vim.keymap.set("n", "<leader>mt", "<Plug>(md-render-preview-tab)", { desc = "Markdown preview in tab (toggle)" })
-vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Markdown render demo" })
-```
-
-| `<Plug>` マッピング | 説明 |
-|---|---|
-| `<Plug>(md-render-preview)` | 現在の Markdown バッファのフローティングプレビューをトグル |
-| `<Plug>(md-render-preview-tab)` | 現在の Markdown バッファのタブプレビューをトグル |
-| `<Plug>(md-render-demo)` | 対応する全 Markdown 記法のデモウィンドウを表示 |
-
-## コマンド
-
-| コマンド | 説明 |
-|---|---|
-| `:MdRender` | フローティングプレビューをトグル |
-| `:MdRenderTab` | タブプレビューをトグル |
-| `:MdRenderPager` | ページャーモード — フルスクリーン、装飾なし、`q` で Neovim 終了 |
-| `:MdRenderDemo` | 対応する全 Markdown 記法のデモウィンドウを表示 |
-
-### ページャーモード
-
-<table>
-<tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/3c8d94a2-7a7d-4d99-ac9c-1b69870fee67" width="682" height="446" alt="ページャーモード" /></td>
-</tr>
-<tr>
-<td align="center"><em>ページャーモード — Markdown を <code>less</code> のように閲覧</em></td>
-</tr>
-</table>
-
-`MdRenderPager` を使うと Markdown ファイルを `less` のように閲覧できます：
-
-```bash
-nvim +MdRenderPager README.md
-```
-
-シェルエイリアスを設定すると便利です：
-
-```bash
-alias mdless='nvim +MdRenderPager'
-mdless README.md
-```
-
-## Telescope 連携
-
-<table>
-<tr>
-<td width="50%"><img src="https://github.com/user-attachments/assets/29fff5f5-d437-46d7-b92c-3d1a4bb21dd8" width="472" height="457" alt="Telescope 連携" /></td>
-</tr>
-<tr>
-<td align="center"><em>md-render による Telescope プレビュー</em></td>
-</tr>
-</table>
-
-### Previewer
-
-`require("md-render.telescope").previewer()` で作成した previewer は、任意の
-[telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker
-（builtin、extension、カスタム問わず）に渡せます：
-
-```lua
-local previewer = require("md-render.telescope").previewer()
-
-require("telescope.builtin").find_files({ previewer = previewer })
-require("telescope").extensions.egrepify.egrepify({ previewer = previewer })
-```
-
-ファイルの種類に応じて自動的に表示方法を切り替えます：
-
-| ファイル種別 | 動作 |
-|---|---|
-| Markdown (`.md`, `.markdown`) | md-render によるフルレンダリング（ハイライト、リンク、画像） |
-| 画像・動画 (PNG, JPEG, WebP, GIF, MP4, ...) | Kitty graphics protocol でインライン表示 |
-| その他 | telescope のデフォルト previewer（シンタックスハイライト付き）にフォールバック |
-
-grep 系の picker では、マッチした行に自動スクロールします。
-
-### `:Telescope md_render` Extension
-
-builtin picker 用のショートカットです。`telescope.builtin` の picker を md-render
-previewer 付きでラップします。引数はすべてそのまま渡されます：
-
-```vim
-:Telescope md_render find_files
-:Telescope md_render live_grep cwd=~/notes
-:Telescope md_render grep_string search=TODO
-```
-
-## Snacks.nvim 連携
-
-`require("md-render.snacks").preview()` で
-[snacks.nvim](https://github.com/folke/snacks.nvim) の picker 用プレビュー関数を
-作成します。telescope 版と同じく Markdown、画像・動画、その他のファイルに対応します。
-
-グローバルに全 picker へ適用：
-
-```lua
-require("snacks").setup({
-  picker = {
-    preview = require("md-render.snacks").preview(),
-  },
-})
-```
-
-source ごとに個別設定：
-
-```lua
-require("snacks").setup({
-  picker = {
-    sources = {
-      files = { preview = require("md-render.snacks").preview() },
-      grep = { preview = require("md-render.snacks").preview() },
-    },
-  },
-})
-```
-
-## 使い方
-
-### ライブラリとして使う
-
-レンダリングエンジンをプログラムから利用してハイライト付きコンテンツを構築できます：
-
-```lua
-local md = require("md-render")
-
--- 1 行の Markdown をレンダリング
-local text, highlights, links = md.Markdown.render("**bold** and [link](https://example.com)")
-
--- ドキュメント全体のコンテンツを構築
-local ContentBuilder = md.ContentBuilder
-local b = ContentBuilder.new()
-b:render_document(lines, {
-  max_width = 80,
-  indent = "  ",
-  repo_base_url = "https://github.com/user/repo",
-  autolinks = {
-    { key_prefix = "JIRA-", url_template = "https://jira.example.com/browse/JIRA-<num>" },
-  },
-})
-local content = b:result()
-
--- バッファに適用
-local buf = vim.api.nvim_create_buf(false, true)
-local ns = vim.api.nvim_create_namespace("my_ns")
-md.display_utils.apply_content_to_buffer(buf, ns, content)
-
--- 画像を表示（Kitty Graphics Protocol 対応ターミナルが必要）
--- ウィンドウを閉じると自動的にクリーンアップされます。
-local win = vim.api.nvim_get_current_win()
-md.display_utils.setup_images(win, content, ns)
-```
-
-## 開発
-
-### テストの実行
-
-```bash
-make test
-```
-
-`tests/*_test.lua` にマッチする全テストファイルを `nvim --headless` で実行します。新しいテストファイルは自動的に検出されます。
-
-## ライセンス
-
-MIT — [LICENSE](LICENSE) を参照。
