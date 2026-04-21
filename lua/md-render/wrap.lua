@@ -50,6 +50,57 @@ for _, ch in ipairs {
   NO_BREAK_END[ch] = true
 end
 
+--- ASCII straight quotes are ambiguous (open vs. close determined by
+--- surrounding characters, since the same glyph serves both roles).
+local AMBIGUOUS_QUOTE = { ['"'] = true, ["'"] = true }
+
+--- A character that suggests an adjacent ASCII quote is at a structural
+--- boundary (start/end of text, whitespace, or any bracket/punctuation in
+--- the kinsoku tables). Used by `classify_quotes` for both prev and next
+--- side checks: an opening quote needs an open boundary before it; a
+--- closing quote needs a close boundary after it.
+---@param ch string|nil
+---@return boolean
+local function quote_at_boundary(ch)
+  if ch == nil then return true end
+  if ch:match "^%s$" then return true end
+  if NO_BREAK_END[ch] or NO_BREAK_START[ch] then return true end
+  return false
+end
+
+--- Classify each ASCII quote (`"`, `'`) in `text` as "open" or "close"
+--- based on surrounding characters. Quotes with both or neither side
+--- bounded (e.g. ` " `, or `it's`) are left out of the result table.
+---
+--- Returned positions are 0-indexed byte offsets into `text`, matching
+--- the convention used by `split_segments` and `wrap_words`.
+---@param text string
+---@return table<integer, "open"|"close">
+local function classify_quotes(text)
+  local roles = {}
+  local chars = {}
+  local positions = {}
+  local pos = 0
+  for c in text:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
+    chars[#chars + 1] = c
+    positions[#positions + 1] = pos
+    pos = pos + #c
+  end
+
+  for i, c in ipairs(chars) do
+    if AMBIGUOUS_QUOTE[c] then
+      local prev_open = quote_at_boundary(chars[i - 1])
+      local next_close = quote_at_boundary(chars[i + 1])
+      if prev_open and not next_close then
+        roles[positions[i]] = "open"
+      elseif next_close and not prev_open then
+        roles[positions[i]] = "close"
+      end
+    end
+  end
+  return roles
+end
+
 local has_budoux, budoux = pcall(require, "budoux")
 local budoux_parser = has_budoux and budoux.load_default_japanese_parser() or nil
 local budoux_model = budoux_parser and budoux_parser.model or nil
@@ -544,6 +595,19 @@ function M.wrap_words(text, max_width)
   local last_seg_pos = 0
 
   local segments = split_segments(text)
+  local quote_roles = classify_quotes(text)
+
+  --- True iff `s`, occupying bytes `[byte_start, byte_start + #s)` of `text`,
+  --- ends with a NO_BREAK_END char or an ambiguous quote classified as "open".
+  local function ends_no_break_end(s, byte_start)
+    if s == "" then return false end
+    local lc = last_char(s)
+    if NO_BREAK_END[lc] then return true end
+    if AMBIGUOUS_QUOTE[lc] and quote_roles[byte_start + #s - #lc] == "open" then
+      return true
+    end
+    return false
+  end
 
   for i, seg in ipairs(segments) do
     local seg_width = vim.api.nvim_strwidth(seg.text)
@@ -556,12 +620,19 @@ function M.wrap_words(text, max_width)
       -- punctuation (e.g. ".gitignore" starts with "." which is in NO_BREAK_START,
       -- but the segment is a filename, not standalone punctuation).
       local fc = first_char(seg.text)
-      local is_no_break_start = NO_BREAK_START[fc] and not (#fc == 1 and #seg.text > 1)
+      local is_no_break_start
+      if AMBIGUOUS_QUOTE[fc] then
+        -- Only treat as NO_BREAK_START when classified as a closing quote.
+        -- This covers standalone `"` segments while leaving multi-char words
+        -- like `"hello` (opening quote) alone.
+        is_no_break_start = quote_roles[seg.byte_pos] == "close"
+      else
+        is_no_break_start = NO_BREAK_START[fc] and not (#fc == 1 and #seg.text > 1)
+      end
       -- Guard 追い出し: if prev_current ends with a NO_BREAK_END char (e.g. "(",
       -- "「"), pushing it as its own line would strand that opener at line end.
       -- Fall through to 追い込み so the line overflows but kinsoku is preserved.
-      local prev_ends_no_break_end = prev_current ~= ""
-        and NO_BREAK_END[last_char(prev_current)] or false
+      local prev_ends_no_break_end = ends_no_break_end(prev_current, current_start)
       if is_no_break_start and prev_current ~= "" and not prev_ends_no_break_end then
         table.insert(wrapped_lines, prev_current)
         table.insert(line_starts, current_start)
@@ -575,7 +646,7 @@ function M.wrap_words(text, max_width)
         local sep = (seg.has_leading_space and current ~= "") and " " or ""
         current = current .. sep .. seg.text
         current_width = current_width + #sep + seg_width
-      elseif NO_BREAK_END[last_char(current)] then
+      elseif ends_no_break_end(current, current_start) then
         -- Kinsoku: current ends with a NO_BREAK_END char (e.g. "(", "「").
         -- Pushing it now would strand the opener at line end. Append seg
         -- (overflowing the line) so the opener stays bonded to its content.
@@ -598,7 +669,7 @@ function M.wrap_words(text, max_width)
       -- break before it so it doesn't sit at line end.
       -- Use >= to be conservative: even if the next segment barely fits, subsequent
       -- 追い出し could push it away and strand this char at line end.
-      if NO_BREAK_END[last_char(seg.text)] and current ~= "" then
+      if ends_no_break_end(seg.text, seg.byte_pos) and current ~= "" then
         local next_seg = segments[i + 1]
         local next_width = next_seg and vim.api.nvim_strwidth(next_seg.text) or 0
         if current_width + space_width + seg_width + next_width >= max_width then
@@ -650,6 +721,8 @@ end
 M.split_ascii_syllables = split_ascii_syllables
 M.NO_BREAK_START = NO_BREAK_START
 M.NO_BREAK_END = NO_BREAK_END
+M.AMBIGUOUS_QUOTE = AMBIGUOUS_QUOTE
+M.classify_quotes = classify_quotes
 M.split_segments = split_segments
 M.is_cjk_or_kinsoku = is_cjk_or_kinsoku
 M.first_char = first_char
