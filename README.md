@@ -42,15 +42,8 @@ Or, once the plugin is installed, run `:MdRenderDemo` to see a built-in demo of 
 ## Requirements
 
 - Neovim >= 0.10
-
-> [!IMPORTANT]
-> A terminal that supports the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is required for inline images and video:
->
-> - [WezTerm](https://wezfurlong.org/wezterm/)
-> - [Kitty](https://sw.kovidgoyal.net/kitty/)
-> - [Ghostty](https://ghostty.org/)
->
-> Without a compatible terminal, all other features (formatting, tables, callouts, code blocks, CJK wrapping) still work — only inline media is unavailable.
+- For inline images and video: a terminal supporting the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
+  Verified on [WezTerm](https://wezfurlong.org/wezterm/), [Kitty](https://sw.kovidgoyal.net/kitty/), and [Ghostty](https://ghostty.org/) (macOS/Linux).
 
 <details>
 <summary><strong>Optional dependencies</strong></summary>

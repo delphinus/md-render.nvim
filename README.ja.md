@@ -42,15 +42,8 @@ nvim +MdRenderPager assets/showcase.md
 ## 必要要件
 
 - Neovim >= 0.10
-
-> [!IMPORTANT]
-> 画像・動画のインライン表示には [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) に対応したターミナルが必要です：
->
-> - [WezTerm](https://wezfurlong.org/wezterm/)
-> - [Kitty](https://sw.kovidgoyal.net/kitty/)
-> - [Ghostty](https://ghostty.org/)
->
-> 対応ターミナルでなくても、その他の機能（書式、テーブル、コールアウト、コードブロック、CJK 折り返し）はすべて動作します。インラインメディアのみが利用できなくなります。
+- 画像・動画のインライン表示には [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) 対応ターミナルが必要。
+  動作確認は [WezTerm](https://wezfurlong.org/wezterm/) / [Kitty](https://sw.kovidgoyal.net/kitty/) / [Ghostty](https://ghostty.org/)（macOS/Linux）で実施。
 
 <details>
 <summary><strong>オプション依存</strong></summary>

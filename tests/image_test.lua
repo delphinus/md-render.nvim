@@ -625,6 +625,60 @@ test("nested batches: inner flush appends to outer batch", function()
 end)
 
 -- ============================================================================
+-- Platform sanity: get_cell_size / supports_kitty don't crash
+-- ============================================================================
+
+local ffi = require "ffi"
+
+test("get_cell_size: returns nil or table without crashing (no override)", function()
+  image._test_cell_size = nil
+  local result = image.get_cell_size()
+  -- In headless nvim stdout is not a TTY and there's no controlling terminal,
+  -- so result is normally nil. In a real terminal it returns a {cell_w,cell_h}
+  -- table. Both are valid; the contract is "must not crash".
+  assert_true(result == nil or (type(result) == "table" and result.cell_w and result.cell_h),
+    "get_cell_size should return nil or {cell_w, cell_h}")
+end)
+
+test("supports_kitty: returns boolean without crashing", function()
+  image._set_kitty_supported(nil)  -- clear cache so detection runs
+  local result = image.supports_kitty()
+  assert_true(result == true or result == false, "supports_kitty should return a boolean")
+  image._set_kitty_supported(nil)
+end)
+
+-- ============================================================================
+-- Linux-specific FFI exercise
+-- Verifies that the ioctl/winsize declarations parse on Linux ABI and that
+-- a TIOCGWINSZ call against a non-TTY fd fails cleanly (no segfault).
+-- ============================================================================
+
+if ffi.os == "Linux" then
+  -- Trigger declarations in image.lua by calling get_cell_size once.
+  image._test_cell_size = nil
+  pcall(image.get_cell_size)
+  -- Open/close are also needed for this test; declare locally if not present.
+  pcall(ffi.cdef, "int open(const char *path, int flags); int close(int fd);")
+
+  test("Linux: winsize struct size is 8 bytes", function()
+    assert_eq(ffi.sizeof("winsize"), 8,
+      "winsize should be 8 bytes (4 unsigned shorts)")
+  end)
+
+  test("Linux: ioctl(TIOCGWINSZ) on non-TTY fd fails cleanly", function()
+    local TIOCGWINSZ_LINUX = 0x5413
+    local fd = ffi.C.open("/dev/null", 0) -- O_RDONLY
+    assert_true(fd >= 0, "open /dev/null should succeed")
+    local sz = ffi.new("winsize")
+    local rc = ffi.C.ioctl(fd, TIOCGWINSZ_LINUX, sz)
+    -- /dev/null is not a TTY, so ioctl must fail (rc != 0). The contract is
+    -- "must not segfault"; a clean failure is the success case.
+    assert_true(rc ~= 0, "ioctl TIOCGWINSZ on /dev/null should return nonzero")
+    ffi.C.close(fd)
+  end)
+end
+
+-- ============================================================================
 -- Summary
 -- ============================================================================
 

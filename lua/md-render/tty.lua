@@ -1,11 +1,16 @@
 --- TTY discovery for md-render.nvim
 --- Finds the controlling terminal using direct C calls (no external processes).
---- Supports macOS (libproc) and Linux (/proc filesystem).
+--- Supports macOS (libproc) and Linux (/proc filesystem). On Windows the
+--- module's public API returns nil without invoking any FFI calls.
 
 local ffi = require "ffi"
 local uv = vim.uv or vim.loop
 
 local M = {}
+
+local IS_WINDOWS = ffi.os == "Windows"
+local IS_OSX = ffi.os == "OSX"
+local IS_LINUX = ffi.os == "Linux"
 
 local _tty_path = nil
 local _tty_detected = false
@@ -19,12 +24,15 @@ local _ffi_declared = false
 local function ensure_ffi()
   if _ffi_declared then return end
   _ffi_declared = true
+  -- POSIX-only symbols: never declared on Windows where they don't exist
+  -- in the default ffi.C namespace.
+  if IS_WINDOWS then return end
   ffi.cdef [[
     int isatty(int fd);
     char *ttyname(int fd);
     int getsockopt(int sockfd, int level, int optname, void *optval, unsigned int *optlen);
   ]]
-  if ffi.os == "OSX" then
+  if IS_OSX then
     ffi.cdef [[
       int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
 
@@ -56,7 +64,7 @@ local function ensure_ffi()
 
       char *devname(int dev, int type);
     ]]
-  elseif ffi.os == "Linux" then
+  elseif IS_LINUX then
     ffi.cdef [[
       struct md_ucred {
         int pid;
@@ -85,6 +93,7 @@ local S_IFCHR = 0x2000       -- character device mode
 --- Try to detect TTY from standard file descriptors.
 ---@return string?
 function M._detect_direct()
+  if IS_WINDOWS then return nil end
   ensure_ffi()
   -- Try stderr first (most likely to survive redirects), then stdout, stdin
   for _, fd in ipairs({ 2, 1, 0 }) do
@@ -105,6 +114,7 @@ end
 --- Try opening /dev/tty directly.
 ---@return string?
 function M._detect_dev_tty()
+  if IS_WINDOWS then return nil end
   local f = io.open("/dev/tty", "w")
   if f then
     f:close()
@@ -121,15 +131,16 @@ end
 ---@param fd integer
 ---@return integer? peer_pid
 local function get_socket_peer_pid(fd)
+  if IS_WINDOWS then return nil end
   ensure_ffi()
-  if ffi.os == "OSX" then
+  if IS_OSX then
     local pid = ffi.new("int[1]")
     local len = ffi.new("unsigned int[1]", ffi.sizeof("int"))
     if ffi.C.getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, pid, len) == 0 then
       local p = pid[0]
       if p > 1 then return p end
     end
-  elseif ffi.os == "Linux" then
+  elseif IS_LINUX then
     local cred = ffi.new("struct md_ucred")
     local len = ffi.new("unsigned int[1]", ffi.sizeof("struct md_ucred"))
     if ffi.C.getsockopt(fd, SOL_SOCKET_LINUX, SO_PEERCRED, cred, len) == 0 then
@@ -193,9 +204,9 @@ M._get_pid_tty_linux = get_pid_tty_linux
 ---@param pid integer
 ---@return string?
 function M._get_pid_tty(pid)
-  if ffi.os == "OSX" then
+  if IS_OSX then
     return get_pid_tty_darwin(pid)
-  elseif ffi.os == "Linux" then
+  elseif IS_LINUX then
     return get_pid_tty_linux(pid)
   end
   return nil
@@ -206,6 +217,7 @@ end
 --- calling getsockopt(LOCAL_PEERPID/SO_PEERCRED) on each of our fds.
 ---@return string?
 function M._detect_socket_peer()
+  if IS_WINDOWS then return nil end
   for fd = 3, 30 do
     local ok, peer_pid = pcall(get_socket_peer_pid, fd)
     if ok and peer_pid then

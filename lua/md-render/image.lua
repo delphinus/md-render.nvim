@@ -13,6 +13,8 @@ local uv = vim.uv or vim.loop
 local ffi = require("ffi")
 local tty_mod = require("md-render.tty")
 
+local IS_WINDOWS = ffi.os == "Windows"
+
 -- ============================================================================
 -- Batched terminal writes
 -- ============================================================================
@@ -115,6 +117,8 @@ local _ffi_declared = false
 local function ensure_ffi()
   if _ffi_declared then return end
   _ffi_declared = true
+  -- ioctl/winsize are POSIX-only; Windows has no equivalent in MSVCRT.
+  if IS_WINDOWS then return end
   ffi.cdef([[
     typedef struct { unsigned short row; unsigned short col; unsigned short xpixel; unsigned short ypixel; } winsize;
     int ioctl(int, unsigned long, ...);
@@ -128,6 +132,7 @@ local TIOCGWINSZ = (vim.fn.has("mac") == 1 or vim.fn.has("bsd") == 1) and 0x4008
 ---@return { cell_w: number, cell_h: number }?
 function M.get_cell_size()
   if M._test_cell_size then return M._test_cell_size end
+  if IS_WINDOWS then return nil end
   ensure_ffi()
   local sz = ffi.new("winsize")
   -- Try stdout (fd 1) first; after :restart it may be /dev/null,
@@ -444,7 +449,7 @@ function M.render_mermaid(source)
     return cache_path
   end
 
-  local tmp_input = os.tmpname() .. ".mmd"
+  local tmp_input = vim.fn.tempname() .. ".mmd"
   local f = io.open(tmp_input, "w")
   if not f then return nil end
   f:write(source)
@@ -476,7 +481,7 @@ function M.render_mermaid_async(source, callback)
     return
   end
 
-  local tmp_input = os.tmpname() .. ".mmd"
+  local tmp_input = vim.fn.tempname() .. ".mmd"
   local f = io.open(tmp_input, "w")
   if not f then
     callback(nil)
@@ -528,6 +533,12 @@ end
 
 function M.supports_kitty()
   if _kitty_supported ~= nil then return _kitty_supported end
+  -- Windows lacks the POSIX TTY plumbing (isatty/ttyname/ioctl) this module
+  -- relies on, so disable image rendering entirely on Windows.
+  if IS_WINDOWS then
+    _kitty_supported = false
+    return false
+  end
   local term = vim.env.TERM_PROGRAM
   if term then
     local supported = { ["WezTerm"] = true, ["kitty"] = true, ["ghostty"] = true }
@@ -959,7 +970,7 @@ function M.ensure_png(path)
   if M.is_native_format(path) then return path, false end
   local tool = find_convert_tool()
   if not tool then return nil, false end
-  local tmp = os.tmpname() .. ".png"
+  local tmp = vim.fn.tempname() .. ".png"
   local result = vim.system(build_convert_cmd(tool, path, tmp), { text = true }):wait()
   if result.code ~= 0 then return nil, false end
   return tmp, true
@@ -978,7 +989,7 @@ function M.ensure_png_async(path, callback)
     callback(nil, false)
     return
   end
-  local tmp = os.tmpname() .. ".png"
+  local tmp = vim.fn.tempname() .. ".png"
   vim.system(
     build_convert_cmd(tool, path, tmp),
     { text = true },
