@@ -557,7 +557,12 @@ function M.wrap_words(text, max_width)
       -- but the segment is a filename, not standalone punctuation).
       local fc = first_char(seg.text)
       local is_no_break_start = NO_BREAK_START[fc] and not (#fc == 1 and #seg.text > 1)
-      if is_no_break_start and prev_current ~= "" then
+      -- Guard 追い出し: if prev_current ends with a NO_BREAK_END char (e.g. "(",
+      -- "「"), pushing it as its own line would strand that opener at line end.
+      -- Fall through to 追い込み so the line overflows but kinsoku is preserved.
+      local prev_ends_no_break_end = prev_current ~= ""
+        and NO_BREAK_END[last_char(prev_current)] or false
+      if is_no_break_start and prev_current ~= "" and not prev_ends_no_break_end then
         table.insert(wrapped_lines, prev_current)
         table.insert(line_starts, current_start)
         local sep = seg.has_leading_space and " " or ""
@@ -567,6 +572,13 @@ function M.wrap_words(text, max_width)
       elseif is_no_break_start then
         -- Kinsoku 追い込み fallback: keep the char on the current line
         -- even if it exceeds max_width, to avoid it starting a new line
+        local sep = (seg.has_leading_space and current ~= "") and " " or ""
+        current = current .. sep .. seg.text
+        current_width = current_width + #sep + seg_width
+      elseif NO_BREAK_END[last_char(current)] then
+        -- Kinsoku: current ends with a NO_BREAK_END char (e.g. "(", "「").
+        -- Pushing it now would strand the opener at line end. Append seg
+        -- (overflowing the line) so the opener stays bonded to its content.
         local sep = (seg.has_leading_space and current ~= "") and " " or ""
         current = current .. sep .. seg.text
         current_width = current_width + #sep + seg_width

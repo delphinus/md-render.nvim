@@ -138,14 +138,27 @@ local function wrap_cell_text(text, max_display_width)
         end
       else
         -- CJK emergency splitting: break into individual characters,
-        -- grouping NO_BREAK_START characters (small kana, ー, punctuation)
-        -- with their preceding character to respect kinsoku rules.
+        -- grouping NO_BREAK_START characters (small kana, ー, closing
+        -- punctuation) with their preceding character, and NO_BREAK_END
+        -- characters (opening brackets) with the following character to
+        -- respect kinsoku rules.
         local cjk_groups = {}
+        local pending_open = ""
         for c in line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-          if wrap_mod.NO_BREAK_START[c] and #cjk_groups > 0 then
+          if wrap_mod.NO_BREAK_END[c] then
+            pending_open = pending_open .. c
+          elseif wrap_mod.NO_BREAK_START[c] and #cjk_groups > 0 and pending_open == "" then
             cjk_groups[#cjk_groups] = cjk_groups[#cjk_groups] .. c
           else
-            cjk_groups[#cjk_groups + 1] = c
+            cjk_groups[#cjk_groups + 1] = pending_open .. c
+            pending_open = ""
+          end
+        end
+        if pending_open ~= "" then
+          if #cjk_groups > 0 then
+            cjk_groups[#cjk_groups] = cjk_groups[#cjk_groups] .. pending_open
+          else
+            cjk_groups[#cjk_groups + 1] = pending_open
           end
         end
         if #cjk_groups > 1 then
