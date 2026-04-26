@@ -444,11 +444,14 @@ function M.setup_images(win, content, ns, opts)
   local function place_images()
     if not vim.api.nvim_win_is_valid(state.win) then return end
 
-    -- Retry transmit for images that have a path but no ID (up to MAX_RETRIES)
+    -- Retry transmit for images that have a path but no ID (up to MAX_RETRIES).
+    -- Skip placements whose conversion is already in flight to avoid spawning
+    -- duplicate sips/ffmpeg processes when the user scrolls during conversion.
     for _, placement in ipairs(state.placements) do
       if placement.path
         and not state.image_ids[placement.path]
         and not state.anims[placement.path]
+        and not placement._converting
         and (not placement._retries or placement._retries < MAX_RETRIES)
       then
         placement._retries = (placement._retries or 0) + 1
@@ -763,7 +766,9 @@ function M.setup_images(win, content, ns, opts)
       if placement.animated then
         setup_animation(path, placement, placeholder_rows)
       else
+        placement._converting = true
         image.transmit_image_async(path, function(id, tx_w, tx_h)
+          placement._converting = false
           if not id or not vim.api.nvim_win_is_valid(state.win) then return end
           -- Update dimensions to match the actually transmitted image
           -- (conversion may have resized it, e.g. large JPEG → 2000px PNG)

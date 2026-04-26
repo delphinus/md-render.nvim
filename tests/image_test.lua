@@ -4,6 +4,7 @@
 package.path = vim.fn.getcwd() .. "/lua/?.lua;" .. vim.fn.getcwd() .. "/lua/?/init.lua;" .. package.path
 
 local image = require "md-render.image"
+local uv = vim.uv or vim.loop
 
 local pass_count = 0
 local fail_count = 0
@@ -716,6 +717,112 @@ if ffi.os == "Linux" then
     -- "must not segfault"; a clean failure is the success case.
     assert_true(rc ~= 0, "ioctl TIOCGWINSZ on /dev/null should return nonzero")
     ffi.C.close(fd)
+  end)
+end
+
+-- ============================================================================
+-- ensure_png cache tests
+-- ============================================================================
+
+local function has_convert_tool()
+  return vim.fn.executable("sips") == 1
+    or vim.fn.executable("ffmpeg") == 1
+    or vim.fn.executable("magick") == 1
+end
+
+--- Convert the PNG fixture to a temporary JPEG so we have a non-native source.
+--- Returns nil if no conversion tool is available.
+local function make_test_jpeg()
+  local out = vim.fn.tempname() .. ".jpg"
+  if vim.fn.executable("sips") == 1 then
+    vim.system({ "sips", "-s", "format", "jpeg", test_png, "--out", out }, { text = true }):wait()
+  elseif vim.fn.executable("ffmpeg") == 1 then
+    vim.system({ "ffmpeg", "-y", "-i", test_png, out }, { text = true }):wait()
+  elseif vim.fn.executable("magick") == 1 then
+    vim.system({ "magick", test_png, out }, { text = true }):wait()
+  else
+    return nil
+  end
+  if vim.fn.filereadable(out) ~= 1 then return nil end
+  return out
+end
+
+if has_convert_tool() then
+  test("ensure_png: caches converted JPEG to disk", function()
+    local jpeg = make_test_jpeg()
+    if not jpeg then return end
+    local cache_dir = vim.fn.stdpath("cache") .. "/md-render/converted"
+    -- Clean cache for this hash so the count is meaningful
+    vim.fn.mkdir(cache_dir, "p")
+    local hash = vim.fn.sha256(jpeg):sub(1, 16)
+    for _, p in ipairs(vim.fn.glob(cache_dir .. "/" .. hash .. "_*", false, true)) do
+      os.remove(p)
+    end
+
+    local png1, is_temp1 = image.ensure_png(jpeg)
+    assert_true(png1 ~= nil, "first conversion should succeed")
+    assert_true(is_temp1 == false, "cached output should not be flagged temporary")
+    assert_true(vim.fn.filereadable(png1) == 1, "cached png should exist on disk")
+    assert_true(
+      png1:find("/md-render/converted/" .. hash .. "_", 1, true) ~= nil,
+      "path should be in converted cache dir"
+    )
+
+    local png2, is_temp2 = image.ensure_png(jpeg)
+    assert_eq(png2, png1, "second call should return identical cached path")
+    assert_true(is_temp2 == false, "second call should also report non-temp")
+
+    os.remove(jpeg)
+    os.remove(png1)
+  end)
+
+  test("transmit_image_async: returns converted dims even from cache", function()
+    local jpeg = make_test_jpeg()
+    if not jpeg then return end
+    -- Pre-populate the cache by running ensure_png once
+    local cached = image.ensure_png(jpeg)
+    if not cached then return end
+    local cached_w, cached_h = image.image_dimensions(cached)
+    if not cached_w then return end
+
+    setup_capture()
+    local cb_id, cb_w, cb_h
+    image.transmit_image_async(jpeg, function(id, w, h)
+      cb_id, cb_w, cb_h = id, w, h
+    end)
+    assert_true(cb_id ~= nil, "should return image id")
+    assert_eq(cb_w, cached_w, "should return cached PNG width, not source JPEG width")
+    assert_eq(cb_h, cached_h, "should return cached PNG height, not source JPEG height")
+    teardown()
+
+    os.remove(jpeg)
+    os.remove(cached)
+  end)
+
+  test("ensure_png: mtime change invalidates cache", function()
+    local jpeg = make_test_jpeg()
+    if not jpeg then return end
+    local cache_dir = vim.fn.stdpath("cache") .. "/md-render/converted"
+    vim.fn.mkdir(cache_dir, "p")
+    local hash = vim.fn.sha256(jpeg):sub(1, 16)
+    for _, p in ipairs(vim.fn.glob(cache_dir .. "/" .. hash .. "_*", false, true)) do
+      os.remove(p)
+    end
+
+    local png1 = image.ensure_png(jpeg)
+    assert_true(png1 ~= nil, "first conversion should succeed")
+
+    -- Bump mtime by 2s so getftime sees a different value
+    local new_mtime = vim.fn.getftime(jpeg) + 2
+    uv.fs_utime(jpeg, new_mtime, new_mtime)
+
+    local png2 = image.ensure_png(jpeg)
+    assert_true(png2 ~= nil, "second conversion should succeed")
+    assert_true(png2 ~= png1, "different mtime should yield a different cache entry")
+
+    os.remove(jpeg)
+    os.remove(png1)
+    os.remove(png2)
   end)
 end
 

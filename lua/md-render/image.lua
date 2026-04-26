@@ -935,26 +935,31 @@ local function find_anim_tool()
   return _anim_cmd
 end
 
+--- Maximum dimension (in pixels) for converted PNG output.
+--- Larger source images are downscaled to fit within this bound.
+local MAX_CONVERT_DIM = 2000
+
 --- Build a command to convert a static image to PNG with resize.
 ---@param tool string  "sips", "ffmpeg", or "magick"
 ---@param src string  input file path
 ---@param dst string  output PNG path
 ---@return string[]
 local function build_convert_cmd(tool, src, dst)
+  local dim = tostring(MAX_CONVERT_DIM)
   if tool == "sips" then
     -- -Z resizes only if the image is larger than the specified dimension
-    return { "sips", "-s", "format", "png", "-Z", "2000", src, "--out", dst }
+    return { "sips", "-s", "format", "png", "-Z", dim, src, "--out", dst }
   elseif tool == "ffmpeg" then
     -- scale filter with force_original_aspect_ratio keeps aspect ratio;
     -- -vframes 1 ensures only one frame for static images
     return {
       "ffmpeg", "-y", "-i", src,
       "-vframes", "1",
-      "-vf", "scale='min(2000,iw)':'min(2000,ih)':force_original_aspect_ratio=decrease",
+      "-vf", "scale='min(" .. dim .. ",iw)':'min(" .. dim .. ",ih)':force_original_aspect_ratio=decrease",
       dst,
     }
   else
-    return { "magick", src, "-resize", "2000x2000>", dst }
+    return { "magick", src, "-resize", dim .. "x" .. dim .. ">", dst }
   end
 end
 
@@ -962,17 +967,77 @@ end
 -- Image conversion
 -- ============================================================================
 
+--- Get cache directory for converted PNGs (JPEG/WebP → PNG).
+---@return string
+local function get_converted_cache_dir()
+  local dir = vim.fn.stdpath("cache") .. "/md-render/converted"
+  vim.fn.mkdir(dir, "p")
+  return dir
+end
+
+--- Build a stable cache path for a converted PNG.
+--- Includes mtime so updates to the source invalidate the cache automatically,
+--- and MAX_CONVERT_DIM so changing the resize bound creates a separate entry.
+---@param src_path string  absolute path to the source image
+---@return string? cache_path  nil if mtime cannot be read
+local function get_converted_cache_path(src_path)
+  local mtime = vim.fn.getftime(src_path)
+  if mtime < 0 then return nil end
+  local hash = vim.fn.sha256(src_path):sub(1, 16)
+  return string.format(
+    "%s/%s_%d_%d.png",
+    get_converted_cache_dir(), hash, mtime, MAX_CONVERT_DIM
+  )
+end
+
+--- Atomically install a freshly converted PNG into the cache.
+--- Renames tmp → cache_path; on collision (race), keeps the existing cache file.
+---@param tmp string
+---@param cache_path string
+---@return boolean ok
+local function install_to_cache(tmp, cache_path)
+  if vim.fn.filereadable(cache_path) == 1 then
+    os.remove(tmp)
+    return true
+  end
+  local ok = uv.fs_rename(tmp, cache_path)
+  if not ok then
+    -- Rename failed (e.g. cross-device); fall back to copy + unlink
+    local data
+    local f = io.open(tmp, "rb")
+    if f then
+      data = f:read("*a")
+      f:close()
+    end
+    if not data then return false end
+    local out = io.open(cache_path, "wb")
+    if not out then return false end
+    out:write(data)
+    out:close()
+    os.remove(tmp)
+  end
+  return true
+end
+
 --- Ensure image is in a format the terminal can display natively (synchronous).
---- PNG and GIF are passed through. JPEG/WebP are converted to PNG.
+--- PNG and GIF are passed through. JPEG/WebP are converted to PNG and cached
+--- on disk so subsequent calls for the same source skip re-conversion.
 ---@param path string
 ---@return string? png_path, boolean is_temp
 function M.ensure_png(path)
   if M.is_native_format(path) then return path, false end
   local tool = find_convert_tool()
   if not tool then return nil, false end
+  local cache_path = get_converted_cache_path(path)
+  if cache_path and vim.fn.filereadable(cache_path) == 1 then
+    return cache_path, false
+  end
   local tmp = vim.fn.tempname() .. ".png"
   local result = vim.system(build_convert_cmd(tool, path, tmp), { text = true }):wait()
   if result.code ~= 0 then return nil, false end
+  if cache_path and install_to_cache(tmp, cache_path) then
+    return cache_path, false
+  end
   return tmp, true
 end
 
@@ -989,16 +1054,25 @@ function M.ensure_png_async(path, callback)
     callback(nil, false)
     return
   end
+  local cache_path = get_converted_cache_path(path)
+  if cache_path and vim.fn.filereadable(cache_path) == 1 then
+    callback(cache_path, false)
+    return
+  end
   local tmp = vim.fn.tempname() .. ".png"
   vim.system(
     build_convert_cmd(tool, path, tmp),
     { text = true },
     function(result)
       vim.schedule(function()
-        if result.code == 0 then
-          callback(tmp, true)
-        else
+        if result.code ~= 0 then
           callback(nil, false)
+          return
+        end
+        if cache_path and install_to_cache(tmp, cache_path) then
+          callback(cache_path, false)
+        else
+          callback(tmp, true)
         end
       end)
     end
@@ -1272,9 +1346,12 @@ function M.transmit_image_async(path, callback)
       _temp_image_paths[id] = true
     end
     _image_paths[id] = png_path
-    -- Return actual transmitted dimensions when conversion changed the size
+    -- Return actual transmitted dimensions when the converted PNG differs from
+    -- the source (conversion may have resized, e.g. large JPEG → 2000px PNG).
+    -- Cached PNGs are not "temp" but their dimensions still differ from the
+    -- source, so callers must use these to compute correct source rectangles.
     local tx_w, tx_h
-    if is_temp then
+    if png_path ~= path then
       tx_w, tx_h = M.image_dimensions(png_path)
     end
     callback(id, tx_w, tx_h)
