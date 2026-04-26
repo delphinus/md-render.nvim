@@ -440,6 +440,24 @@ function M.setup_images(win, content, ns, opts)
 
   -- Redraw all images (called after redraw! to re-place all at once)
   local MAX_RETRIES = 3
+  -- Placements whose buffer rows fall within ±LAZY_PADDING rows of the
+  -- visible viewport are eagerly transmitted. Off-screen placements are
+  -- skipped until the user scrolls them into view, which avoids flooding the
+  -- terminal (WezTerm/Kitty) with PNG decode work for files that contain
+  -- many images of which only a few are actually visible at once.
+  local LAZY_PADDING = 10
+
+  local function placement_near_viewport(placement)
+    if not vim.api.nvim_win_is_valid(state.win) then return false end
+    local wininfo = vim.fn.getwininfo(state.win)[1]
+    if not wininfo then return false end
+    local topline = wininfo.topline - 1
+    local win_height = vim.api.nvim_win_get_height(state.win)
+    local p_start = placement.line or 0
+    local p_end = p_start + (placement.rows or 1) - 1
+    return p_end >= topline - LAZY_PADDING
+      and p_start < topline + win_height + LAZY_PADDING
+  end
 
   local function place_images()
     if not vim.api.nvim_win_is_valid(state.win) then return end
@@ -447,12 +465,16 @@ function M.setup_images(win, content, ns, opts)
     -- Retry transmit for images that have a path but no ID (up to MAX_RETRIES).
     -- Skip placements whose conversion is already in flight to avoid spawning
     -- duplicate sips/ffmpeg processes when the user scrolls during conversion.
+    -- Also skip placements far from the viewport: they will retry naturally
+    -- when WinScrolled brings them within range, and skipping them here
+    -- prevents bulk transmission of off-screen images.
     for _, placement in ipairs(state.placements) do
       if placement.path
         and not state.image_ids[placement.path]
         and not state.anims[placement.path]
         and not placement._converting
         and (not placement._retries or placement._retries < MAX_RETRIES)
+        and placement_near_viewport(placement)
       then
         placement._retries = (placement._retries or 0) + 1
         process_placement(placement)
@@ -830,22 +852,35 @@ function M.setup_images(win, content, ns, opts)
   state.clear_placeholder_text = clear_placeholder_text
   state.start_anim_timer = start_anim_timer
 
-  -- Phase 1: Kick off async processing for all placements.
-  -- Batch transmit commands so that synchronous transmits (local PNG files)
-  -- are sent in a single TTY write, preventing TUI output from interleaving.
-  image.begin_batch()
-  local ok, err = pcall(function()
-    for _, placement in ipairs(state.placements) do
-      process_placement(placement)
+  -- Phase 1: Process placements one-at-a-time with vim.schedule yields so
+  -- the terminal isn't flooded with N transmit commands at once. Sending all
+  -- transmissions in a single burst causes the terminal (WezTerm/Kitty) to
+  -- block its UI thread while it reads + decodes every PNG, which manifests
+  -- as a multi-second freeze of the entire terminal when previewing files
+  -- with many large images. Off-screen placements are skipped entirely on
+  -- the initial pass and only transmitted later via the WinScrolled-driven
+  -- retry in place_images, so the user's first paint cost scales with what
+  -- is actually visible (typically 1-2 images) rather than the file's
+  -- total image count.
+  local function process_one(idx)
+    if state.canceled then return end
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+    if idx > #state.placements then
+      schedule_redraw()
+      return
     end
-  end)
-  image.flush_batch()
-  if not ok then
-    vim.notify("md-render: image setup error: " .. tostring(err), vim.log.levels.WARN)
+    local placement = state.placements[idx]
+    if placement_near_viewport(placement) then
+      image.begin_batch()
+      local ok, err = pcall(process_placement, placement)
+      image.flush_batch()
+      if not ok then
+        vim.notify("md-render: image setup error: " .. tostring(err), vim.log.levels.WARN)
+      end
+    end
+    vim.schedule(function() process_one(idx + 1) end)
   end
-
-  -- Initial display of already-cached images
-  schedule_redraw()
+  process_one(1)
 
   -- Re-display on scroll and cursor movement; clean up on window close
   local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
@@ -970,6 +1005,10 @@ end
 function M.cleanup_images(state)
   if not state then return end
   local image = require "md-render.image"
+
+  -- Signal any in-flight progressive transmit chain to abort at the next
+  -- vim.schedule boundary instead of continuing to send to a torn-down state.
+  state.canceled = true
 
   -- Stop download-rebuild timer
   if state._rebuild_timer then
