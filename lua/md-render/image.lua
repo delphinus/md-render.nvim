@@ -1475,16 +1475,18 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
 
   local screen_col = win_pos[2] + visual_col + border_left_width + 1
 
-  -- Crop to visible area using source rectangle (no scaling distortion)
-  local crop_params = ""
+  -- Crop to visible area using source rectangle (no scaling distortion).
+  -- Track x/y/w/h independently; emit them all together at the end so that
+  -- terminals (notably WezTerm) that require a fully-specified source rect
+  -- to honor any single dimension still get correct cropping.
+  local src_x, src_y, src_w, src_h
 
   -- Left crop: image starts to the left of visible area
   if visual_col < 0 then
     local hidden_cols = -visual_col
     if img_w then
-      local crop_x = math.floor(img_w * hidden_cols / display_cols)
-      crop_params = crop_params .. ",x=" .. crop_x
-      crop_params = crop_params .. ",w=" .. (img_w - crop_x)
+      src_x = math.floor(img_w * hidden_cols / display_cols)
+      src_w = img_w - src_x
     end
     display_cols = display_cols - hidden_cols
     visual_col = 0
@@ -1495,10 +1497,8 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   if visual_row < 0 then
     local hidden_rows = -visual_row
     if img_h then
-      local crop_y = math.floor(img_h * hidden_rows / display_rows)
-      crop_params = crop_params .. ",y=" .. crop_y
-      -- Explicit h= required: some terminals (Ghostty) need both y= and h=
-      crop_params = crop_params .. ",h=" .. (img_h - crop_y)
+      src_y = math.floor(img_h * hidden_rows / display_rows)
+      src_h = img_h - src_y
     end
     display_rows = display_rows - hidden_rows
     visual_row = 0
@@ -1510,20 +1510,8 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   local visible_rows = win_height - visual_row
   if visible_rows <= 0 then return end
   if display_rows > visible_rows and img_h then
-    -- When top is also cropped, calculate h relative to remaining source region
-    local remaining_h = img_h
-    local existing_y = crop_params:match(",y=(%d+)")
-    if existing_y then
-      remaining_h = img_h - tonumber(existing_y)
-    end
-    local crop_h = math.floor(remaining_h * visible_rows / display_rows)
-    -- Update h= if already set by top crop, otherwise add it
-    local existing_h = crop_params:match(",h=%d+")
-    if existing_h then
-      crop_params = crop_params:gsub(",h=%d+", ",h=" .. crop_h)
-    else
-      crop_params = crop_params .. ",h=" .. crop_h
-    end
+    local remaining_h = src_h or img_h
+    src_h = math.floor(remaining_h * visible_rows / display_rows)
     display_rows = visible_rows
   end
 
@@ -1531,21 +1519,20 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   local visible_cols = win_width - visual_col
   if visible_cols <= 0 then return end
   if display_cols > visible_cols and img_w then
-    -- When left is also cropped, calculate w relative to remaining source region
-    local remaining_w = img_w
-    local existing_x = crop_params:match(",x=(%d+)")
-    if existing_x then
-      remaining_w = img_w - tonumber(existing_x)
-    end
-    local crop_w = math.floor(remaining_w * visible_cols / display_cols)
-    -- Update w= if already set by left crop, otherwise add it
-    local existing_w = crop_params:match(",w=%d+")
-    if existing_w then
-      crop_params = crop_params:gsub(",w=%d+", ",w=" .. crop_w)
-    else
-      crop_params = crop_params .. ",w=" .. crop_w
-    end
+    local remaining_w = src_w or img_w
+    src_w = math.floor(remaining_w * visible_cols / display_cols)
     display_cols = visible_cols
+  end
+
+  -- Build crop params: if any of x/y/w/h is set, emit all four (with defaults
+  -- for the unset dimensions). Some terminals interpret a partial source rect
+  -- as "no crop" and silently scale the entire image into the display cells.
+  local crop_params = ""
+  if (src_x or src_y or src_w or src_h) and img_w and img_h then
+    crop_params = string.format(
+      ",x=%d,y=%d,w=%d,h=%d",
+      src_x or 0, src_y or 0, src_w or img_w, src_h or img_h
+    )
   end
 
   local message

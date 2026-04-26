@@ -338,6 +338,47 @@ end)
 -- put_image: crop parameter tests
 -- ============================================================================
 
+test("put_image: bottom crop emits full source rectangle", function()
+  setup_capture()
+  image._test_cell_size = { cell_w = 9, cell_h = 18 }
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  local lines = {}
+  for i = 1, 30 do lines[i] = string.rep(" ", 80) end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  local win = vim.api.nvim_open_win(buf, false, {
+    relative = "editor",
+    row = 0,
+    col = 0,
+    width = 80,
+    height = 20,
+    border = "none",
+  })
+
+  -- Image at row 18 with display_rows=10 → only 2 rows visible at the bottom.
+  -- WezTerm requires the full source rectangle (x, y, w, h) to honor cropping;
+  -- a partial spec like ",h=N" alone is interpreted as no crop and the entire
+  -- image gets scaled into the visible cells (looks vertically squashed).
+  image.put_image(101, win, 18, 0, 40, 10, nil, 2000, 1500)
+
+  local seqs = parse_kitty_sequences(captured_output())
+  assert_true(#seqs > 0, "should emit a put sequence")
+  if #seqs > 0 then
+    local p = parse_params(seqs[1].params)
+    assert_true(p.x ~= nil, "bottom crop should set x=")
+    assert_true(p.y ~= nil, "bottom crop should set y=")
+    assert_true(p.w ~= nil, "bottom crop should set w=")
+    assert_true(p.h ~= nil, "bottom crop should set h=")
+    assert_eq(tonumber(p.r), 2, "display rows should be reduced to visible rows")
+    assert_eq(tonumber(p.h), math.floor(1500 * 2 / 10), "h should crop source proportionally")
+  end
+
+  image._test_cell_size = nil
+  vim.api.nvim_win_close(win, true)
+  vim.api.nvim_buf_delete(buf, { force = true })
+  teardown()
+end)
+
 test("put_image: top crop generates y= and h= parameters", function()
   setup_capture()
 
