@@ -66,6 +66,24 @@ function M.previewer(opts)
   ---@type MdRender.ImageState?
   local image_state = nil
   local last_filepath = nil
+  -- Debounce the entire preview render (file read, markdown build, image setup)
+  -- so rapid j/k navigation in the picker never blocks on heavy files. Old
+  -- images are torn down immediately on file change; the new file's content
+  -- is rendered only when selection settles for RENDER_DEBOUNCE_MS.
+  local RENDER_DEBOUNCE_MS = 80
+  local render_timer = nil
+  -- Bumped on every file change. Long-running render is split into stages
+  -- separated by vim.schedule yields; each stage checks generation and
+  -- aborts if a newer file change arrived during the yield.
+  local generation = 0
+
+  local function cancel_render_timer()
+    if render_timer then
+      pcall(render_timer.stop, render_timer)
+      pcall(render_timer.close, render_timer)
+      render_timer = nil
+    end
+  end
 
   return previewers.new_buffer_previewer {
     title = "Markdown Preview",
@@ -73,138 +91,156 @@ function M.previewer(opts)
       local filepath = entry.path or entry.filename
       if not filepath then return end
 
-      local is_markdown = filepath:match "%.md$" or filepath:match "%.markdown$"
+      local file_changed = filepath ~= last_filepath
+      if not file_changed then return end
+
       local display_utils = require "md-render.display_utils"
       local bufnr = self.state.bufnr
       local winid = self.state.winid
 
-      if not is_markdown then
-        -- Try to display as image/video
-        local img_content = build_image_content(filepath, winid)
-        if img_content then
-          local file_changed = filepath ~= last_filepath
-          if file_changed then
-            if image_state then
-              display_utils.cleanup_images(image_state)
-              image_state = nil
-            end
-            last_filepath = filepath
+      -- Tear down old image state synchronously so the previous file's
+      -- images vanish immediately (no stale overlay during the debounce).
+      cancel_render_timer()
+      if image_state then
+        display_utils.cleanup_images(image_state)
+        image_state = nil
+      end
+      last_filepath = filepath
+      generation = generation + 1
+      local my_gen = generation
+
+      local function still_current()
+        return my_gen == generation
+          and filepath == last_filepath
+          and vim.api.nvim_win_is_valid(winid)
+          and vim.api.nvim_buf_is_valid(bufnr)
+      end
+
+      -- Defer all heavy work so the picker stays responsive during rapid
+      -- navigation. The render is split into multiple stages separated by
+      -- vim.schedule yields so the event loop can process queued keypresses
+      -- between each stage; if a newer file change arrives, the in-flight
+      -- render aborts at the next stage boundary.
+      render_timer = vim.defer_fn(function()
+        render_timer = nil
+        if not still_current() then return end
+
+        local is_markdown = filepath:match "%.md$" or filepath:match "%.markdown$"
+
+        if not is_markdown then
+          -- Try to display as image/video
+          local img_content = build_image_content(filepath, winid)
+          if img_content then
+            vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, img_content.lines)
+            vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+            display_utils.apply_content_to_buffer(bufnr, ns, img_content)
+            -- Yield before image setup so the picker can absorb pending keys.
+            vim.schedule(function()
+              if not still_current() then return end
+              image_state = display_utils.setup_images(winid, img_content, ns)
+            end)
+            return
           end
-          vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, img_content.lines)
-          vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-          display_utils.apply_content_to_buffer(bufnr, ns, img_content)
-          if file_changed then
-            image_state = display_utils.setup_images(winid, img_content, ns)
-          end
+
+          -- Fall back to telescope's default file previewer
+          last_filepath = nil
+          local conf = require("telescope.config").values
+          conf.buffer_previewer_maker(filepath, bufnr, {
+            bufname = self.state.bufname,
+            winid = winid,
+            callback = function(buf)
+              if entry.lnum then
+                pcall(vim.api.nvim_buf_call, buf, function()
+                  pcall(vim.api.nvim_win_set_cursor, 0, { entry.lnum, 0 })
+                  vim.cmd "normal! zz"
+                end)
+              end
+            end,
+          })
           return
         end
 
-        -- Fall back to telescope's default file previewer
-        if image_state then
-          display_utils.cleanup_images(image_state)
-          image_state = nil
-        end
-        last_filepath = nil
-        local conf = require("telescope.config").values
-        conf.buffer_previewer_maker(filepath, bufnr, {
-          bufname = self.state.bufname,
-          winid = winid,
-          callback = function(buf)
-            if entry.lnum then
+        -- Limit source lines to prevent UI freeze on very large Markdown files.
+        local MAX_PREVIEW_LINES = 500
+        local lines = vim.fn.readfile(filepath, "", MAX_PREVIEW_LINES)
+        if not lines or #lines == 0 then return end
+
+        -- If the target line is beyond the rendered range, fall back to
+        -- telescope's default previewer (raw markdown with line navigation).
+        if entry.lnum and entry.lnum > MAX_PREVIEW_LINES then
+          last_filepath = nil
+          local conf = require("telescope.config").values
+          conf.buffer_previewer_maker(filepath, bufnr, {
+            bufname = self.state.bufname,
+            winid = winid,
+            callback = function(buf)
               pcall(vim.api.nvim_buf_call, buf, function()
                 pcall(vim.api.nvim_win_set_cursor, 0, { entry.lnum, 0 })
                 vim.cmd "normal! zz"
               end)
-            end
-          end,
-        })
-        return
-      end
-
-      -- Markdown rendering
-      local file_changed = filepath ~= last_filepath
-      if file_changed then
-        if image_state then
-          display_utils.cleanup_images(image_state)
-          image_state = nil
+            end,
+          })
+          return
         end
-        last_filepath = filepath
-      end
 
-      -- Limit source lines to prevent UI freeze on very large Markdown files.
-      -- The telescope preview window only shows a few dozen lines, so
-      -- rendering the entire document is wasteful and can block the UI.
-      local MAX_PREVIEW_LINES = 500
-      local lines = vim.fn.readfile(filepath, "", MAX_PREVIEW_LINES)
-      if not lines or #lines == 0 then return end
+        require("md-render").setup_highlights()
+        local preview = require "md-render.preview"
+        local max_width = math.max(40, vim.api.nvim_win_get_width(winid) - 4)
+        -- buf_dir is required to resolve relative image paths and Obsidian
+        -- wiki-links (e.g. ![[IMG.jpeg]]); without it the vault root cannot
+        -- be located and images render only as their placeholder header text.
+        local build_opts = { max_width = max_width, buf_dir = vim.fn.fnamemodify(filepath, ":h") }
 
-      -- If the target line is beyond the rendered range, fall back to
-      -- telescope's default previewer (raw markdown with line navigation).
-      if entry.lnum and entry.lnum > MAX_PREVIEW_LINES then
-        if image_state then
-          display_utils.cleanup_images(image_state)
-          image_state = nil
-        end
-        last_filepath = nil
-        local conf = require("telescope.config").values
-        conf.buffer_previewer_maker(filepath, bufnr, {
-          bufname = self.state.bufname,
-          winid = winid,
-          callback = function(buf)
-            pcall(vim.api.nvim_buf_call, buf, function()
-              pcall(vim.api.nvim_win_set_cursor, 0, { entry.lnum, 0 })
-              vim.cmd "normal! zz"
-            end)
-          end,
-        })
-        return
-      end
+        -- Stage 1: build markdown content (~25 ms for 9-image files).
+        local content = preview.build_content(lines, build_opts)
+        if not still_current() then return end
 
-      require("md-render").setup_highlights()
-      local preview = require "md-render.preview"
-      local max_width = math.max(40, vim.api.nvim_win_get_width(winid) - 4)
-      -- buf_dir is required to resolve relative image paths and Obsidian
-      -- wiki-links (e.g. ![[IMG.jpeg]]); without it the vault root cannot be
-      -- located and images render only as their placeholder header text.
-      local build_opts = { max_width = max_width, buf_dir = vim.fn.fnamemodify(filepath, ":h") }
-      local content = preview.build_content(lines, build_opts)
-      vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-      display_utils.apply_content_to_buffer(bufnr, ns, content)
-
-      -- Scroll to the matched source line
-      if entry.lnum and content.source_line_map then
-        local target = #content.source_line_map
-        for i, sl in ipairs(content.source_line_map) do
-          if sl >= entry.lnum then
-            target = i
-            break
-          end
-        end
+        -- Stage 2: apply to buffer (yields after, so the picker can absorb
+        -- keypresses queued during Stage 1).
         vim.schedule(function()
-          if not vim.api.nvim_win_is_valid(winid) then return end
-          local win_buf = vim.api.nvim_win_get_buf(winid)
-          local buf_lines = vim.api.nvim_buf_line_count(win_buf)
-          target = math.max(1, math.min(target, buf_lines))
-          local win_height = vim.api.nvim_win_get_height(winid)
-          local top = math.max(0, target - 1 - math.floor(win_height / 2))
-          vim.api.nvim_win_call(winid, function()
-            vim.fn.winrestview { topline = top + 1 }
-          end)
-          vim.api.nvim_win_set_cursor(winid, { target, 0 })
-        end)
-      end
+          if not still_current() then return end
+          vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+          display_utils.apply_content_to_buffer(bufnr, ns, content)
 
-      -- Only set up images when the file changes
-      if file_changed then
-        image_state = display_utils.setup_images(winid, content, ns, {
-          buf = bufnr,
-          build_content = function()
-            return preview.build_content(lines, build_opts)
-          end,
-        })
-      end
+          -- Scroll to the matched source line
+          if entry.lnum and content.source_line_map then
+            local target = #content.source_line_map
+            for i, sl in ipairs(content.source_line_map) do
+              if sl >= entry.lnum then
+                target = i
+                break
+              end
+            end
+            vim.schedule(function()
+              if not still_current() then return end
+              local win_buf = vim.api.nvim_win_get_buf(winid)
+              local buf_lines = vim.api.nvim_buf_line_count(win_buf)
+              target = math.max(1, math.min(target, buf_lines))
+              local win_height = vim.api.nvim_win_get_height(winid)
+              local top = math.max(0, target - 1 - math.floor(win_height / 2))
+              vim.api.nvim_win_call(winid, function()
+                vim.fn.winrestview { topline = top + 1 }
+              end)
+              vim.api.nvim_win_set_cursor(winid, { target, 0 })
+            end)
+          end
+
+          -- Stage 3: image setup (~15 ms). Final yield so the picker stays
+          -- responsive even when this stage runs.
+          vim.schedule(function()
+            if not still_current() then return end
+            image_state = display_utils.setup_images(winid, content, ns, {
+              buf = bufnr,
+              build_content = function()
+                return preview.build_content(lines, build_opts)
+              end,
+            })
+          end)
+        end)
+      end, RENDER_DEBOUNCE_MS)
     end,
     teardown = function()
+      cancel_render_timer()
       if image_state then
         require("md-render.display_utils").cleanup_images(image_state)
         image_state = nil
