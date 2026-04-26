@@ -163,7 +163,11 @@ function M.previewer(opts)
       require("md-render").setup_highlights()
       local preview = require "md-render.preview"
       local max_width = math.max(40, vim.api.nvim_win_get_width(winid) - 4)
-      local content = preview.build_content(lines, { max_width = max_width })
+      -- buf_dir is required to resolve relative image paths and Obsidian
+      -- wiki-links (e.g. ![[IMG.jpeg]]); without it the vault root cannot be
+      -- located and images render only as their placeholder header text.
+      local build_opts = { max_width = max_width, buf_dir = vim.fn.fnamemodify(filepath, ":h") }
+      local content = preview.build_content(lines, build_opts)
       vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
       display_utils.apply_content_to_buffer(bufnr, ns, content)
 
@@ -195,7 +199,7 @@ function M.previewer(opts)
         image_state = display_utils.setup_images(winid, content, ns, {
           buf = bufnr,
           build_content = function()
-            return preview.build_content(lines, { max_width = max_width })
+            return preview.build_content(lines, build_opts)
           end,
         })
       end
