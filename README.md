@@ -139,6 +139,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `<Plug>(md-render-preview)` | Toggle a floating preview window for the current Markdown buffer |
 | `<Plug>(md-render-preview-tab)` | Toggle a tab preview for the current Markdown buffer |
+| `<Plug>(md-render-toggle)` | **[experimental]** Toggle the current window between source and render mode in place |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
 ## Commands
@@ -147,8 +148,27 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `:MdRender` | Toggle a floating preview window |
 | `:MdRenderTab` | Toggle a tab preview |
+| `:MdRenderToggle` | **[experimental]** Toggle the current window between source and render mode in place |
 | `:MdRenderPager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRenderDemo` | Show a demo window with all supported Markdown notations |
+
+### In-place toggle (experimental)
+
+> **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
+
+`:MdRenderToggle` swaps the current window between the source Markdown buffer and a rendered view of it — without opening a new tab or floating window. This is designed for split layouts where you want, for example, code in one split and the rendered README in the other.
+
+```vim
+:vsplit README.md
+:MdRenderToggle
+```
+
+Behavior:
+
+- The render buffer is **read-only** and reused across toggles (one render buffer per source).
+- When the same source is shown in multiple windows, only the invoking window swaps; edits from other windows are reflected on the next toggle into render mode.
+- Cursor position round-trips between source and render via the source-line mapping.
+- Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRenderToggle` again to return to source mode. `<LeftMouse>` still toggles folds, expands regions, and opens links.
 
 ### Pager mode
 

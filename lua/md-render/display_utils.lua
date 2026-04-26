@@ -255,14 +255,17 @@ function M.open_float_window(buf, content, float_win, opts)
   return win
 end
 
---- Set up keymaps and mouse click handlers for the floating window
+--- Set up keymaps and mouse click handlers for the floating window.
+--- When `opts.close_keys` is an empty list and `close_handle` is nil, no
+--- close behavior is installed — useful for toggle-mode render buffers
+--- that should not close themselves.
 ---@param buf integer
 ---@param ns integer
 ---@param win integer
 ---@param content MdRender.Content
----@param float_win MdRender.FloatWin
----@param opts? { close_line_idx?: integer, on_fold_toggle?: fun(source_line: integer, collapsed: boolean), on_expand_toggle?: fun(block_id: integer, expanded: boolean), get_content?: fun(): MdRender.Content }
-function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
+---@param close_handle MdRender.FloatWin|MdRender.TabWin|nil
+---@param opts? { close_line_idx?: integer, close_keys?: string[], on_fold_toggle?: fun(source_line: integer, collapsed: boolean), on_expand_toggle?: fun(block_id: integer, expanded: boolean), get_content?: fun(): MdRender.Content }
+function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
   opts = opts or {}
   local close_line_idx = opts.close_line_idx
   local on_fold_toggle = opts.on_fold_toggle
@@ -271,7 +274,7 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
     return content
   end
 
-  local close_keys = { "q", "<Esc>", "<CR>" }
+  local close_keys = opts.close_keys or { "q", "<Esc>", "<CR>" }
   for _, key in ipairs(close_keys) do
     vim.api.nvim_buf_set_keymap(buf, "n", key, ":close<CR>", { noremap = true, silent = true })
   end
@@ -279,8 +282,8 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
   vim.keymap.set("n", "<LeftRelease>", function()
     local mouse = vim.fn.getmousepos()
     if mouse.winid == win then
-      if close_line_idx and mouse.line == close_line_idx + 1 then
-        float_win:close_if_valid()
+      if close_line_idx and close_handle and mouse.line == close_line_idx + 1 then
+        close_handle:close_if_valid()
         return
       end
 

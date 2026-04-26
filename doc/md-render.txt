@@ -28,8 +28,9 @@ INTRODUCTION						*md-render-introduction*
 
 md-render.nvim is a Markdown rendering engine for Neovim.  It transforms raw
 Markdown into richly highlighted, interactive content right inside your
-editor.  Supports floating windows, tab views, and a pager mode for
-`less`-like usage from the command line.
+editor.  Supports floating windows, tab views, in-place toggle between
+source and render mode (|:MdRenderToggle|), and a pager mode for `less`-like
+usage from the command line.
 
 Features: ~
 
@@ -112,6 +113,13 @@ Map them yourself: >lua
 	Toggle a tab preview for the current Markdown buffer.  If the tab
 	preview is already open, it will be closed.
 
+						     *<Plug>(md-render-toggle)*
+<Plug>(md-render-toggle) ~
+	[EXPERIMENTAL] Toggle the current window between source and render
+	mode for the current Markdown buffer.  No new window or tab is
+	opened — the window's buffer is swapped in place.  See
+	|:MdRenderToggle|.
+
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
 	Show a demo window with all supported Markdown notations.
@@ -121,6 +129,11 @@ Inside the preview window, the following keys are available:
 	`q` / `<Esc>`	Close the preview window
 	`<CR>`		Toggle callout fold / expand truncated region
 	`<LeftMouse>`	Click links, toggle folds, expand regions
+
+Inside a render-mode buffer opened with |:MdRenderToggle|, `q` / `<Esc>` /
+`<CR>` are NOT bound to close — call |:MdRenderToggle| again to return to
+source mode.  `<LeftMouse>` still toggles folds, expands regions, and
+opens links.
 
 ==============================================================================
 COMMANDS						    *md-render-commands*
@@ -132,6 +145,27 @@ COMMANDS						    *md-render-commands*
 								  *:MdRenderTab*
 :MdRenderTab ~
 	Toggle a tab preview for the current Markdown buffer.
+
+							     *:MdRenderToggle*
+:MdRenderToggle ~
+	[EXPERIMENTAL] This feature is new and the UX may change.  Please
+	report any issues or rough edges.
+
+	Toggle the current window between source and render mode in place
+	(no new window or tab).  Useful when working with splits — for
+	example, edit code in one split while showing the rendered README in
+	the other.
+
+	Behavior:
+
+	- The render buffer is read-only and reused across toggles (cached
+	  per source buffer; one render buffer per source).
+	- When the source buffer is shown in multiple windows, only the
+	  invoking window swaps; edits from any other window are reflected
+	  in the render buffer on the next toggle to render mode.
+	- Cursor position round-trips: the source line nearest the cursor in
+	  render mode becomes the cursor target when toggling back, and vice
+	  versa.
 
 								*:MdRenderPager*
 :MdRenderPager ~
@@ -297,6 +331,20 @@ MdPreview.show_pager({opts}) ~
 
 	Example: >lua
 	  require("md-render").preview.show_pager()
+<
+
+							     *MdPreview.toggle()*
+MdPreview.toggle({opts}) ~
+	[EXPERIMENTAL] Toggle the current window between source and render
+	mode in place.  See |:MdRenderToggle|.
+
+	Parameters: ~
+	  {opts}  (table|nil) Optional settings (used only when the render
+		  buffer is created for the first time):
+		  - {max_width}  (integer) Maximum rendering width
+
+	Example: >lua
+	  require("md-render").preview.toggle()
 <
 
 							 *MdPreview.show_demo()*
