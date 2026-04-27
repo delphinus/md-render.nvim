@@ -121,6 +121,11 @@ lazy.nvim の場合: >lua
 	ます。新しいウィンドウやタブは開かず、ウィンドウ内のバッファをその場で
 	入れ替えます。 |:MdRenderToggle| を参照。
 
+							       *<Plug>(md-render-auto)*
+<Plug>(md-render-auto) ~
+	[実験的] 現在のバッファで Insert モード連動の自動トグル(Insert 以外で
+	render、Insert 中は source)を on/off します。 |:MdRenderAuto| を参照。
+
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
 	対応する全 Markdown 記法のデモウィンドウを表示します。
@@ -167,6 +172,67 @@ lazy.nvim の場合: >lua
 	- カーソル位置は往復します。レンダーモードでカーソルがある行に最も近
 	  いソース行が、ソースに戻したときのカーソル位置になります(逆方向も
 	  同様)。
+
+								  *:MdRenderAuto*
+:MdRenderAuto [on|off] ~
+	[実験的] 新しく追加された機能で、UX が変わる可能性があります。問題や
+	違和感があればぜひお知らせください。
+
+	現在のバッファについて、Insert モードに連動して source/render を自動的
+	に切り替えます。状態はバッファ単位で `b:md_render_auto` に保持されます。
+
+	- `:MdRenderAuto on` は現在のバッファを即座に render モードへ切り替え、
+	  `InsertEnter` で source、`InsertLeave` で render に戻る autocmd を登
+	  録します。
+	- `:MdRenderAuto off` は autocmd を解除しバッファのマーカーをクリアし
+	  ます。表示モードは変更しません。
+	- `:MdRenderAuto` (引数なし)は on / off をトグルします。
+
+	プラグイン側で |FileType| autocmd は登録しません。全 Markdown バッファ
+	で自動有効化したい場合は自分で書いてください: >vim
+
+	  autocmd FileType markdown silent! MdRenderAuto on
+<
+	挙動:
+
+	- レンダーバッファは `nomodifiable` なので、その上では |InsertEnter|
+	  が発火しません。auto モード中はレンダーバッファ上で `i` / `I` /
+	  `a` / `A` / `o` / `O` を再マップし、まず source に切り替えてから
+	  対応する位置で Insert に入る形にしています。
+	- `<Esc>` で source の Normal モードに戻ると、|InsertLeave| autocmd
+	  が 50ms デバウンスで render へ戻します。
+	- `i<Esc>i<Esc>` のような連射でも最後の状態だけが反映されます。
+	- 切替はカレントウィンドウのみが対象です。同じソースを表示している他
+	  ウィンドウは手動で |:MdRenderToggle| してください。
+
+	レンダーバッファ上で効くもの: ~
+
+	  読み取り系操作: 移動 (hjkl, gg, G, ...)、検索 (/, ?)、yank (y)、
+	  ビジュアル選択、マーク、<LeftMouse>(折りたたみ・展開・リンク
+	  open)。
+
+	  `:w` / `:w!` は source バッファへ転送されるため、render モード
+	  を抜けずに保存できます。`:w other.md` や `:saveas` のような別名
+	  保存は対応外です。 |:MdRenderToggle| で source に戻ってから操作
+	  してください。
+
+	  レンダーバッファには `<source-path> [render]` という名前が付くた
+	  め、ステータスラインやピッカーで識別できます。
+
+	レンダーバッファ上で効かないもの: ~
+
+	  レンダーバッファは `nomodifiable` なので、書き換え系の操作はブロック
+	  されるか黙って no-op になります:
+
+	  - 編集系キー: c C s S r R d D x X p P J ~ >> <<
+	  - undo / redo (u / <C-r>) — レンダーバッファ自体に編集履歴があ
+	    りません
+	  - バッファを書き換える Ex コマンド: :s, :!filter, gq
+	  - 編集キーを含むマクロ
+
+	  これらを使いたい場合は |:MdRenderToggle| (auto モード中なら `i` /
+	  `I` / `a` / `A` / `o` / `O` を押すだけでも可)で source に戻ってか
+	  ら操作してください。
 
 								*:MdRenderPager*
 :MdRenderPager ~
@@ -333,6 +399,28 @@ MdPreview.toggle({opts}) ~
 	使用例: >lua
 	  require("md-render").preview.toggle()
 <
+
+							    *MdPreview.auto_on()*
+MdPreview.auto_on({opts}) ~
+	[実験的] 現在のバッファで Insert モード連動の自動トグルを有効化し、
+	即座に render モードへ切り替えます。詳細は |:MdRenderAuto| を参照。
+
+	パラメータ: ~
+	  {opts}  (table|nil) レンダーバッファ初回生成時に |MdPreview.toggle()|
+		  へ転送されます。
+
+							   *MdPreview.auto_off()*
+MdPreview.auto_off() ~
+	[実験的] 現在のバッファの自動トグルを解除します。表示モードはそのまま
+	です。詳細は |:MdRenderAuto| を参照。
+
+							*MdPreview.auto_toggle()*
+MdPreview.auto_toggle({opts}) ~
+	[実験的] 現在のバッファの自動トグル状態を on/off で反転します。詳細は
+	|:MdRenderAuto| を参照。
+
+	パラメータ: ~
+	  {opts}  (table|nil) on にする際 |MdPreview.auto_on()| へ転送されます。
 
 							*MdPreview.show_pager()*
 MdPreview.show_pager({opts}) ~

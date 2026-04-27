@@ -140,6 +140,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `<Plug>(md-render-preview)` | 現在の Markdown バッファのフローティングプレビューをトグル |
 | `<Plug>(md-render-preview-tab)` | 現在の Markdown バッファのタブプレビューをトグル |
 | `<Plug>(md-render-toggle)` | **[実験的]** 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
+| `<Plug>(md-render-auto)` | **[実験的]** 現在のバッファで auto モード(Insert 以外で render)をトグル |
 | `<Plug>(md-render-demo)` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
 ## コマンド
@@ -149,6 +150,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `:MdRender` | フローティングプレビューをトグル |
 | `:MdRenderTab` | タブプレビューをトグル |
 | `:MdRenderToggle` | **[実験的]** 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
+| `:MdRenderAuto [on\|off]` | **[実験的]** Insert モードに連動して source/render を自動切替(バッファ単位) |
 | `:MdRenderPager` | ページャーモード — フルスクリーン、装飾なし、`q` で Neovim 終了 |
 | `:MdRenderDemo` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
@@ -169,6 +171,51 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 - 同じソースが複数のウィンドウで表示されている場合、切替はそのウィンドウだけに作用し、他のウィンドウの編集は次に当該ウィンドウをレンダーモードにした時点で反映されます。
 - カーソル位置は source line マップを介してソース ↔ レンダー間を往復します。
 - レンダーモード中、`q` / `<Esc>` / `<CR>` は閉じる動作に**割り当てられません**。ソースに戻すには再度 `:MdRenderToggle` を呼びます。`<LeftMouse>` は折りたたみ・展開・リンク open を引き続き処理します。
+
+### Insert モード連動の自動トグル(実験的)
+
+> **実験的機能です。** 新しく追加された機能で、UX が変わる可能性があります。問題や違和感があればぜひお知らせください。
+
+`:MdRenderAuto on` を呼ぶと、現在のバッファが即座にレンダーモードへ切り替わり、その後 `InsertEnter` で source、`InsertLeave` で render に自動的に戻る挙動になります。状態はバッファ単位で `b:md_render_auto` に保持されます。
+
+```vim
+:MdRenderAuto on    " 現在のバッファで有効化
+:MdRenderAuto off   " 解除(表示モードはそのまま)
+:MdRenderAuto       " 引数なしでトグル
+```
+
+全 Markdown バッファで自動有効化したい場合は、自分で autocmd を書いてください(プラグイン側では登録しません):
+
+```vim
+autocmd FileType markdown silent! MdRenderAuto on
+```
+
+挙動:
+
+- レンダーバッファは `nomodifiable` なので、その上では `InsertEnter` が発火しません。代わりに、auto モード中はレンダーバッファ上で `i` / `I` / `a` / `A` / `o` / `O` を再マップし、まず source に切り替えてから対応する位置で Insert に入る形にしています。
+- `<Esc>` で Source の Normal モードに戻ると、`InsertLeave` autocmd が 50ms デバウンスで render へ戻します。
+- `i<Esc>i<Esc>` のような連射でも最後の状態だけが反映されます。
+- 切替はカレントウィンドウのみが対象です。同じソースを表示している他ウィンドウは手動で `:MdRenderToggle` してください。
+- `:MdRenderAuto off` は表示モードを変更しません。source に戻したい場合は `:MdRenderToggle` を呼んでください。
+
+#### レンダーバッファ上で効くもの
+
+読み取り系はすべて通常通り動きます: 移動 (`hjkl`, `gg`, `G` 等)、検索 (`/`, `?`)、yank (`y`)、ビジュアル選択、マーク、`<LeftMouse>`(折りたたみ・展開・リンク open)。
+
+`:w` / `:w!` は source バッファへ転送されるため、render モードを抜けずに保存できます。(`:w other.md` や `:saveas` のような別名保存は対応外です。 `:MdRenderToggle` で source に戻ってから操作してください。)
+
+レンダーバッファには `<source-path> [render]` という名前が付くため、ステータスラインやピッカーで識別できます。
+
+#### レンダーバッファ上で効かないもの
+
+レンダーバッファは `nomodifiable` なので、書き換え系の操作はブロックされるか黙って no-op になります:
+
+- 編集系キー: `c` `C` `s` `S` `r` `R` `d` `D` `x` `X` `p` `P` `J` `~` `>>` `<<`
+- **undo / redo (`u` / `<C-r>`)** — レンダーバッファ自体に編集履歴がありません
+- バッファを書き換える Ex コマンド: `:s`, `:!filter`, `gq`
+- 編集キーを含むマクロ
+
+これらを使いたい場合は、`:MdRenderToggle`(auto モード中なら `i` / `I` / `a` / `A` / `o` / `O` を押すだけでも可)で source に戻ってから操作してください。
 
 ### ページャーモード
 

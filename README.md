@@ -140,6 +140,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `<Plug>(md-render-preview)` | Toggle a floating preview window for the current Markdown buffer |
 | `<Plug>(md-render-preview-tab)` | Toggle a tab preview for the current Markdown buffer |
 | `<Plug>(md-render-toggle)` | **[experimental]** Toggle the current window between source and render mode in place |
+| `<Plug>(md-render-auto)` | **[experimental]** Toggle auto mode (render outside Insert) for the current buffer |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
 ## Commands
@@ -149,6 +150,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `:MdRender` | Toggle a floating preview window |
 | `:MdRenderTab` | Toggle a tab preview |
 | `:MdRenderToggle` | **[experimental]** Toggle the current window between source and render mode in place |
+| `:MdRenderAuto [on\|off]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
 | `:MdRenderPager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRenderDemo` | Show a demo window with all supported Markdown notations |
 
@@ -169,6 +171,51 @@ Behavior:
 - When the same source is shown in multiple windows, only the invoking window swaps; edits from other windows are reflected on the next toggle into render mode.
 - Cursor position round-trips between source and render via the source-line mapping.
 - Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRenderToggle` again to return to source mode. `<LeftMouse>` still toggles folds, expands regions, and opens links.
+
+### Auto-toggle on Insert mode (experimental)
+
+> **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
+
+`:MdRenderAuto on` flips the current buffer to render mode immediately, then swaps to source on `InsertEnter` and back to render on `InsertLeave`. The state is per buffer and recorded in `b:md_render_auto`.
+
+```vim
+:MdRenderAuto on    " enable for the current buffer
+:MdRenderAuto off   " disable; the displayed mode is left as-is
+:MdRenderAuto       " toggle (with no argument)
+```
+
+To opt every Markdown buffer into auto mode, add an autocmd of your own — the plugin does not register one for you:
+
+```vim
+autocmd FileType markdown silent! MdRenderAuto on
+```
+
+Behavior:
+
+- The render buffer is `nomodifiable`, so `InsertEnter` cannot fire on it. Instead, while auto mode is active the keys `i` / `I` / `a` / `A` / `o` / `O` are remapped on the render buffer to swap to source first and then enter Insert at the corresponding location.
+- `<Esc>` returns to source's Normal mode and the `InsertLeave` autocmd debounces a swap back to render after 50 ms.
+- Rapid `i<Esc>i<Esc>` keystrokes coalesce into the final state thanks to the debounce.
+- Only the current window is swapped; other windows showing the same source need a manual `:MdRenderToggle`.
+- `:MdRenderAuto off` does not change the displayed mode — call `:MdRenderToggle` afterwards if you want to flip back.
+
+#### What works on the render buffer
+
+Read-only operations all work normally: motion (`hjkl`, `gg`, `G`, ...), search (`/`, `?`), yank (`y`), visual selection, marks, and `<LeftMouse>` (folds, expand, link open).
+
+`:w` and `:w!` are forwarded to the source buffer so you can save without leaving render mode. (Different filenames like `:w other.md` and `:saveas` are not supported — switch to source with `:MdRenderToggle` first.)
+
+The render buffer is named `<source-path> [render]` so it's identifiable in your statusline and pickers.
+
+#### What does NOT work on the render buffer
+
+The render buffer is `nomodifiable`, so any mutating operation is blocked or silently a no-op:
+
+- Editing keys: `c` `C` `s` `S` `r` `R` `d` `D` `x` `X` `p` `P` `J` `~` `>>` `<<`
+- **Undo / redo (`u` / `<C-r>`)** — the render buffer has no edit history of its own
+- Ex commands that mutate the buffer: `:s`, `:!filter`, `gq`
+- Macros that contain editing keys
+
+To do any of the above, run `:MdRenderToggle` (or just press `i` / `I` / `a` / `A` / `o` / `O` in auto mode) to swap to source first.
 
 ### Pager mode
 

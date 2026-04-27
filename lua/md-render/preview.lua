@@ -173,12 +173,36 @@ function Session.new(source_bufnr, ns_name, opts)
   self.dirty = false
   self._debounce_timer = nil
 
+  -- Give the render buffer a recognisable name so statuslines, pickers,
+  -- and bufferline plugins can show what's being viewed. The "[render]"
+  -- suffix avoids colliding with the source name.
+  --
+  -- Suppress autocmds while we change the name and filetype: user-configured
+  -- handlers (markdown ftplugins, treesitter, lualine, etc.) would otherwise
+  -- treat this scratch buffer as a real markdown file and clobber our
+  -- pre-rendered content (conceallevel, readonly, syntax overlays, ...).
+  if source_name ~= "" then
+    local saved_ei = vim.o.eventignore
+    vim.o.eventignore = "all"
+    pcall(vim.api.nvim_buf_set_name, self.buf, source_name .. " [render]")
+    vim.bo[self.buf].filetype = ""
+    vim.o.eventignore = saved_ei
+    -- nvim_buf_set_name can flip readonly when it thinks the file already
+    -- exists on disk; defend so apply_content_to_buffer doesn't W10-warn.
+    vim.bo[self.buf].readonly = false
+    vim.bo[self.buf].modified = false
+  end
+
   require("md-render").setup_highlights()
 
   self.opts.fold_state = self.fold_state
   self.opts.expand_state = self.expand_state
   self.content = MdPreview.build_content(self.source_lines, self.opts)
+  -- Defensive: nvim_buf_set_name above can leave the buffer modifiable=false
+  -- on some setups (third-party autocmds firing even with eventignore=all).
+  vim.bo[self.buf].modifiable = true
   display_utils.apply_content_to_buffer(self.buf, self.ns, self.content)
+  vim.bo[self.buf].modified = false
 
   -- Initialize fold_state from default fold states (e.g. `> [!TIP]-`)
   for _, fold in ipairs(self.content.callout_folds) do
@@ -213,10 +237,17 @@ function Session:rebuild()
     end
   end
 
+  -- Suppress the read-only guard's TextChanged warning for the rebuild
+  -- (we are the ones writing to the buffer). Cleared on the next tick.
+  self._suppress_text_change = true
   vim.api.nvim_set_option_value("modifiable", true, { buf = self.buf })
   vim.api.nvim_buf_clear_namespace(self.buf, self.ns, 0, -1)
   display_utils.apply_content_to_buffer(self.buf, self.ns, new_content)
   vim.api.nvim_set_option_value("modifiable", false, { buf = self.buf })
+  -- acwrite buftype tracks 'modified'; our internal rebuild shouldn't
+  -- count as a user edit.
+  vim.bo[self.buf].modified = false
+  vim.schedule(function() self._suppress_text_change = false end)
 
   for w, view in pairs(saved_views) do
     if vim.api.nvim_win_is_valid(w) then
@@ -618,6 +649,16 @@ local function live_update_augroup(bufnr)
   return "md_render_toggle_live_" .. bufnr
 end
 
+-- Auto-toggle state declared up here so install_source_watcher's BufWipeout
+-- callback can clean it up. The auto_on / auto_off implementations live
+-- further down with the rest of the auto-toggle logic.
+---@type table<integer, { in_timer?: table, leave_timer?: table }>
+local _auto_state = {}
+
+local function auto_augroup(bufnr)
+  return "md_render_auto_" .. bufnr
+end
+
 --- Schedule a debounced live rebuild of the render buffer.
 --- When the render buffer is hidden, just mark dirty and return; the next
 --- toggle back to render will rebuild in `get_or_create_toggle_session`.
@@ -668,13 +709,20 @@ local function install_live_update(session)
 end
 
 --- Apply read-only buffer options used by toggle-mode render buffers.
+--- - buftype = `acwrite` so `:w` reaches the BufWriteCmd handler installed
+---   in install_render_buf_guards (instead of E382 from Vim itself).
+--- - modifiable = false to block editing keys.
+--- - readonly is intentionally left false: Vim checks readonly *before*
+---   firing BufWriteCmd, so a true readonly would short-circuit `:w` with
+---   E45 and prevent us from forwarding the write to the source.
 ---@param session MdRender.Session
 local function apply_render_buf_options(session)
-  vim.bo[session.buf].buftype = "nofile"
+  vim.bo[session.buf].buftype = "acwrite"
   vim.bo[session.buf].bufhidden = "hide"
   vim.bo[session.buf].swapfile = false
   vim.bo[session.buf].modifiable = false
-  vim.bo[session.buf].readonly = true
+  vim.bo[session.buf].readonly = false
+  vim.bo[session.buf].modified = false
 end
 
 --- Re-assert read-only on entry; revert on accidental edit.
@@ -688,7 +736,8 @@ local function install_render_buf_guards(session)
     callback = function()
       if vim.api.nvim_buf_is_valid(session.buf) then
         vim.bo[session.buf].modifiable = false
-        vim.bo[session.buf].readonly = true
+        -- Don't set readonly = true here: Vim's :w checks readonly before
+        -- firing BufWriteCmd, so doing so would break our :w forwarding.
       end
     end,
   })
@@ -697,11 +746,62 @@ local function install_render_buf_guards(session)
     group = augroup,
     buffer = session.buf,
     callback = function()
+      -- Ignore TextChanged we triggered ourselves during rebuild.
+      if session._suppress_text_change then return end
       vim.notify(
         "md-render: render buffer is read-only; reverting. Use :MdRenderToggle to edit the source.",
         vim.log.levels.WARN
       )
       session:rebuild()
+    end,
+  })
+
+  -- Forward `:w` / `:w!` on the render buffer to a `:write` on the source.
+  -- :saveas / :w other-name is rejected with a warning (use :MdRenderToggle
+  -- to switch to source first).
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    group = augroup,
+    buffer = session.buf,
+    callback = function(ev)
+      if not vim.api.nvim_buf_is_valid(session.source_bufnr) then
+        vim.notify("md-render: source buffer is gone; cannot save", vim.log.levels.ERROR)
+        return
+      end
+      local render_name = vim.api.nvim_buf_get_name(session.buf)
+      if ev.file ~= "" and ev.file ~= render_name then
+        vim.notify(
+          "md-render: writing to a different file from render mode is not supported; "
+            .. "use :MdRenderToggle and save from source",
+          vim.log.levels.WARN
+        )
+        return
+      end
+      local bang = vim.v.cmdbang == 1 and "!" or ""
+      -- nvim_buf_call doesn't reliably switch the curbuf for the `:write`
+      -- ex command (it ends up writing the actual current window's
+      -- buffer — i.e. the render buffer — and triggers E45). Swap the
+      -- current window's buffer to source for the write, then restore.
+      -- eventignore=all around the swaps suppresses BufLeave/Enter side
+      -- effects; the write itself runs with autocmds enabled so
+      -- BufWritePre/Post (formatter on save, etc.) fire normally.
+      local win = vim.api.nvim_get_current_win()
+      local saved_buf = vim.api.nvim_win_get_buf(win)
+      local saved_ei = vim.o.eventignore
+      vim.o.eventignore = "all"
+      vim.api.nvim_win_set_buf(win, session.source_bufnr)
+      vim.o.eventignore = saved_ei
+      local ok, err = pcall(vim.api.nvim_command, "write" .. bang)
+      vim.o.eventignore = "all"
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_buf_is_valid(saved_buf) then
+        vim.api.nvim_win_set_buf(win, saved_buf)
+      end
+      vim.o.eventignore = saved_ei
+      -- The render buffer's 'modified' flag was set by Vim when :w was
+      -- invoked; clear it so the user doesn't see [+] linger.
+      if vim.api.nvim_buf_is_valid(session.buf) then
+        vim.bo[session.buf].modified = false
+      end
+      if not ok then error(err) end
     end,
   })
 end
@@ -721,6 +821,12 @@ local function install_source_watcher(session)
         session._debounce_timer:stop()
         session._debounce_timer = nil
       end
+      local astate = _auto_state[source_bufnr]
+      if astate then
+        if astate.in_timer then astate.in_timer:stop() end
+        if astate.leave_timer then astate.leave_timer:stop() end
+        _auto_state[source_bufnr] = nil
+      end
       session:cleanup_images()
       if vim.api.nvim_buf_is_valid(session.buf) then
         pcall(vim.api.nvim_buf_delete, session.buf, { force = true })
@@ -729,6 +835,7 @@ local function install_source_watcher(session)
       pcall(vim.api.nvim_del_augroup_by_name, toggle_buf_augroup(session.buf))
       pcall(vim.api.nvim_del_augroup_by_name, toggle_src_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, live_update_augroup(source_bufnr))
+      pcall(vim.api.nvim_del_augroup_by_name, auto_augroup(source_bufnr))
     end,
   })
 end
@@ -866,10 +973,160 @@ MdPreview.toggle = function(opts)
   })
 end
 
+-- =====================================================================
+-- Auto-toggle: render outside Insert mode, source while editing.
+-- (`_auto_state` and `auto_augroup` are declared earlier so install_source_watcher
+--  can reference them in its BufWipeout cleanup.)
+-- =====================================================================
+
+-- Insert-entry keys that, when pressed on a render buffer in auto mode,
+-- toggle to source and then re-fire so the user lands in Insert mode at
+-- the corresponding spot. (Visual-mode and operator-pending keys are
+-- intentionally left alone.)
+local AUTO_INSERT_KEYS = { "i", "I", "a", "A", "o", "O" }
+
+local function install_auto_insert_keymaps(render_buf)
+  for _, key in ipairs(AUTO_INSERT_KEYS) do
+    vim.keymap.set("n", key, function()
+      MdPreview.toggle()
+      vim.schedule(function()
+        vim.api.nvim_feedkeys(key, "n", false)
+      end)
+    end, {
+      buffer = render_buf,
+      noremap = true,
+      silent = true,
+      desc = "md-render auto: switch to source then " .. key,
+    })
+  end
+end
+
+local function uninstall_auto_insert_keymaps(render_buf)
+  if not vim.api.nvim_buf_is_valid(render_buf) then return end
+  for _, key in ipairs(AUTO_INSERT_KEYS) do
+    pcall(vim.keymap.del, "n", key, { buffer = render_buf })
+  end
+end
+
+--- Resolve the source buffer that auto_on/off/toggle should act on.
+--- When the current window is showing a render buffer, follow back to its
+--- source so the user can call auto_off / auto_toggle without first
+--- swapping back to source mode.
+---@return integer
+local function get_auto_target_buf()
+  local win = vim.api.nvim_get_current_win()
+  local win_state = get_win_state(win)
+  if win_state and win_state.mode == "render"
+    and vim.api.nvim_buf_is_valid(win_state.source_buf) then
+    return win_state.source_buf
+  end
+  return vim.api.nvim_get_current_buf()
+end
+
+--- Schedule a debounced auto-transition for `bufnr` toward `target_mode`.
+--- 50ms debounce coalesces rapid Insert-mode boundary events
+--- (e.g. `i<Esc>i<Esc>` or `<C-o>` round-trips).
+---@param bufnr integer
+---@param target_mode "source"|"render"
+local function schedule_auto_transition(bufnr, target_mode)
+  local state = _auto_state[bufnr]
+  if not state then return end
+  local key = (target_mode == "source") and "in_timer" or "leave_timer"
+  if state[key] then state[key]:stop() end
+  state[key] = vim.defer_fn(function()
+    state[key] = nil
+    if not vim.api.nvim_buf_is_valid(bufnr) then return end
+    if not vim.b[bufnr].md_render_auto then return end
+
+    local win = vim.api.nvim_get_current_win()
+    local cur_buf = vim.api.nvim_win_get_buf(win)
+    local win_state = get_win_state(win)
+
+    if target_mode == "source" then
+      if win_state and win_state.mode == "render" and win_state.source_buf == bufnr then
+        MdPreview.toggle()
+      end
+    else  -- "render"
+      if cur_buf == bufnr and (not win_state or win_state.mode ~= "render") then
+        MdPreview.toggle()
+      end
+    end
+  end, 50)
+end
+
+--- Enable auto-toggle for the current buffer and immediately swap to render.
+---@param opts? { max_width?: integer }
+function MdPreview.auto_on(opts)
+  local bufnr = get_auto_target_buf()
+  local ok, warn = check_markdown_buffer(bufnr)
+  if not ok then
+    vim.notify(warn, vim.log.levels.WARN)
+    return
+  end
+  if vim.b[bufnr].md_render_auto then return end
+
+  vim.b[bufnr].md_render_auto = true
+  _auto_state[bufnr] = { in_timer = nil, leave_timer = nil }
+
+  -- Only InsertLeave is needed: the InsertEnter side is driven by buffer-local
+  -- keymaps on the render buffer (see install_auto_insert_keymaps), since the
+  -- render buffer is nomodifiable and would never fire InsertEnter on its own.
+  local augroup = vim.api.nvim_create_augroup(auto_augroup(bufnr), { clear = true })
+  vim.api.nvim_create_autocmd("InsertLeave", {
+    group = augroup,
+    buffer = bufnr,
+    callback = function() schedule_auto_transition(bufnr, "render") end,
+  })
+
+  local win = vim.api.nvim_get_current_win()
+  local win_state = get_win_state(win)
+  if not win_state or win_state.mode ~= "render" then
+    MdPreview.toggle(opts)
+  end
+
+  -- Install Insert-entry keymaps on the render buffer (now created by toggle).
+  local session = _toggle_sessions[bufnr]
+  if session and vim.api.nvim_buf_is_valid(session.buf) then
+    install_auto_insert_keymaps(session.buf)
+  end
+end
+
+--- Disable auto-toggle for the current buffer; leave the displayed mode untouched.
+function MdPreview.auto_off()
+  local bufnr = get_auto_target_buf()
+  if not vim.b[bufnr].md_render_auto then return end
+
+  vim.b[bufnr].md_render_auto = nil
+  local state = _auto_state[bufnr]
+  if state then
+    if state.in_timer then state.in_timer:stop() end
+    if state.leave_timer then state.leave_timer:stop() end
+    _auto_state[bufnr] = nil
+  end
+  pcall(vim.api.nvim_del_augroup_by_name, auto_augroup(bufnr))
+
+  local session = _toggle_sessions[bufnr]
+  if session then uninstall_auto_insert_keymaps(session.buf) end
+end
+
+--- Flip auto-toggle state for the current buffer.
+---@param opts? { max_width?: integer }
+function MdPreview.auto_toggle(opts)
+  local bufnr = get_auto_target_buf()
+  if vim.b[bufnr].md_render_auto then
+    MdPreview.auto_off()
+  else
+    MdPreview.auto_on(opts)
+  end
+end
+
 -- Expose for tests
 MdPreview._toggle_sessions = _toggle_sessions
 MdPreview._schedule_live_rebuild = schedule_live_rebuild
 MdPreview._live_update_augroup = live_update_augroup
+MdPreview._auto_state = _auto_state
+MdPreview._auto_augroup = auto_augroup
+MdPreview._schedule_auto_transition = schedule_auto_transition
 
 -- =====================================================================
 -- show_demo: demo floating window (existing behavior)

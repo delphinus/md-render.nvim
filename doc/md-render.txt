@@ -120,6 +120,12 @@ Map them yourself: >lua
 	opened — the window's buffer is swapped in place.  See
 	|:MdRenderToggle|.
 
+							       *<Plug>(md-render-auto)*
+<Plug>(md-render-auto) ~
+	[EXPERIMENTAL] Toggle Insert-aware auto mode for the current buffer:
+	render outside Insert mode, source while editing.  See
+	|:MdRenderAuto|.
+
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
 	Show a demo window with all supported Markdown notations.
@@ -166,6 +172,67 @@ COMMANDS						    *md-render-commands*
 	- Cursor position round-trips: the source line nearest the cursor in
 	  render mode becomes the cursor target when toggling back, and vice
 	  versa.
+
+								  *:MdRenderAuto*
+:MdRenderAuto [on|off] ~
+	[EXPERIMENTAL] This feature is new and the UX may change.  Please
+	report any issues or rough edges.
+
+	Auto-toggle the current buffer between source and render based on
+	Insert mode.  The state is per buffer and recorded in
+	`b:md_render_auto`.
+
+	- `:MdRenderAuto on` flips the current buffer to render mode
+	  immediately, and registers `InsertEnter` / `InsertLeave` autocmds
+	  that swap to source on entry and back to render on leave.
+	- `:MdRenderAuto off` removes the autocmds and the buffer marker.
+	  The displayed mode is left unchanged.
+	- `:MdRenderAuto` (no argument) toggles between on and off.
+
+	The plugin does not register a |FileType| autocmd of its own.  To
+	enable auto mode for every Markdown buffer, add one yourself: >vim
+
+	  autocmd FileType markdown silent! MdRenderAuto on
+<
+	Behavior:
+
+	- The render buffer is `nomodifiable`, so |InsertEnter| cannot fire
+	  on it.  While auto mode is active, the keys `i` / `I` / `a` / `A`
+	  / `o` / `O` are remapped on the render buffer to swap to source
+	  first and then enter Insert at the corresponding position.
+	- `<Esc>` returns to source's Normal mode; the |InsertLeave|
+	  autocmd then debounces a swap back to render after 50 ms.
+	- Rapid `i<Esc>i<Esc>` keystrokes coalesce into the final state.
+	- Only the current window is swapped.  Other windows showing the
+	  same source need a manual |:MdRenderToggle|.
+
+	What works on the render buffer: ~
+
+	  Read-only operations: motion (hjkl, gg, G, ...), search (/, ?),
+	  yank (y), visual selection, marks, and <LeftMouse> (folds,
+	  expand, link open).
+
+	  `:w` and `:w!` are forwarded to the source buffer so you can
+	  save without leaving render mode.  Different filenames (e.g.
+	  `:w other.md`, `:saveas`) are not supported — switch to source
+	  with |:MdRenderToggle| first.
+
+	  The render buffer is named `<source-path> [render]` so it's
+	  identifiable in your statusline and pickers.
+
+	What does NOT work on the render buffer: ~
+
+	  The render buffer is `nomodifiable`, so any mutating operation is
+	  blocked or silently a no-op:
+
+	  - Editing keys: c C s S r R d D x X p P J ~ >> <<
+	  - Undo / redo (u / <C-r>) — the render buffer has no edit
+	    history of its own
+	  - Ex commands that mutate the buffer: :s, :!filter, gq
+	  - Macros that contain editing keys
+
+	  Run |:MdRenderToggle| (or, in auto mode, simply press `i` / `I`
+	  / `a` / `A` / `o` / `O`) to swap to source first.
 
 								*:MdRenderPager*
 :MdRenderPager ~
@@ -346,6 +413,29 @@ MdPreview.toggle({opts}) ~
 	Example: >lua
 	  require("md-render").preview.toggle()
 <
+
+							    *MdPreview.auto_on()*
+MdPreview.auto_on({opts}) ~
+	[EXPERIMENTAL] Enable Insert-aware auto-toggle for the current
+	buffer and immediately swap to render mode.  See |:MdRenderAuto|.
+
+	Parameters: ~
+	  {opts}  (table|nil) Forwarded to |MdPreview.toggle()| when the
+		  render buffer is first created.
+
+							   *MdPreview.auto_off()*
+MdPreview.auto_off() ~
+	[EXPERIMENTAL] Disable auto-toggle for the current buffer.  The
+	displayed mode is left as-is.  See |:MdRenderAuto|.
+
+							*MdPreview.auto_toggle()*
+MdPreview.auto_toggle({opts}) ~
+	[EXPERIMENTAL] Toggle auto mode on or off for the current buffer.
+	See |:MdRenderAuto|.
+
+	Parameters: ~
+	  {opts}  (table|nil) Forwarded to |MdPreview.auto_on()| when
+		  enabling.
 
 							 *MdPreview.show_demo()*
 MdPreview.show_demo() ~

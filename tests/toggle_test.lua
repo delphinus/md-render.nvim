@@ -82,8 +82,11 @@ test("source → render swaps buffer in the same window", function()
 
   -- Render buf is read-only and non-modifiable
   assert_eq(vim.bo[cur].modifiable, false, "render buf should be nomodifiable")
-  assert_eq(vim.bo[cur].readonly, true, "render buf should be readonly")
-  assert_eq(vim.bo[cur].buftype, "nofile", "render buf should be nofile")
+  -- readonly is intentionally NOT set: Vim checks readonly before firing
+  -- BufWriteCmd, so a readonly render buf would short-circuit `:w` with E45.
+  -- Edit protection comes from modifiable=false above.
+  assert_eq(vim.bo[cur].readonly, false, "render buf should NOT be readonly (so :w hits BufWriteCmd)")
+  assert_eq(vim.bo[cur].buftype, "acwrite", "render buf should be acwrite (so :w hits BufWriteCmd)")
   assert_eq(vim.bo[cur].bufhidden, "hide", "render buf should be hidden (kept alive)")
 
   cleanup_buffer(source)
@@ -410,6 +413,194 @@ test("live rebuild preserves render window topline", function()
 
   vim.api.nvim_win_close(edit_win, true)
   cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 13a: render buffer is named after the source for statusline display
+-- ----------------------------------------------------------------------
+test("render buffer name has [render] suffix", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local source_name = vim.api.nvim_buf_get_name(source)
+  preview.toggle()
+  local render_buf = vim.api.nvim_win_get_buf(0)
+
+  local render_name = vim.api.nvim_buf_get_name(render_buf)
+  assert_eq(render_name, source_name .. " [render]", "render buf should be '<source> [render]'")
+
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 13b: BufWriteCmd is registered on the render buffer to forward :w
+-- ----------------------------------------------------------------------
+test("BufWriteCmd is registered on render buffer to forward :w", function()
+  local source = setup_md_buffer({ "# Hello" })
+  preview.toggle()
+  local render_buf = vim.api.nvim_win_get_buf(0)
+
+  local autocmds = vim.api.nvim_get_autocmds {
+    event = "BufWriteCmd",
+    buffer = render_buf,
+  }
+  assert_true(#autocmds >= 1, "BufWriteCmd should be registered on render buf")
+
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 14: auto_on swaps to render and sets b:md_render_auto
+-- ----------------------------------------------------------------------
+test("auto_on flips to render and marks the buffer", function()
+  local source = setup_md_buffer({ "# Hello", "", "para" })
+  local win = vim.api.nvim_get_current_win()
+
+  preview.auto_on()
+
+  local cur = vim.api.nvim_win_get_buf(win)
+  assert_false(cur == source, "should be on render after auto_on")
+  assert_eq(vim.b[source].md_render_auto, true, "b:md_render_auto should be true")
+
+  preview.auto_off()
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 15: auto_on registers an InsertLeave autocmd (InsertEnter is
+-- driven by buffer-local keymaps on the render buffer instead)
+-- ----------------------------------------------------------------------
+test("auto_on registers InsertLeave autocmd", function()
+  local source = setup_md_buffer({ "# Hello" })
+  preview.auto_on()
+
+  local autocmds = vim.api.nvim_get_autocmds {
+    group = preview._auto_augroup(source),
+    buffer = source,
+  }
+  local events = {}
+  for _, ac in ipairs(autocmds) do events[ac.event] = true end
+
+  assert_true(events.InsertLeave, "InsertLeave autocmd should be registered")
+  assert_false(events.InsertEnter, "InsertEnter autocmd should NOT be registered (handled via keymap)")
+
+  preview.auto_off()
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 15b: auto_on installs Insert-entry keymaps on the render buffer
+-- ----------------------------------------------------------------------
+test("auto_on installs i/I/a/A/o/O keymaps on render buffer", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local win = vim.api.nvim_get_current_win()
+
+  preview.auto_on()
+  local render_buf = vim.api.nvim_win_get_buf(win)
+
+  local keymaps = vim.api.nvim_buf_get_keymap(render_buf, "n")
+  local mapped = {}
+  for _, km in ipairs(keymaps) do mapped[km.lhs] = true end
+
+  for _, key in ipairs({ "i", "I", "a", "A", "o", "O" }) do
+    assert_true(mapped[key], "key '" .. key .. "' should be mapped on render buf")
+  end
+
+  preview.auto_off()
+
+  local keymaps_after = vim.api.nvim_buf_get_keymap(render_buf, "n")
+  local mapped_after = {}
+  for _, km in ipairs(keymaps_after) do mapped_after[km.lhs] = true end
+
+  for _, key in ipairs({ "i", "I", "a", "A", "o", "O" }) do
+    assert_false(mapped_after[key], "key '" .. key .. "' should be removed after auto_off")
+  end
+
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 16: schedule_auto_transition("source") flips render → source after debounce
+-- ----------------------------------------------------------------------
+test("auto-transition to source swaps render → source after 50ms", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local win = vim.api.nvim_get_current_win()
+
+  preview.auto_on()  -- now on render
+  local rendered = vim.api.nvim_win_get_buf(win)
+  assert_false(rendered == source, "should start on render")
+
+  preview._schedule_auto_transition(source, "source")
+  vim.wait(120, function() return vim.api.nvim_win_get_buf(win) == source end)
+
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "should be back on source after debounce")
+
+  preview.auto_off()
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 17: schedule_auto_transition("render") flips source → render after debounce
+-- ----------------------------------------------------------------------
+test("auto-transition to render swaps source → render after 50ms", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local win = vim.api.nvim_get_current_win()
+
+  preview.auto_on()                                 -- render
+  preview._schedule_auto_transition(source, "source")
+  vim.wait(120, function() return vim.api.nvim_win_get_buf(win) == source end)
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "precondition: source")
+
+  preview._schedule_auto_transition(source, "render")
+  vim.wait(120, function() return vim.api.nvim_win_get_buf(win) ~= source end)
+
+  assert_false(vim.api.nvim_win_get_buf(win) == source, "should be back on render after debounce")
+
+  preview.auto_off()
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 18: auto_off clears autocmds and leaves displayed mode untouched
+-- ----------------------------------------------------------------------
+test("auto_off clears autocmds and preserves displayed mode", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local win = vim.api.nvim_get_current_win()
+
+  preview.auto_on()
+  local before_buf = vim.api.nvim_win_get_buf(win)
+
+  preview.auto_off()
+
+  assert_eq(vim.b[source].md_render_auto, nil, "b:md_render_auto should be cleared")
+  assert_true(preview._auto_state[source] == nil, "_auto_state entry should be gone")
+
+  -- nvim_get_autocmds raises when the group no longer exists, which is
+  -- the expected outcome here.
+  local ok, autocmds = pcall(vim.api.nvim_get_autocmds, {
+    group = preview._auto_augroup(source),
+    buffer = source,
+  })
+  assert_true(not ok or #autocmds == 0, "no auto autocmds should remain")
+
+  assert_eq(vim.api.nvim_win_get_buf(win), before_buf, "displayed mode should be unchanged")
+
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 19: auto_on rejects non-markdown buffers
+-- ----------------------------------------------------------------------
+test("auto_on rejects non-markdown buffers", function()
+  local buf = vim.api.nvim_create_buf(false, false)
+  vim.bo[buf].filetype = "text"
+  vim.api.nvim_buf_set_name(buf, "/tmp/md-render-auto-test-not-md.txt")
+  vim.api.nvim_win_set_buf(0, buf)
+
+  preview.auto_on()
+
+  assert_eq(vim.b[buf].md_render_auto, nil, "non-markdown buffer should not be marked")
+  assert_true(preview._auto_state[buf] == nil, "no _auto_state entry should be created")
+
+  cleanup_buffer(buf)
 end)
 
 print(string.format("toggle_test: %d passed, %d failed", pass_count, fail_count))
