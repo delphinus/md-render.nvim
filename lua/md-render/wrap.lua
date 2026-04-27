@@ -559,8 +559,13 @@ local function split_segments(text)
       end
       current_word = current_word .. char
       -- Allow line breaking after hyphens in compound words (e.g. "mission-code-job")
-      -- by flushing the current word (including the hyphen) as a segment.
-      if char == "-" and #current_word > 1 and current_word:sub(-2, -2):match "[%w]" then
+      -- and after path/query separators in URLs and paths
+      -- (e.g. "https://host/path/to/file?key=v&k2=v2") by flushing the current
+      -- word (including the separator) as a segment. Without this, long URLs in
+      -- inline code spans become a single unbreakable token and force the float
+      -- window to widen.
+      if (char == "-" or char == "/" or char == "?" or char == "&")
+          and #current_word > 1 and current_word:sub(-2, -2):match "[%w]" then
         flush_ascii()
       end
     end
