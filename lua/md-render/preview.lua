@@ -147,6 +147,8 @@ end
 ---@field content MdRender.Content    -- current rendered content
 ---@field win? integer                -- bound render window (if any)
 ---@field image_state? MdRender.ImageState
+---@field dirty boolean               -- true when source changed while render was hidden
+---@field _debounce_timer? table      -- libuv timer handle for live-update debounce
 local Session = {}
 Session.__index = Session
 
@@ -168,6 +170,8 @@ function Session.new(source_bufnr, ns_name, opts)
   self.expand_state = {}
   self.buf = vim.api.nvim_create_buf(false, true)
   self.ns = vim.api.nvim_create_namespace(ns_name)
+  self.dirty = false
+  self._debounce_timer = nil
 
   require("md-render").setup_highlights()
 
@@ -193,14 +197,33 @@ function Session:refresh_source()
 end
 
 --- Rebuild render content from the current source_lines and apply it.
+--- Preserves the view (topline/cursor) of every window currently displaying
+--- the render buffer, since `apply_content_to_buffer` replaces all lines and
+--- would otherwise reset topline.
 function Session:rebuild()
   self.opts.fold_state = self.fold_state
   self.opts.expand_state = self.expand_state
   local new_content = MdPreview.build_content(self.source_lines, self.opts)
+
+  local wins = vim.fn.win_findbuf(self.buf)
+  local saved_views = {}
+  for _, w in ipairs(wins) do
+    if vim.api.nvim_win_is_valid(w) then
+      saved_views[w] = vim.api.nvim_win_call(w, function() return vim.fn.winsaveview() end)
+    end
+  end
+
   vim.api.nvim_set_option_value("modifiable", true, { buf = self.buf })
   vim.api.nvim_buf_clear_namespace(self.buf, self.ns, 0, -1)
   display_utils.apply_content_to_buffer(self.buf, self.ns, new_content)
   vim.api.nvim_set_option_value("modifiable", false, { buf = self.buf })
+
+  for w, view in pairs(saved_views) do
+    if vim.api.nvim_win_is_valid(w) then
+      vim.api.nvim_win_call(w, function() vim.fn.winrestview(view) end)
+    end
+  end
+
   if self.win and vim.api.nvim_win_is_valid(self.win) then
     local any_expanded = false
     for _, v in pairs(self.expand_state) do
@@ -209,6 +232,7 @@ function Session:rebuild()
     vim.api.nvim_set_option_value("wrap", not any_expanded, { win = self.win })
   end
   self.content = new_content
+  self.dirty = false
 end
 
 --- Map a source-buffer line to the corresponding rendered line.
@@ -263,6 +287,12 @@ function Session:bind_window(win)
       return self.content
     end,
   })
+end
+
+--- True when the render buffer is displayed in at least one window.
+---@return boolean
+function Session:is_visible()
+  return #vim.fn.win_findbuf(self.buf) > 0
 end
 
 --- Update images after a rebuild.
@@ -584,6 +614,59 @@ local function toggle_src_augroup(bufnr)
   return "md_render_toggle_src_" .. bufnr
 end
 
+local function live_update_augroup(bufnr)
+  return "md_render_toggle_live_" .. bufnr
+end
+
+--- Schedule a debounced live rebuild of the render buffer.
+--- When the render buffer is hidden, just mark dirty and return; the next
+--- toggle back to render will rebuild in `get_or_create_toggle_session`.
+---@param session MdRender.Session
+local function schedule_live_rebuild(session)
+  if not vim.api.nvim_buf_is_valid(session.source_bufnr) then return end
+  if not vim.api.nvim_buf_is_valid(session.buf) then return end
+
+  if not session:is_visible() then
+    session.dirty = true
+    return
+  end
+
+  if session._debounce_timer then
+    session._debounce_timer:stop()
+  end
+  session._debounce_timer = vim.defer_fn(function()
+    session._debounce_timer = nil
+    if not vim.api.nvim_buf_is_valid(session.source_bufnr) then return end
+    if not vim.api.nvim_buf_is_valid(session.buf) then return end
+    if not session:is_visible() then
+      session.dirty = true
+      return
+    end
+    session:refresh_source()
+    session:rebuild()
+    session:refresh_images()
+  end, 150)
+end
+
+--- Listen for source buffer changes and trigger debounced live rebuilds.
+---@param session MdRender.Session
+local function install_live_update(session)
+  local augroup = vim.api.nvim_create_augroup(
+    live_update_augroup(session.source_bufnr), { clear = true })
+
+  vim.api.nvim_create_autocmd({
+    "TextChanged",
+    "TextChangedI",
+    "BufWritePost",
+    "BufReadPost",          -- :e reload
+    "FileChangedShellPost", -- external change detected via :checktime / autoread
+  }, {
+    group = augroup,
+    buffer = session.source_bufnr,
+    callback = function() schedule_live_rebuild(session) end,
+  })
+end
+
 --- Apply read-only buffer options used by toggle-mode render buffers.
 ---@param session MdRender.Session
 local function apply_render_buf_options(session)
@@ -634,6 +717,10 @@ local function install_source_watcher(session)
     buffer = source_bufnr,
     once = true,
     callback = function()
+      if session._debounce_timer then
+        session._debounce_timer:stop()
+        session._debounce_timer = nil
+      end
       session:cleanup_images()
       if vim.api.nvim_buf_is_valid(session.buf) then
         pcall(vim.api.nvim_buf_delete, session.buf, { force = true })
@@ -641,6 +728,7 @@ local function install_source_watcher(session)
       _toggle_sessions[source_bufnr] = nil
       pcall(vim.api.nvim_del_augroup_by_name, toggle_buf_augroup(session.buf))
       pcall(vim.api.nvim_del_augroup_by_name, toggle_src_augroup(source_bufnr))
+      pcall(vim.api.nvim_del_augroup_by_name, live_update_augroup(source_bufnr))
     end,
   })
 end
@@ -658,8 +746,14 @@ local function get_or_create_toggle_session(source_bufnr, opts)
 
   if session then
     -- Keep render content in sync with the latest source state.
-    session:refresh_source()
-    session:rebuild()
+    -- Live-update normally clears `dirty`, but fall back to a content
+    -- comparison so that direct `nvim_buf_set_lines` (which may not fire
+    -- TextChanged in headless contexts) is still picked up here.
+    local current = vim.api.nvim_buf_get_lines(session.source_bufnr, 0, -1, false)
+    if session.dirty or not vim.deep_equal(current, session.source_lines) then
+      session.source_lines = current
+      session:rebuild()
+    end
     return session
   end
 
@@ -667,6 +761,7 @@ local function get_or_create_toggle_session(source_bufnr, opts)
   apply_render_buf_options(session)
   install_render_buf_guards(session)
   install_source_watcher(session)
+  install_live_update(session)
   _toggle_sessions[source_bufnr] = session
   return session
 end
@@ -773,6 +868,8 @@ end
 
 -- Expose for tests
 MdPreview._toggle_sessions = _toggle_sessions
+MdPreview._schedule_live_rebuild = schedule_live_rebuild
+MdPreview._live_update_augroup = live_update_augroup
 
 -- =====================================================================
 -- show_demo: demo floating window (existing behavior)
