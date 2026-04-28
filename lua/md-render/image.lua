@@ -407,7 +407,7 @@ end
 ---@return string
 local function mermaid_cache_path(source)
   local theme, bg_hex = mermaid_theme_args()
-  local hash = vim.fn.sha256(source .. "\0" .. theme .. "\0" .. bg_hex):sub(1, 16)
+  local hash = vim.fn.sha256(source .. "|" .. theme .. "|" .. bg_hex):sub(1, 16)
   return get_mermaid_cache_dir() .. "/" .. hash .. ".png"
 end
 
