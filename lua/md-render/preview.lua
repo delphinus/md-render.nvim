@@ -773,13 +773,23 @@ local function install_render_buf_guards(session)
     end,
   })
 
-  -- No TextChanged guard: the buffer is `modifiable = false` (re-asserted
-  -- by the BufEnter handler above), so user edits are blocked at the Vim
-  -- level (E21) and never produce a TextChanged event. Any TextChanged
-  -- that *would* fire here comes from our own internal writes
-  -- (apply_content_to_buffer during Session:rebuild, clear_placeholder_text
-  -- during async image placement) -- catching those would only ever be a
-  -- false positive.
+  -- Reset 'modified' after our own internal writes. The buffer is
+  -- modifiable=false (re-asserted by BufEnter), so user edits are blocked
+  -- at the Vim level (E21) and never reach TextChanged. Any TextChanged
+  -- that fires here is from internal writes (apply_content_to_buffer in
+  -- Session:rebuild, clear_placeholder_text during async image placement,
+  -- the on_download rebuild in display_utils.setup_images), and acwrite
+  -- buftype tracks 'modified' which would otherwise leave the render
+  -- buffer marked dirty and block :qa with E162.
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = augroup,
+    buffer = session.buf,
+    callback = function()
+      if vim.api.nvim_buf_is_valid(session.buf) then
+        vim.bo[session.buf].modified = false
+      end
+    end,
+  })
 
   -- Forward `:w` / `:w!` on the render buffer to a `:write` on the source.
   -- :saveas / :w other-name is rejected with a warning (use :MdRenderToggle
