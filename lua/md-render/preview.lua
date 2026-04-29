@@ -237,9 +237,6 @@ function Session:rebuild()
     end
   end
 
-  -- Suppress the read-only guard's TextChanged warning for the rebuild
-  -- (we are the ones writing to the buffer). Cleared on the next tick.
-  self._suppress_text_change = true
   vim.api.nvim_set_option_value("modifiable", true, { buf = self.buf })
   vim.api.nvim_buf_clear_namespace(self.buf, self.ns, 0, -1)
   display_utils.apply_content_to_buffer(self.buf, self.ns, new_content)
@@ -247,7 +244,6 @@ function Session:rebuild()
   -- acwrite buftype tracks 'modified'; our internal rebuild shouldn't
   -- count as a user edit.
   vim.bo[self.buf].modified = false
-  vim.schedule(function() self._suppress_text_change = false end)
 
   for w, view in pairs(saved_views) do
     if vim.api.nvim_win_is_valid(w) then
@@ -742,19 +738,13 @@ local function install_render_buf_guards(session)
     end,
   })
 
-  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-    group = augroup,
-    buffer = session.buf,
-    callback = function()
-      -- Ignore TextChanged we triggered ourselves during rebuild.
-      if session._suppress_text_change then return end
-      vim.notify(
-        "md-render: render buffer is read-only; reverting. Use :MdRenderToggle to edit the source.",
-        vim.log.levels.WARN
-      )
-      session:rebuild()
-    end,
-  })
+  -- No TextChanged guard: the buffer is `modifiable = false` (re-asserted
+  -- by the BufEnter handler above), so user edits are blocked at the Vim
+  -- level (E21) and never produce a TextChanged event. Any TextChanged
+  -- that *would* fire here comes from our own internal writes
+  -- (apply_content_to_buffer during Session:rebuild, clear_placeholder_text
+  -- during async image placement) -- catching those would only ever be a
+  -- false positive.
 
   -- Forward `:w` / `:w!` on the render buffer to a `:write` on the source.
   -- :saveas / :w other-name is rejected with a warning (use :MdRenderToggle
