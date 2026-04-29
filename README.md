@@ -172,6 +172,7 @@ Behavior:
 - The render buffer is **read-only** and reused across toggles (one render buffer per source).
 - When the same source is shown in multiple windows, only the invoking window swaps; edits from other windows are reflected on the next toggle into render mode.
 - Cursor position round-trips between source and render via the source-line mapping.
+- `number`, `relativenumber`, and `list` are turned off on render-mode windows. The originals are stashed on the window and restored when toggling back to source.
 - Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRenderToggle` again to return to source mode. `<LeftMouse>` still toggles folds, expands regions, and opens links.
 
 ### Auto-toggle on Insert mode (experimental)
@@ -243,6 +244,7 @@ Notes:
 
 - The render buffer is shared with the `:MdRenderToggle` session cache; calling `:MdRenderToggle` after `:MdRenderSplit` reuses the same render buffer.
 - Edits to the source propagate via the same 150 ms debounced live-update path used by toggle.
+- Cursor and scroll position are synchronized between source and render windows: moving the cursor or scrolling on either side mirrors the other to the corresponding mapped line, with the cursor placed at the same window row so the views stay aligned.
 - Closing the split (`:q`, `<C-w>c`) does not destroy the render buffer; it stays cached on the source.
 - **Limitation.** Inline images can only be bound to one window at a time (terminal image protocols are window-bound). Calling `:MdRenderSplit` twice produces two render windows but only the most recent one displays inline images — the older render window still receives text-content live updates.
 

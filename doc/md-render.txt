@@ -178,6 +178,9 @@ COMMANDS						    *md-render-commands*
 	- Cursor position round-trips: the source line nearest the cursor in
 	  render mode becomes the cursor target when toggling back, and vice
 	  versa.
+	- 'number', 'relativenumber', and 'list' are turned off on
+	  render-mode windows.  The originals are stashed on the window and
+	  restored when toggling back to source.
 
 								  *:MdRenderAuto*
 :MdRenderAuto [on|off] ~
@@ -266,6 +269,11 @@ COMMANDS						    *md-render-commands*
 	cache, so a subsequent |:MdRenderToggle| reuses the same render
 	buffer and edits propagate via the same 150 ms debounced
 	live-update path used by toggle.
+
+	Cursor and scroll position are synchronized between source and
+	render windows: moving the cursor or scrolling on either side
+	mirrors the other to the corresponding mapped line, with the
+	cursor placed at the same window row so the views stay aligned.
 
 	Closing the split window with `:q` or `<C-w>c` does NOT destroy
 	the render buffer; it stays cached on the source for future
