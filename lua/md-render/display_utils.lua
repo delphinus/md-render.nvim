@@ -134,6 +134,11 @@ end
 function M.apply_content_to_buffer(buf, ns, content, opts)
   opts = opts or {}
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, content.lines)
+  -- Clear 'modified' synchronously so callers (toggle/split render bufs
+  -- with buftype=acwrite, telescope/snacks previewers, etc.) don't have
+  -- a window where :qa would see the buffer as dirty before any
+  -- TextChanged-based reset has a chance to fire.
+  vim.bo[buf].modified = false
 
   for _, hl_info in ipairs(content.highlights) do
     local line_text = content.lines[hl_info.line + 1]
@@ -668,6 +673,11 @@ function M.setup_images(win, content, ns, opts)
         end
       end
       vim.bo[buf].modifiable = was_modifiable
+      -- Clear 'modified' synchronously: with buftype=acwrite (toggle/split
+      -- render bufs), an async image-placement write here would otherwise
+      -- leave the buffer marked dirty until the TextChanged-based reset
+      -- catches up, which races with :qa.
+      vim.bo[buf].modified = false
     end
   end
 
