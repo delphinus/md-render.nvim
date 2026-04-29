@@ -633,6 +633,37 @@ end
 ---@type table<integer, MdRender.Session>
 local _toggle_sessions = {}
 
+-- Window-local options that get overridden while a window is showing a
+-- render buffer. The originals are stashed in `md_render_state.source_wo`
+-- on the source->render transition and restored on the render->source
+-- transition. The BufEnter guard re-applies these to any window that
+-- happens to display the render buffer (covers manual `:b` / picker
+-- entries in addition to the toggle / split entry points).
+local RENDER_WIN_OPTS = { "number", "relativenumber", "list" }
+
+local function save_render_win_opts(win)
+  local saved = {}
+  for _, opt in ipairs(RENDER_WIN_OPTS) do
+    saved[opt] = vim.api.nvim_get_option_value(opt, { win = win })
+  end
+  return saved
+end
+
+local function apply_render_win_opts(win)
+  for _, opt in ipairs(RENDER_WIN_OPTS) do
+    vim.api.nvim_set_option_value(opt, false, { win = win })
+  end
+end
+
+local function restore_render_win_opts(win, saved)
+  if not saved then return end
+  for _, opt in ipairs(RENDER_WIN_OPTS) do
+    if saved[opt] ~= nil then
+      vim.api.nvim_set_option_value(opt, saved[opt], { win = win })
+    end
+  end
+end
+
 local function toggle_buf_augroup(buf)
   return "md_render_toggle_buf_" .. buf
 end
@@ -734,6 +765,10 @@ local function install_render_buf_guards(session)
         vim.bo[session.buf].modifiable = false
         -- Don't set readonly = true here: Vim's :w checks readonly before
         -- firing BufWriteCmd, so doing so would break our :w forwarding.
+      end
+      local win = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_buf(win) == session.buf then
+        apply_render_win_opts(win)
       end
     end,
   })
@@ -904,6 +939,7 @@ MdPreview.toggle = function(opts)
     end
 
     vim.api.nvim_win_set_buf(win, state.source_buf)
+    restore_render_win_opts(win, state.source_wo)
 
     if state.source_view then
       vim.api.nvim_win_call(win, function()
@@ -939,6 +975,7 @@ MdPreview.toggle = function(opts)
   local source_view = vim.api.nvim_win_call(win, function()
     return vim.fn.winsaveview()
   end)
+  local source_wo = save_render_win_opts(win)
 
   local session = get_or_create_toggle_session(source_bufnr, opts)
 
@@ -960,6 +997,7 @@ MdPreview.toggle = function(opts)
     render_buf = session.buf,
     mode = "render",
     source_view = source_view,
+    source_wo = source_wo,
   })
 end
 
@@ -987,6 +1025,10 @@ MdPreview.split = function(opts)
     vim.cmd { cmd = "split", mods = opts.mods or {} }
     local new_win = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_buf(new_win, state.source_buf)
+    -- The new split inherited render-mode window options from cur_win;
+    -- restore the source view's options from the originals stashed on
+    -- cur_win when it first went source -> render.
+    restore_render_win_opts(new_win, state.source_wo)
     return
   end
 
@@ -999,6 +1041,11 @@ MdPreview.split = function(opts)
   end
 
   local source_cursor_line = vim.api.nvim_win_get_cursor(cur_win)[1]
+  -- Snapshot source-window options BEFORE :split, since the new split
+  -- inherits them. Stashed on the new split's md_render_state so a later
+  -- :MdRenderToggle on the split restores them on the render -> source
+  -- transition.
+  local source_wo = save_render_win_opts(cur_win)
   local session = get_or_create_toggle_session(source_bufnr, opts)
 
   vim.cmd { cmd = "split", mods = opts.mods or {} }
@@ -1020,6 +1067,7 @@ MdPreview.split = function(opts)
     source_buf = source_bufnr,
     render_buf = session.buf,
     mode = "render",
+    source_wo = source_wo,
   })
 end
 

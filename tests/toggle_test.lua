@@ -766,6 +766,57 @@ test("closing split window keeps render buf alive; subsequent toggle works", fun
 end)
 
 -- ----------------------------------------------------------------------
+-- Test 26b: toggle hides number/relativenumber/list on render and
+-- restores them on render -> source
+-- ----------------------------------------------------------------------
+test("toggle hides number/relativenumber/list and restores them", function()
+  local source = setup_md_buffer({ "# Hello", "", "body" })
+  local win = vim.api.nvim_get_current_win()
+  vim.wo[win].number = true
+  vim.wo[win].relativenumber = true
+  vim.wo[win].list = true
+
+  preview.toggle()  -- source -> render
+  assert_false(vim.wo[win].number, "render: number off")
+  assert_false(vim.wo[win].relativenumber, "render: relativenumber off")
+  assert_false(vim.wo[win].list, "render: list off")
+
+  preview.toggle()  -- render -> source
+  assert_true(vim.wo[win].number, "source: number restored")
+  assert_true(vim.wo[win].relativenumber, "source: relativenumber restored")
+  assert_true(vim.wo[win].list, "source: list restored")
+
+  clear_win_state(win)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 26c: split's render window has nonu/nornu/nolist; source window
+-- keeps its original options
+-- ----------------------------------------------------------------------
+test("split render window hides nu/rnu/list; source unchanged", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local source_win = vim.api.nvim_get_current_win()
+  vim.wo[source_win].number = true
+  vim.wo[source_win].relativenumber = true
+  vim.wo[source_win].list = true
+
+  preview.split()
+  local split_win = vim.api.nvim_get_current_win()
+
+  assert_false(vim.wo[split_win].number, "split render: number off")
+  assert_false(vim.wo[split_win].relativenumber, "split render: relativenumber off")
+  assert_false(vim.wo[split_win].list, "split render: list off")
+
+  assert_true(vim.wo[source_win].number, "source: number unchanged")
+  assert_true(vim.wo[source_win].relativenumber, "source: relativenumber unchanged")
+  assert_true(vim.wo[source_win].list, "source: list unchanged")
+
+  vim.api.nvim_win_close(split_win, true)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
 -- Test 26: split rejects non-markdown buffers and creates no new window
 -- ----------------------------------------------------------------------
 test("split rejects non-markdown buffers", function()
