@@ -835,6 +835,100 @@ test("split rejects non-markdown buffers", function()
   cleanup_buffer(buf)
 end)
 
+-- ----------------------------------------------------------------------
+-- Test 27: source CursorMoved syncs render cursor to the corresponding line
+-- ----------------------------------------------------------------------
+test("source cursor move syncs render window cursor", function()
+  local source = setup_md_buffer({ "# Heading", "", "para 1", "", "para 2" })
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local render_win = vim.api.nvim_get_current_win()
+  local session = preview._toggle_sessions[source]
+  assert_true(session ~= nil, "session should exist after split")
+
+  -- Move source cursor to line 5 ("para 2"), trigger CursorMoved
+  vim.api.nvim_set_current_win(source_win)
+  vim.api.nvim_win_set_cursor(source_win, { 5, 0 })
+  vim.cmd "doautocmd CursorMoved"
+
+  local expected = session:source_to_rendered(5)
+  local total = vim.api.nvim_buf_line_count(session.buf)
+  expected = math.min(expected, total)
+  assert_eq(vim.api.nvim_win_get_cursor(render_win)[1], expected,
+    "render cursor should follow source to mapped line")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 28: render CursorMoved syncs source cursor to the corresponding line
+-- ----------------------------------------------------------------------
+test("render cursor move syncs source window cursor", function()
+  local source = setup_md_buffer({ "# Heading", "", "para 1", "", "para 2" })
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local render_win = vim.api.nvim_get_current_win()
+  local session = preview._toggle_sessions[source]
+
+  -- Move render cursor and fire CursorMoved
+  local total_render = vim.api.nvim_buf_line_count(session.buf)
+  local target_render = math.min(3, total_render)
+  vim.api.nvim_win_set_cursor(render_win, { target_render, 0 })
+  vim.cmd "doautocmd CursorMoved"
+
+  local expected_source = session:rendered_to_source(target_render)
+  if expected_source then
+    assert_eq(vim.api.nvim_win_get_cursor(source_win)[1], expected_source,
+      "source cursor should follow render to mapped line")
+  end
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 29: cursor sync is a no-op when only one side has a window
+-- ----------------------------------------------------------------------
+test("cursor sync no-op when only source is visible", function()
+  local source = setup_md_buffer({ "# A", "", "B", "", "C" })
+  local source_win = vim.api.nvim_get_current_win()
+
+  -- Create the session via toggle then return to source so render is hidden.
+  preview.toggle()
+  preview.toggle()  -- back to source
+
+  -- Should not error: no render window exists, sync handler returns early.
+  vim.api.nvim_win_set_cursor(source_win, { 3, 0 })
+  vim.cmd "doautocmd CursorMoved"
+
+  assert_eq(vim.api.nvim_win_get_cursor(source_win)[1], 3,
+    "source cursor unchanged when no render window")
+
+  clear_win_state(source_win)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 30: BufWipeout removes the scroll-sync augroup
+-- ----------------------------------------------------------------------
+test("BufWipeout removes the scroll-sync augroup", function()
+  local source = setup_md_buffer({ "# A" })
+  preview.toggle()
+  local augroup_name = "md_render_toggle_sync_" .. source
+
+  -- precondition: augroup exists
+  local ok = pcall(vim.api.nvim_get_autocmds, { group = augroup_name })
+  assert_true(ok, "scroll-sync augroup should be installed")
+
+  cleanup_buffer(source)
+
+  local ok2 = pcall(vim.api.nvim_get_autocmds, { group = augroup_name })
+  assert_false(ok2, "scroll-sync augroup should be removed on BufWipeout")
+end)
+
 print(string.format("toggle_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then
   os.exit(1)

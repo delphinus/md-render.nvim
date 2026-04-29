@@ -676,6 +676,10 @@ local function live_update_augroup(bufnr)
   return "md_render_toggle_live_" .. bufnr
 end
 
+local function scroll_sync_augroup(bufnr)
+  return "md_render_toggle_sync_" .. bufnr
+end
+
 -- Auto-toggle state declared up here so install_source_watcher's BufWipeout
 -- callback can clean it up. The auto_on / auto_off implementations live
 -- further down with the rest of the auto-toggle logic.
@@ -732,6 +736,146 @@ local function install_live_update(session)
     group = augroup,
     buffer = session.source_bufnr,
     callback = function() schedule_live_rebuild(session) end,
+  })
+end
+
+--- Bidirectional cursor + scroll sync between source and render windows.
+---
+--- Triggers:
+---   - CursorMoved / CursorMovedI on source -> sync render windows
+---   - CursorMoved on render -> sync source windows
+---   - WinScrolled on either -> sync the other side (covers Ctrl+E / Ctrl+Y
+---     / mouse-wheel scrolling that doesn't move the cursor)
+---
+--- Sync target: place the other side's cursor on the corresponding mapped
+--- line AND adjust its topline so the cursor lands at the same winrow as
+--- the originating window's cursor. Without the topline adjustment, cursor
+--- positions match but the views drift (1 source line maps to N rendered
+--- lines, so the rendered cursor "falls down" the window relative to
+--- source's cursor).
+---
+--- Loop prevention: a single `_syncing` flag, released after 30 ms via
+--- vim.defer_fn. Each sync action fires both CursorMoved and WinScrolled
+--- on the destination windows; the timer-based unlock suppresses the
+--- whole cascade without the brittleness of trying to count events.
+---@param session MdRender.Session
+local function install_scroll_sync(session)
+  local augroup = vim.api.nvim_create_augroup(
+    scroll_sync_augroup(session.source_bufnr), { clear = true })
+
+  local SYNC_UNLOCK_MS = 30
+
+  local function with_sync_lock(fn)
+    session._syncing = true
+    local ok, err = pcall(fn)
+    if session._sync_unlock_timer then
+      session._sync_unlock_timer:stop()
+    end
+    session._sync_unlock_timer = vim.defer_fn(function()
+      session._syncing = false
+      session._sync_unlock_timer = nil
+    end, SYNC_UNLOCK_MS)
+    if not ok then error(err) end
+  end
+
+  --- Move every window in `wins` (except `from_win`) so that `target_line`
+  --- lands at window row `from_winrow`.
+  local function fan_out(wins, from_win, target_line, from_winrow)
+    if #wins == 0 then return end
+    with_sync_lock(function()
+      for _, w in ipairs(wins) do
+        if w ~= from_win and vim.api.nvim_win_is_valid(w) then
+          pcall(function()
+            local desired_topline = math.max(1, target_line - from_winrow + 1)
+            vim.api.nvim_win_call(w, function()
+              vim.fn.winrestview { topline = desired_topline }
+            end)
+            vim.api.nvim_win_set_cursor(w, { target_line, 0 })
+          end)
+        end
+      end
+    end)
+  end
+
+  local function sync_from_source(source_win)
+    if not vim.api.nvim_win_is_valid(source_win) then return end
+    if vim.api.nvim_win_get_buf(source_win) ~= session.source_bufnr then return end
+    local render_wins = vim.fn.win_findbuf(session.buf)
+    if #render_wins == 0 then return end
+
+    local source_line = vim.api.nvim_win_get_cursor(source_win)[1]
+    local source_winrow = vim.api.nvim_win_call(source_win, function()
+      return vim.fn.winline()
+    end)
+    local rendered_line = session:source_to_rendered(source_line)
+    if not rendered_line or rendered_line < 1 then return end
+    local total = vim.api.nvim_buf_line_count(session.buf)
+    rendered_line = math.min(rendered_line, total)
+
+    fan_out(render_wins, source_win, rendered_line, source_winrow)
+  end
+
+  local function sync_from_render(render_win)
+    if not vim.api.nvim_win_is_valid(render_win) then return end
+    if vim.api.nvim_win_get_buf(render_win) ~= session.buf then return end
+    local source_wins = vim.fn.win_findbuf(session.source_bufnr)
+    if #source_wins == 0 then return end
+
+    local rendered_line = vim.api.nvim_win_get_cursor(render_win)[1]
+    local render_winrow = vim.api.nvim_win_call(render_win, function()
+      return vim.fn.winline()
+    end)
+    local source_line = session:rendered_to_source(rendered_line)
+    if not source_line or source_line < 1 then return end
+    local total = vim.api.nvim_buf_line_count(session.source_bufnr)
+    source_line = math.min(source_line, total)
+
+    fan_out(source_wins, render_win, source_line, render_winrow)
+  end
+
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = augroup,
+    buffer = session.source_bufnr,
+    callback = function()
+      if session._syncing then return end
+      sync_from_source(vim.api.nvim_get_current_win())
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = augroup,
+    buffer = session.buf,
+    callback = function()
+      if session._syncing then return end
+      sync_from_render(vim.api.nvim_get_current_win())
+    end,
+  })
+
+  -- WinScrolled has no `buffer = ...` filter, so we register globally and
+  -- dispatch via vim.v.event which carries { [winid_str] = {...}, ... }
+  -- for every window whose view changed in the current tick.
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    group = augroup,
+    callback = function()
+      if session._syncing then return end
+      local event = vim.v.event
+      if type(event) ~= "table" then return end
+      for key in pairs(event) do
+        if key ~= "all" then
+          local win = tonumber(key)
+          if win and vim.api.nvim_win_is_valid(win) then
+            local buf = vim.api.nvim_win_get_buf(win)
+            if buf == session.source_bufnr then
+              sync_from_source(win)
+              return
+            elseif buf == session.buf then
+              sync_from_render(win)
+              return
+            end
+          end
+        end
+      end
+    end,
   })
 end
 
@@ -870,6 +1014,7 @@ local function install_source_watcher(session)
       pcall(vim.api.nvim_del_augroup_by_name, toggle_buf_augroup(session.buf))
       pcall(vim.api.nvim_del_augroup_by_name, toggle_src_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, live_update_augroup(source_bufnr))
+      pcall(vim.api.nvim_del_augroup_by_name, scroll_sync_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, auto_augroup(source_bufnr))
     end,
   })
@@ -904,6 +1049,7 @@ local function get_or_create_toggle_session(source_bufnr, opts)
   install_render_buf_guards(session)
   install_source_watcher(session)
   install_live_update(session)
+  install_scroll_sync(session)
   _toggle_sessions[source_bufnr] = session
   return session
 end
