@@ -19,6 +19,10 @@ vim.keymap.set("n", "<Plug>(md-render-auto)", function()
   require("md-render").preview.auto_toggle()
 end, { desc = "Markdown render auto-toggle on insert mode" })
 
+vim.keymap.set("n", "<Plug>(md-render-split)", function()
+  require("md-render").preview.split()
+end, { desc = "Markdown render in a split window" })
+
 vim.keymap.set("n", "<Plug>(md-render-demo)", function()
   require("md-render").preview.show_demo()
 end, { desc = "Markdown render demo" })
@@ -54,6 +58,13 @@ end, {
   nargs = "?",
   complete = function() return { "on", "off" } end,
   desc = "Auto-toggle source/render based on insert mode",
+})
+
+vim.api.nvim_create_user_command("MdRenderSplit", function(args)
+  require("md-render").preview.split({ mods = args.smods })
+end, {
+  nargs = 0,
+  desc = "Open a split showing source and rendered markdown side-by-side",
 })
 
 vim.api.nvim_create_user_command("MdRenderPager", function()

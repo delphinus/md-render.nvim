@@ -126,6 +126,12 @@ Map them yourself: >lua
 	render outside Insert mode, source while editing.  See
 	|:MdRenderAuto|.
 
+							    *<Plug>(md-render-split)*
+<Plug>(md-render-split) ~
+	[EXPERIMENTAL] Open a split window showing the source and rendered
+	views of the current Markdown buffer side-by-side.  See
+	|:MdRenderSplit|.
+
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
 	Show a demo window with all supported Markdown notations.
@@ -233,6 +239,42 @@ COMMANDS						    *md-render-commands*
 
 	  Run |:MdRenderToggle| (or, in auto mode, simply press `i` / `I`
 	  / `a` / `A` / `o` / `O`) to swap to source first.
+
+								   *:MdRenderSplit*
+:MdRenderSplit ~
+	[EXPERIMENTAL] This feature is new and the UX may change.  Please
+	report any issues or rough edges.
+
+	Open a split window so the source Markdown buffer and the rendered
+	view are visible at the same time.  Direction follows the standard
+	Vim split modifiers: >vim
+
+	  :MdRenderSplit          " horizontal split
+	  :vert MdRenderSplit     " vertical split
+	  :topleft MdRenderSplit  " place at the top
+	  :botright MdRenderSplit " place at the bottom
+<
+	Behavior is symmetric:
+
+	- From a source window, the new split shows the render.
+	- From a render window (created by |:MdRenderToggle|), the new
+	  split shows the source.
+
+	Either entry point yields a source/render pair side-by-side.
+
+	The render buffer is shared with the |:MdRenderToggle| session
+	cache, so a subsequent |:MdRenderToggle| reuses the same render
+	buffer and edits propagate via the same 150 ms debounced
+	live-update path used by toggle.
+
+	Closing the split window with `:q` or `<C-w>c` does NOT destroy
+	the render buffer; it stays cached on the source for future
+	toggles or splits.
+
+	Limitation: inline images can only be bound to one window at a
+	time.  Calling |:MdRenderSplit| twice yields two render windows,
+	but only the most recent one displays inline images (the older
+	render window still receives text-content live updates).
 
 								*:MdRenderPager*
 :MdRenderPager ~
@@ -436,6 +478,24 @@ MdPreview.auto_toggle({opts}) ~
 	Parameters: ~
 	  {opts}  (table|nil) Forwarded to |MdPreview.auto_on()| when
 		  enabling.
+
+							      *MdPreview.split()*
+MdPreview.split({opts}) ~
+	[EXPERIMENTAL] Open a split showing the source and rendered views
+	of the current Markdown buffer side-by-side.  See |:MdRenderSplit|.
+
+	Parameters: ~
+	  {opts}  (table|nil) Optional settings:
+		  - {mods}      (table) Command modifiers, typically the
+				`args.smods` table from a user-command
+				callback (e.g. `{ vertical = true }`).
+		  - {max_width} (integer) Maximum rendering width (used
+				only when the render buffer is created
+				for the first time).
+
+	Example: >lua
+	  require("md-render").preview.split({ mods = { vertical = true } })
+<
 
 							 *MdPreview.show_demo()*
 MdPreview.show_demo() ~

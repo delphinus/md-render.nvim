@@ -141,6 +141,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `<Plug>(md-render-preview-tab)` | 現在の Markdown バッファのタブプレビューをトグル |
 | `<Plug>(md-render-toggle)` | **[実験的]** 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
 | `<Plug>(md-render-auto)` | **[実験的]** 現在のバッファで auto モード(Insert 以外で render)をトグル |
+| `<Plug>(md-render-split)` | **[実験的]** ソースとレンダリング表示を並べたスプリットを開く |
 | `<Plug>(md-render-demo)` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
 ## コマンド
@@ -151,6 +152,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `:MdRenderTab` | タブプレビューをトグル |
 | `:MdRenderToggle` | **[実験的]** 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
 | `:MdRenderAuto [on\|off]` | **[実験的]** Insert モードに連動して source/render を自動切替(バッファ単位) |
+| `:MdRenderSplit` | **[実験的]** ソースとレンダリング表示を並べたスプリットを開く |
 | `:MdRenderPager` | ページャーモード — フルスクリーン、装飾なし、`q` で Neovim 終了 |
 | `:MdRenderDemo` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
@@ -216,6 +218,33 @@ autocmd FileType markdown silent! MdRenderAuto on
 - 編集キーを含むマクロ
 
 これらを使いたい場合は、`:MdRenderToggle`(auto モード中なら `i` / `I` / `a` / `A` / `o` / `O` を押すだけでも可)で source に戻ってから操作してください。
+
+### 横並びスプリット(実験的)
+
+> **実験的機能です。** 新しく追加された機能で、UX が変わる可能性があります。問題や違和感があればぜひお知らせください。
+
+`:MdRenderSplit` は、ソースとレンダリング表示を並べたスプリットを開きます。ソースへの編集はライブで反映されます。スプリット方向は標準的な Vim のモディファイアに従います:
+
+```vim
+:MdRenderSplit          " 水平スプリット
+:vert MdRenderSplit     " 垂直スプリット(README とコードを並べる定番)
+:topleft MdRenderSplit  " 一番上に配置
+:botright MdRenderSplit " 一番下に配置
+```
+
+挙動は対称です:
+
+- **ソース**ウィンドウから呼ぶと、新しいスプリットには render が表示されます。
+- **render** ウィンドウ(`:MdRenderToggle` で作られたもの)から呼ぶと、新しいスプリットには source が表示されます。
+
+どちらから呼んでも結果は「source と render の横並び」になります。
+
+挙動:
+
+- レンダーバッファは `:MdRenderToggle` のセッションキャッシュと共有されます。`:MdRenderSplit` の後に `:MdRenderToggle` を呼ぶと同じレンダーバッファが再利用されます。
+- ソースの編集は 150ms のデバウンス付きライブ更新パイプラインを通じてスプリット側にも反映されます。
+- スプリットウィンドウを閉じても(`:q` や `<C-w>c`)レンダーバッファは破棄されず、ソースに紐づいてキャッシュされたまま残ります。
+- **制限事項。** インライン画像は端末の画像プロトコル仕様上、1 ウィンドウにしかバインドできません。`:MdRenderSplit` を 2 回呼ぶと render ウィンドウが 2 枚できますが、画像が表示されるのは最後に開いた方だけです(古い render ウィンドウもテキスト内容のライブ更新は受けます)。
 
 ### ページャーモード
 

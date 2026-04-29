@@ -141,6 +141,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `<Plug>(md-render-preview-tab)` | Toggle a tab preview for the current Markdown buffer |
 | `<Plug>(md-render-toggle)` | **[experimental]** Toggle the current window between source and render mode in place |
 | `<Plug>(md-render-auto)` | **[experimental]** Toggle auto mode (render outside Insert) for the current buffer |
+| `<Plug>(md-render-split)` | **[experimental]** Open a split with source and rendered Markdown side-by-side |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
 ## Commands
@@ -151,6 +152,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `:MdRenderTab` | Toggle a tab preview |
 | `:MdRenderToggle` | **[experimental]** Toggle the current window between source and render mode in place |
 | `:MdRenderAuto [on\|off]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
+| `:MdRenderSplit` | **[experimental]** Open a split with source and rendered Markdown side-by-side |
 | `:MdRenderPager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRenderDemo` | Show a demo window with all supported Markdown notations |
 
@@ -216,6 +218,33 @@ The render buffer is `nomodifiable`, so any mutating operation is blocked or sil
 - Macros that contain editing keys
 
 To do any of the above, run `:MdRenderToggle` (or just press `i` / `I` / `a` / `A` / `o` / `O` in auto mode) to swap to source first.
+
+### Side-by-side split (experimental)
+
+> **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
+
+`:MdRenderSplit` opens a split so the source and rendered views are visible at the same time, with edits flowing live. Direction follows standard Vim split modifiers:
+
+```vim
+:MdRenderSplit          " horizontal split
+:vert MdRenderSplit     " vertical split (typical "README + code" layout)
+:topleft MdRenderSplit  " place at the top
+:botright MdRenderSplit " place at the bottom
+```
+
+Behavior is symmetric:
+
+- From a **source** window, the new split shows the rendered view.
+- From a **render** window (one created by `:MdRenderToggle`), the new split shows the source.
+
+Either entry point yields a source/render pair side-by-side.
+
+Notes:
+
+- The render buffer is shared with the `:MdRenderToggle` session cache; calling `:MdRenderToggle` after `:MdRenderSplit` reuses the same render buffer.
+- Edits to the source propagate via the same 150 ms debounced live-update path used by toggle.
+- Closing the split (`:q`, `<C-w>c`) does not destroy the render buffer; it stays cached on the source.
+- **Limitation.** Inline images can only be bound to one window at a time (terminal image protocols are window-bound). Calling `:MdRenderSplit` twice produces two render windows but only the most recent one displays inline images — the older render window still receives text-content live updates.
 
 ### Pager mode
 

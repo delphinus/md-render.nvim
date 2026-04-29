@@ -126,6 +126,11 @@ lazy.nvim の場合: >lua
 	[実験的] 現在のバッファで Insert モード連動の自動トグル(Insert 以外で
 	render、Insert 中は source)を on/off します。 |:MdRenderAuto| を参照。
 
+							    *<Plug>(md-render-split)*
+<Plug>(md-render-split) ~
+	[実験的] 現在の Markdown バッファのソースとレンダリング表示を横/縦に
+	並べたスプリットを開きます。 |:MdRenderSplit| を参照。
+
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
 	対応する全 Markdown 記法のデモウィンドウを表示します。
@@ -233,6 +238,43 @@ lazy.nvim の場合: >lua
 	  これらを使いたい場合は |:MdRenderToggle| (auto モード中なら `i` /
 	  `I` / `a` / `A` / `o` / `O` を押すだけでも可)で source に戻ってか
 	  ら操作してください。
+
+								   *:MdRenderSplit*
+:MdRenderSplit ~
+	[実験的] 新しく追加された機能で、UX が変わる可能性があります。問題や
+	違和感があればぜひお知らせください。
+
+	ソース Markdown バッファとレンダリング表示を同時に並べて表示するため
+	のスプリットを開きます。スプリット方向は標準の Vim モディファイアに
+	従います: >vim
+
+	  :MdRenderSplit          " 水平スプリット
+	  :vert MdRenderSplit     " 垂直スプリット
+	  :topleft MdRenderSplit  " 一番上に配置
+	  :botright MdRenderSplit " 一番下に配置
+<
+	挙動は対称です:
+
+	- ソースウィンドウから呼ぶと、新しいスプリットには render が表示
+	  されます。
+	- render ウィンドウ( |:MdRenderToggle| で作られたもの)から呼ぶ
+	  と、新しいスプリットには source が表示されます。
+
+	どちらから呼んでも結果は source/render の横並びになります。
+
+	レンダーバッファは |:MdRenderToggle| のセッションキャッシュと共
+	有されます。後から |:MdRenderToggle| を呼んでも同じレンダーバッ
+	ファが再利用され、編集は toggle と同じ 150ms デバウンス付きライ
+	ブ更新パスを通じて反映されます。
+
+	スプリットウィンドウを `:q` や `<C-w>c` で閉じても、レンダーバッ
+	ファは破棄されず、ソースに紐づいてキャッシュされたまま次のトグル
+	やスプリットに備えます。
+
+	制限事項: インライン画像はウィンドウに対して 1 つしかバインドで
+	きません。 |:MdRenderSplit| を 2 回呼ぶと render ウィンドウは 2
+	枚できますが、画像が出るのは最後に開いた方だけです(古い render
+	ウィンドウもテキスト内容のライブ更新は受けます)。
 
 								*:MdRenderPager*
 :MdRenderPager ~
@@ -421,6 +463,23 @@ MdPreview.auto_toggle({opts}) ~
 
 	パラメータ: ~
 	  {opts}  (table|nil) on にする際 |MdPreview.auto_on()| へ転送されます。
+
+							      *MdPreview.split()*
+MdPreview.split({opts}) ~
+	[実験的] 現在の Markdown バッファのソースとレンダリング表示を横/縦に
+	並べたスプリットを開きます。詳細は |:MdRenderSplit| を参照。
+
+	パラメータ: ~
+	  {opts}  (table|nil) オプション:
+		  - {mods}      (table) コマンドモディファイア。通常はユー
+				ザーコマンドコールバックの `args.smods` を
+				そのまま渡します(例: `{ vertical = true }`)。
+		  - {max_width} (integer) 最大レンダリング幅(レンダーバッ
+				ファが初めて作成されるときのみ使用)。
+
+	使用例: >lua
+	  require("md-render").preview.split({ mods = { vertical = true } })
+<
 
 							*MdPreview.show_pager()*
 MdPreview.show_pager({opts}) ~

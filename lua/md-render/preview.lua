@@ -974,6 +974,66 @@ MdPreview.toggle = function(opts)
 end
 
 -- =====================================================================
+-- split: open a side-by-side split with source on one side, render on
+-- the other. From source -> new split shows render. From a render
+-- window (created by toggle) -> new split shows source. Direction is
+-- driven by the user's command modifiers (:vert, :topleft, :tab, ...).
+-- =====================================================================
+
+--- Open a split showing the counterpart of the current window's mode.
+---@param opts? { mods?: table, max_width?: integer }
+MdPreview.split = function(opts)
+  opts = opts or {}
+  local cur_win = vim.api.nvim_get_current_win()
+  local cur_buf = vim.api.nvim_win_get_buf(cur_win)
+  local state = get_win_state(cur_win)
+
+  -- ---- render-mode window -> split shows the SOURCE ----
+  if state and state.mode == "render" and cur_buf == state.render_buf then
+    if not vim.api.nvim_buf_is_valid(state.source_buf) then
+      vim.notify("md-render: source buffer is no longer valid", vim.log.levels.WARN)
+      return
+    end
+    vim.cmd { cmd = "split", mods = opts.mods or {} }
+    local new_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(new_win, state.source_buf)
+    return
+  end
+
+  -- ---- source-mode window -> split shows the RENDER ----
+  local source_bufnr = cur_buf
+  local ok, warn = check_markdown_buffer(source_bufnr)
+  if not ok then
+    vim.notify(warn, vim.log.levels.WARN)
+    return
+  end
+
+  local source_cursor_line = vim.api.nvim_win_get_cursor(cur_win)[1]
+  local session = get_or_create_toggle_session(source_bufnr, opts)
+
+  vim.cmd { cmd = "split", mods = opts.mods or {} }
+  local new_win = vim.api.nvim_get_current_win()
+
+  -- Image binding: Session.win is single-window. Hand off images from a
+  -- previously bound window (e.g. a prior toggle) to the new split.
+  if session.win and session.win ~= new_win and vim.api.nvim_win_is_valid(session.win) then
+    session:cleanup_images()
+    session.win = nil
+  end
+
+  vim.api.nvim_win_set_buf(new_win, session.buf)
+  session:bind_window(new_win)
+  session:scroll_to_source_line(source_cursor_line)
+  session:install_float_keymaps(nil, { close_keys = {} })
+
+  set_win_state(new_win, {
+    source_buf = source_bufnr,
+    render_buf = session.buf,
+    mode = "render",
+  })
+end
+
+-- =====================================================================
 -- Auto-toggle: render outside Insert mode, source while editing.
 -- (`_auto_state` and `auto_augroup` are declared earlier so install_source_watcher
 --  can reference them in its BufWipeout cleanup.)

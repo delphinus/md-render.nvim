@@ -603,6 +603,187 @@ test("auto_on rejects non-markdown buffers", function()
   cleanup_buffer(buf)
 end)
 
+-- ----------------------------------------------------------------------
+-- Test 20: split from source opens a horizontal split showing render
+-- ----------------------------------------------------------------------
+test("split from source opens a split showing render", function()
+  local source = setup_md_buffer({ "# Hello", "", "para" })
+  local source_win = vim.api.nvim_get_current_win()
+  local before_count = #vim.api.nvim_tabpage_list_wins(0)
+
+  preview.split()
+
+  local after_count = #vim.api.nvim_tabpage_list_wins(0)
+  assert_eq(after_count, before_count + 1, "should add exactly one window")
+
+  local new_win = vim.api.nvim_get_current_win()
+  assert_false(new_win == source_win, "new window should be the active one")
+
+  -- Source window unchanged
+  assert_eq(vim.api.nvim_win_get_buf(source_win), source, "source window unchanged")
+  -- New window shows render
+  local render_buf = vim.api.nvim_win_get_buf(new_win)
+  assert_false(render_buf == source, "split window should not show source")
+
+  local state = vim.api.nvim_win_get_var(new_win, "md_render_state")
+  assert_eq(state.mode, "render", "split window mode should be render")
+  assert_eq(state.source_buf, source, "split window source_buf should match")
+  assert_eq(state.render_buf, render_buf, "split window render_buf should match")
+
+  vim.api.nvim_win_close(new_win, true)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 21: vertical modifier produces a vertical split
+-- ----------------------------------------------------------------------
+test("split with mods.vertical = true produces a vertical split", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local source_win = vim.api.nvim_get_current_win()
+  local before_height = vim.api.nvim_win_get_height(source_win)
+  local before_width = vim.api.nvim_win_get_width(source_win)
+
+  preview.split({ mods = { vertical = true } })
+
+  local new_win = vim.api.nvim_get_current_win()
+  local after_height = vim.api.nvim_win_get_height(source_win)
+  local after_width = vim.api.nvim_win_get_width(source_win)
+  assert_true(math.abs(after_height - before_height) <= 1,
+    "heights should be ~unchanged in a vertical split")
+  assert_true(after_width < before_width,
+    "source width should shrink (was " .. before_width .. ", now " .. after_width .. ")")
+
+  vim.api.nvim_win_close(new_win, true)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 22: split from a render-mode window opens source in the new split
+-- ----------------------------------------------------------------------
+test("split from render window opens source in the new split", function()
+  local source = setup_md_buffer({ "# Hello", "", "body" })
+  local orig_win = vim.api.nvim_get_current_win()
+
+  preview.toggle()
+  local render_buf = vim.api.nvim_win_get_buf(orig_win)
+  assert_false(render_buf == source, "precondition: render mode")
+
+  preview.split()
+  local new_win = vim.api.nvim_get_current_win()
+  assert_false(new_win == orig_win, "new window must be different")
+
+  -- Original window still on render
+  assert_eq(vim.api.nvim_win_get_buf(orig_win), render_buf, "orig win still on render")
+  -- New split shows source
+  assert_eq(vim.api.nvim_win_get_buf(new_win), source, "new split shows source buf")
+  -- New split should NOT have md_render_state
+  local has_state = pcall(vim.api.nvim_win_get_var, new_win, "md_render_state")
+  assert_false(has_state, "new source split should have no md_render_state")
+
+  vim.api.nvim_win_close(new_win, true)
+  preview.toggle()  -- restore orig_win to source for clean teardown
+  clear_win_state(orig_win)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 23: split shares the cached toggle render buffer
+-- ----------------------------------------------------------------------
+test("split shares the cached toggle render buffer", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local orig_win = vim.api.nvim_get_current_win()
+
+  preview.toggle()
+  local toggle_render = vim.api.nvim_win_get_buf(orig_win)
+  preview.toggle()  -- back to source
+
+  preview.split()
+  local split_win = vim.api.nvim_get_current_win()
+  local split_render = vim.api.nvim_win_get_buf(split_win)
+
+  assert_eq(split_render, toggle_render,
+    "split must reuse the cached render buffer from the toggle session")
+
+  vim.api.nvim_win_close(split_win, true)
+  clear_win_state(orig_win)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 24: live update propagates to the split's render window
+-- ----------------------------------------------------------------------
+test("live update propagates to the split's render window", function()
+  local source = setup_md_buffer({ "# Hello", "", "para" })
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local split_win = vim.api.nvim_get_current_win()
+  local render_buf = vim.api.nvim_win_get_buf(split_win)
+  local before_lines = #vim.api.nvim_buf_get_lines(render_buf, 0, -1, false)
+
+  -- Simulate edit + live rebuild (Phase 3 Test 8 pattern; doautocmd
+  -- TextChanged is unreliable in headless contexts, so call the helper).
+  vim.api.nvim_buf_set_lines(source, -1, -1, false, { "", "appended paragraph" })
+  preview._schedule_live_rebuild(preview._toggle_sessions[source])
+
+  vim.wait(300, function() return false end)
+
+  local after_lines = #vim.api.nvim_buf_get_lines(render_buf, 0, -1, false)
+  assert_true(after_lines > before_lines,
+    "render in split should grow after live update (was "
+      .. before_lines .. ", now " .. after_lines .. ")")
+
+  vim.api.nvim_win_close(split_win, true)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 25: closing split window keeps render buf alive; toggle still works
+-- ----------------------------------------------------------------------
+test("closing split window keeps render buf alive; subsequent toggle works", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local split_win = vim.api.nvim_get_current_win()
+  local render_buf = vim.api.nvim_win_get_buf(split_win)
+
+  vim.api.nvim_win_close(split_win, true)
+
+  assert_true(vim.api.nvim_buf_is_valid(render_buf),
+    "render buf should outlive the split window (bufhidden=hide)")
+  assert_true(preview._toggle_sessions[source] ~= nil,
+    "session should remain cached for the source")
+
+  vim.api.nvim_set_current_win(source_win)
+  preview.toggle()
+  assert_eq(vim.api.nvim_win_get_buf(source_win), render_buf,
+    "toggle should reuse the same render buf after split close")
+
+  preview.toggle()  -- back to source for clean teardown
+  clear_win_state(source_win)
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 26: split rejects non-markdown buffers and creates no new window
+-- ----------------------------------------------------------------------
+test("split rejects non-markdown buffers", function()
+  local buf = vim.api.nvim_create_buf(false, false)
+  vim.bo[buf].filetype = "text"
+  vim.api.nvim_buf_set_name(buf, "/tmp/md-render-split-test-not-md.txt")
+  vim.api.nvim_win_set_buf(0, buf)
+
+  local before_count = #vim.api.nvim_tabpage_list_wins(0)
+  preview.split()
+  local after_count = #vim.api.nvim_tabpage_list_wins(0)
+
+  assert_eq(after_count, before_count, "no window should be created on rejection")
+  assert_eq(vim.api.nvim_win_get_buf(0), buf, "current window unchanged")
+
+  cleanup_buffer(buf)
+end)
+
 print(string.format("toggle_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then
   os.exit(1)
