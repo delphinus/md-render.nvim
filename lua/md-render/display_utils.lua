@@ -67,7 +67,7 @@ end
 ---@param content MdRender.Content
 function M.apply_treesitter_highlights(buf, ns, content)
   for _, block in ipairs(content.code_blocks or {}) do
-    local prefix_len = block.prefix_len or 2
+    local prefix_len = block.prefix_len or 0
     local code_lines
     if block.source_lines then
       -- Use original non-truncated lines for accurate treesitter parsing

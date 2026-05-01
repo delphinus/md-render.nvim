@@ -2001,9 +2001,9 @@ function ContentBuilder:render_document(lines, opts)
 
         if not mermaid_handled then
           if code_block_lang and code_block_start < #self.lines then
-            local cb_prefix = nil
+            local cb_prefix = #indent
             if in_details and details_summary_rendered then
-              cb_prefix = #indent + #"│ "
+              cb_prefix = cb_prefix + #"│ "
             end
             table.insert(self.code_blocks, {
               language = code_block_lang,
