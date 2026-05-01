@@ -1581,7 +1581,17 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     visual_row = 0
   end
 
-  local screen_row = wininfo.winrow + visual_row + border_top_height
+  -- Account for the winbar (1 screen row above the buffer content).
+  -- `wininfo.winrow` is the topmost screen row of the window frame, which
+  -- includes the winbar when one is present. Without this offset, images
+  -- are placed one row too high and overlap any wrapped header lines below
+  -- the image label (most visible with long alt text).
+  local winbar_height = 0
+  local ok_wb, wb = pcall(function() return vim.wo[win].winbar end)
+  if ok_wb and wb and wb ~= "" then
+    winbar_height = 1
+  end
+  local screen_row = wininfo.winrow + visual_row + border_top_height + winbar_height
 
   -- Bottom crop: image extends below visible area
   local visible_rows = win_height - visual_row
