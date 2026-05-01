@@ -1220,6 +1220,7 @@ MdPreview.split = function(opts)
   session:bind_window(new_win)
   session:scroll_to_source_line(source_cursor_line)
   session:install_float_keymaps(nil, { close_keys = {} })
+  vim.wo[new_win].winbar = " Markdown Preview"
 
   set_win_state(new_win, {
     source_buf = source_bufnr,
