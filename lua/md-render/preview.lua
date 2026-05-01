@@ -10,6 +10,11 @@ local tab_win = TabWin.new "md_render_preview_tab"
 
 local MdPreview = {}
 
+--- Upper bound on render width when not explicitly overridden by the user.
+--- Long lines hurt readability even in wide windows, so we cap auto-sized
+--- render windows here while still adapting downward in narrow splits.
+local DEFAULT_MAX_WIDTH = 80
+
 --- Parse simple YAML frontmatter lines into key-value pairs
 ---@param fm_lines string[]
 ---@return {key: string, value: string}[]
@@ -58,7 +63,7 @@ end
 ---@return MdRender.Content
 MdPreview.build_content = function(lines, opts)
   opts = opts or {}
-  local max_width = opts.max_width or 80
+  local max_width = opts.max_width or DEFAULT_MAX_WIDTH
 
   local b = ContentBuilder.new()
 
@@ -310,8 +315,8 @@ end
 function Session:bind_window(win)
   self.win = win
   if not self._explicit_max_width then
-    local win_width = vim.api.nvim_win_get_width(win)
-    if win_width ~= (self.opts.max_width or 80) then
+    local win_width = math.min(vim.api.nvim_win_get_width(win), DEFAULT_MAX_WIDTH)
+    if win_width ~= (self.opts.max_width or DEFAULT_MAX_WIDTH) then
       self.opts.max_width = win_width
       self:rebuild()
     end
@@ -917,8 +922,8 @@ local function install_win_resize_handler(session)
 
       local win = render_wins[1]
       if not vim.api.nvim_win_is_valid(win) then return end
-      local win_width = vim.api.nvim_win_get_width(win)
-      if win_width == (session.opts.max_width or 80) then return end
+      local win_width = math.min(vim.api.nvim_win_get_width(win), DEFAULT_MAX_WIDTH)
+      if win_width == (session.opts.max_width or DEFAULT_MAX_WIDTH) then return end
 
       session.opts.max_width = win_width
       schedule_live_rebuild(session)
