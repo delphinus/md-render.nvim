@@ -63,6 +63,7 @@ end, {
 vim.api.nvim_create_user_command("MdRenderSplit", function(args)
   require("md-render").preview.split({ mods = args.smods })
 end, {
+  bar = true,
   nargs = 0,
   desc = "Open a split showing source and rendered markdown side-by-side",
 })

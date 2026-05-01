@@ -1227,6 +1227,10 @@ MdPreview.split = function(opts)
     mode = "render",
     source_wo = source_wo,
   })
+
+  -- Return focus to the source window — the render split is a preview,
+  -- not an editing target.
+  vim.cmd.wincmd "p"
 end
 
 -- =====================================================================
