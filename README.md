@@ -179,74 +179,26 @@ Behavior:
 
 > **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
 
-`:MdRenderAuto on` flips the current buffer to render mode immediately, then swaps to source on `InsertEnter` and back to render on `InsertLeave`. The state is per buffer and recorded in `b:md_render_auto`.
-
-```vim
-:MdRenderAuto on    " enable for the current buffer
-:MdRenderAuto off   " disable; the displayed mode is left as-is
-:MdRenderAuto       " toggle (with no argument)
-```
-
-To opt every Markdown buffer into auto mode, add an autocmd of your own — the plugin does not register one for you:
+`:MdRenderAuto on` keeps the current buffer in render mode while in Normal mode and swaps back to source automatically when you start editing. Pass `off` to disable, or call without arguments to toggle. To opt every Markdown buffer in:
 
 ```vim
 autocmd FileType markdown silent! MdRenderAuto on
 ```
 
-Behavior:
-
-- The render buffer is `nomodifiable`, so `InsertEnter` cannot fire on it. Instead, while auto mode is active the keys `i` / `I` / `a` / `A` / `o` / `O` are remapped on the render buffer to swap to source first and then enter Insert at the corresponding location.
-- `<Esc>` returns to source's Normal mode and the `InsertLeave` autocmd debounces a swap back to render after 50 ms.
-- Rapid `i<Esc>i<Esc>` keystrokes coalesce into the final state thanks to the debounce.
-- Only the current window is swapped; other windows showing the same source need a manual `:MdRenderToggle`.
-- `:MdRenderAuto off` does not change the displayed mode — call `:MdRenderToggle` afterwards if you want to flip back.
-
-#### What works on the render buffer
-
-Read-only operations all work normally: motion (`hjkl`, `gg`, `G`, ...), search (`/`, `?`), yank (`y`), visual selection, marks, and `<LeftMouse>` (folds, expand, link open).
-
-`:w` and `:w!` are forwarded to the source buffer so you can save without leaving render mode. (Different filenames like `:w other.md` and `:saveas` are not supported — switch to source with `:MdRenderToggle` first.)
-
-The render buffer is named `<source-path> [render]` so it's identifiable in your statusline and pickers.
-
-#### What does NOT work on the render buffer
-
-The render buffer is `nomodifiable`, so any mutating operation is blocked or silently a no-op:
-
-- Editing keys: `c` `C` `s` `S` `r` `R` `d` `D` `x` `X` `p` `P` `J` `~` `>>` `<<`
-- **Undo / redo (`u` / `<C-r>`)** — the render buffer has no edit history of its own
-- Ex commands that mutate the buffer: `:s`, `:!filter`, `gq`
-- Macros that contain editing keys
-
-To do any of the above, run `:MdRenderToggle` (or just press `i` / `I` / `a` / `A` / `o` / `O` in auto mode) to swap to source first.
+See `:help :MdRenderAuto` for behavior details — the `i` / `I` / `a` / `A` / `o` / `O` remaps, `:w` forwarding, and the editing operations that are blocked on the read-only render buffer.
 
 ### Side-by-side split (experimental)
 
 > **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
 
-`:MdRenderSplit` opens a split so the source and rendered views are visible at the same time, with edits flowing live. Direction follows standard Vim split modifiers:
+`:MdRenderSplit` opens a split with the source buffer and the rendered view side-by-side. Direction follows standard Vim split modifiers:
 
-```vim
-:MdRenderSplit          " horizontal split
-:vert MdRenderSplit     " vertical split (typical "README + code" layout)
-:topleft MdRenderSplit  " place at the top
-:botright MdRenderSplit " place at the bottom
-```
+- `:MdRenderSplit` — horizontal split
+- `:vert MdRenderSplit` — vertical split (typical "README + code" layout)
+- `:topleft MdRenderSplit` — place at the top
+- `:botright MdRenderSplit` — place at the bottom
 
-Behavior is symmetric:
-
-- From a **source** window, the new split shows the rendered view.
-- From a **render** window (one created by `:MdRenderToggle`), the new split shows the source.
-
-Either entry point yields a source/render pair side-by-side.
-
-Notes:
-
-- The render buffer is shared with the `:MdRenderToggle` session cache; calling `:MdRenderToggle` after `:MdRenderSplit` reuses the same render buffer.
-- Edits to the source propagate via the same 150 ms debounced live-update path used by toggle.
-- Cursor and scroll position are synchronized between source and render windows: moving the cursor or scrolling on either side mirrors the other to the corresponding mapped line, with the cursor placed at the same window row so the views stay aligned.
-- Closing the split (`:q`, `<C-w>c`) does not destroy the render buffer; it stays cached on the source.
-- **Limitation.** Inline images can only be bound to one window at a time (terminal image protocols are window-bound). Calling `:MdRenderSplit` twice produces two render windows but only the most recent one displays inline images — the older render window still receives text-content live updates.
+Edits to the source propagate live, and cursor/scroll position is synchronized in both directions. See `:help :MdRenderSplit` for full behavior and the inline-image limitation.
 
 ### Pager mode
 
