@@ -119,6 +119,7 @@ MdPreview.build_content = function(lines, opts)
 
   b:render_document(body_lines, {
     max_width = max_width,
+    indent = opts.indent,
     fold_state = opts.fold_state,
     expand_state = opts.expand_state,
     autolinks = opts.autolinks,
@@ -172,6 +173,7 @@ function Session.new(source_bufnr, ns_name, opts)
   self.ns = vim.api.nvim_create_namespace(ns_name)
   self.dirty = false
   self._debounce_timer = nil
+  self._explicit_max_width = (effective_opts.max_width ~= nil)
 
   -- Give the render buffer a recognisable name so statuslines, pickers,
   -- and bufferline plugins can show what's being viewed. The "[render]"
@@ -307,6 +309,13 @@ end
 ---@param win integer
 function Session:bind_window(win)
   self.win = win
+  if not self._explicit_max_width then
+    local win_width = vim.api.nvim_win_get_width(win)
+    if win_width ~= (self.opts.max_width or 80) then
+      self.opts.max_width = win_width
+      self:rebuild()
+    end
+  end
   self.image_state = display_utils.setup_images(win, self.content, self.ns, {
     buf = self.buf,
     build_content = function()
@@ -641,27 +650,33 @@ local _toggle_sessions = {}
 -- transition. The BufEnter guard re-applies these to any window that
 -- happens to display the render buffer (covers manual `:b` / picker
 -- entries in addition to the toggle / split entry points).
-local RENDER_WIN_OPTS = { "number", "relativenumber", "list" }
+local RENDER_WIN_OPTS = {
+  { "number", false },
+  { "relativenumber", false },
+  { "list", false },
+  { "signcolumn", "no" },
+  { "foldcolumn", "0" },
+}
 
 local function save_render_win_opts(win)
   local saved = {}
-  for _, opt in ipairs(RENDER_WIN_OPTS) do
-    saved[opt] = vim.api.nvim_get_option_value(opt, { win = win })
+  for _, entry in ipairs(RENDER_WIN_OPTS) do
+    saved[entry[1]] = vim.api.nvim_get_option_value(entry[1], { win = win })
   end
   return saved
 end
 
 local function apply_render_win_opts(win)
-  for _, opt in ipairs(RENDER_WIN_OPTS) do
-    vim.api.nvim_set_option_value(opt, false, { win = win })
+  for _, entry in ipairs(RENDER_WIN_OPTS) do
+    vim.api.nvim_set_option_value(entry[1], entry[2], { win = win })
   end
 end
 
 local function restore_render_win_opts(win, saved)
   if not saved then return end
-  for _, opt in ipairs(RENDER_WIN_OPTS) do
-    if saved[opt] ~= nil then
-      vim.api.nvim_set_option_value(opt, saved[opt], { win = win })
+  for _, entry in ipairs(RENDER_WIN_OPTS) do
+    if saved[entry[1]] ~= nil then
+      vim.api.nvim_set_option_value(entry[1], saved[entry[1]], { win = win })
     end
   end
 end
@@ -680,6 +695,10 @@ end
 
 local function scroll_sync_augroup(bufnr)
   return "md_render_toggle_sync_" .. bufnr
+end
+
+local function win_resize_augroup(bufnr)
+  return "md_render_toggle_resize_" .. bufnr
 end
 
 -- Auto-toggle state declared up here so install_source_watcher's BufWipeout
@@ -881,6 +900,32 @@ local function install_scroll_sync(session)
   })
 end
 
+--- Rebuild render content when a render window is resized and max_width is
+--- not explicitly set, so that text wrapping and image sizing adapt to the
+--- new window dimensions.
+---@param session MdRender.Session
+local function install_win_resize_handler(session)
+  local augroup = vim.api.nvim_create_augroup(
+    win_resize_augroup(session.source_bufnr), { clear = true })
+
+  vim.api.nvim_create_autocmd("WinResized", {
+    group = augroup,
+    callback = function()
+      if session._explicit_max_width then return end
+      local render_wins = vim.fn.win_findbuf(session.buf)
+      if #render_wins == 0 then return end
+
+      local win = render_wins[1]
+      if not vim.api.nvim_win_is_valid(win) then return end
+      local win_width = vim.api.nvim_win_get_width(win)
+      if win_width == (session.opts.max_width or 80) then return end
+
+      session.opts.max_width = win_width
+      schedule_live_rebuild(session)
+    end,
+  })
+end
+
 --- Apply read-only buffer options used by toggle-mode render buffers.
 --- - buftype = `acwrite` so `:w` reaches the BufWriteCmd handler installed
 ---   in install_render_buf_guards (instead of E382 from Vim itself).
@@ -1017,6 +1062,7 @@ local function install_source_watcher(session)
       pcall(vim.api.nvim_del_augroup_by_name, toggle_src_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, live_update_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, scroll_sync_augroup(source_bufnr))
+      pcall(vim.api.nvim_del_augroup_by_name, win_resize_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, auto_augroup(source_bufnr))
     end,
   })
@@ -1052,6 +1098,7 @@ local function get_or_create_toggle_session(source_bufnr, opts)
   install_source_watcher(session)
   install_live_update(session)
   install_scroll_sync(session)
+  install_win_resize_handler(session)
   _toggle_sessions[source_bufnr] = session
   return session
 end
@@ -1137,6 +1184,14 @@ MdPreview.toggle = function(opts)
 
   local session = get_or_create_toggle_session(source_bufnr, opts)
 
+  -- Restore content indent when toggling into a full-width window (may have
+  -- been cleared by a prior MdRenderSplit).
+  local default_indent = "  "
+  if (session.opts.indent or default_indent) ~= default_indent then
+    session.opts.indent = default_indent
+    session:rebuild()
+  end
+
   -- Rebind the session's image state if it was attached to a different window.
   if session.win and session.win ~= win and vim.api.nvim_win_is_valid(session.win) then
     session:cleanup_images()
@@ -1205,6 +1260,12 @@ MdPreview.split = function(opts)
   -- transition.
   local source_wo = save_render_win_opts(cur_win)
   local session = get_or_create_toggle_session(source_bufnr, opts)
+
+  -- Split windows have no border — remove content indent for space efficiency.
+  if (session.opts.indent or "  ") ~= "" then
+    session.opts.indent = ""
+    session:rebuild()
+  end
 
   vim.cmd { cmd = "split", mods = opts.mods or {} }
   local new_win = vim.api.nvim_get_current_win()

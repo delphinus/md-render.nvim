@@ -500,7 +500,7 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
   end
 
   local lines_before_fn = #self.lines
-  if vim.api.nvim_strwidth(rendered_text) > max_width then
+  if vim.api.nvim_strwidth(indent) + vim.api.nvim_strwidth(rendered_text) > max_width then
     self:add_wrapped_markdown(rendered_text, md_highlights, md_links, indent, max_width, quote_prefix, list_marker)
   else
     self:add_simple_markdown(rendered_text, md_highlights, md_links, indent)
