@@ -181,11 +181,13 @@ function Session.new(source_bufnr, ns_name, opts)
   -- handlers (markdown ftplugins, treesitter, lualine, etc.) would otherwise
   -- treat this scratch buffer as a real markdown file and clobber our
   -- pre-rendered content (conceallevel, readonly, syntax overlays, ...).
+  -- A non-empty filetype ("md-render") prevents external hacks that run
+  -- `:edit` on filetype="" buffers from clearing the rendered content.
   if source_name ~= "" then
     local saved_ei = vim.o.eventignore
     vim.o.eventignore = "all"
     pcall(vim.api.nvim_buf_set_name, self.buf, source_name .. " [render]")
-    vim.bo[self.buf].filetype = ""
+    vim.bo[self.buf].filetype = "md-render"
     vim.o.eventignore = saved_ei
     -- nvim_buf_set_name can flip readonly when it thinks the file already
     -- exists on disk; defend so apply_content_to_buffer doesn't W10-warn.
