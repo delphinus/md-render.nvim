@@ -929,6 +929,289 @@ test("BufWipeout removes the scroll-sync augroup", function()
   assert_false(ok2, "scroll-sync augroup should be removed on BufWipeout")
 end)
 
+-- ----------------------------------------------------------------------
+-- Scroll sync edge alignment
+-- ----------------------------------------------------------------------
+-- Build a markdown buffer that is taller than the test window so the
+-- top/bottom scroll sync branches actually have somewhere to scroll.
+local function setup_tall_md_buffer(line_count)
+  local lines = {}
+  for i = 1, line_count do
+    if i % 7 == 1 then
+      table.insert(lines, "## section " .. i)
+    else
+      table.insert(lines, "line " .. i)
+    end
+  end
+  return setup_md_buffer(lines)
+end
+
+--- The sync lock releases via `vim.defer_fn`, which never fires in
+--- a synchronous headless test run. Clear it before triggering each
+--- autocmd so subsequent syncs are not silently dropped.
+local function clear_sync_locks()
+  for _, session in pairs(preview._toggle_sessions or {}) do
+    session._syncing = false
+    if session._sync_unlock_timer then
+      pcall(function() session._sync_unlock_timer:stop() end)
+      session._sync_unlock_timer = nil
+    end
+  end
+end
+
+local function set_view(win, topline, cursor_line)
+  vim.api.nvim_win_set_cursor(win, { cursor_line, 0 })
+  vim.api.nvim_win_call(win, function()
+    vim.fn.winrestview { topline = topline, lnum = cursor_line, col = 0 }
+  end)
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+end
+
+local set_source_view = set_view
+
+--- Resolve the render window for the session bound to `source_buf`.
+--- `preview.split()` returns focus to the source window, so the render
+--- window is the *other* window showing the session's render buffer.
+local function find_render_win(source_buf)
+  local session = preview._toggle_sessions[source_buf]
+  if not session then return nil end
+  local wins = vim.fn.win_findbuf(session.buf)
+  return wins and wins[1] or nil
+end
+
+test("source at file top -> render at file top", function()
+  local source = setup_tall_md_buffer(200)
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local render_win = find_render_win(source)
+  assert_true(render_win ~= nil, "render window should exist after split")
+
+  -- Move source somewhere in the middle first, then snap to top.
+  vim.api.nvim_set_current_win(source_win)
+  set_source_view(source_win, 100, 100)
+  set_source_view(source_win, 1, 1)
+
+  local render_view = vim.api.nvim_win_call(render_win, function()
+    return vim.fn.winsaveview()
+  end)
+  assert_eq(render_view.topline, 1,
+    "render.topline should be 1 when source is at file top")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("source at file bottom -> render at file bottom", function()
+  local source = setup_tall_md_buffer(200)
+  local source_win = vim.api.nvim_get_current_win()
+  local source_lines = vim.api.nvim_buf_line_count(source)
+
+  preview.split()
+  local render_win = find_render_win(source)
+  local session = preview._toggle_sessions[source]
+  local render_lines = vim.api.nvim_buf_line_count(session.buf)
+
+  vim.api.nvim_set_current_win(source_win)
+  -- Park source at its very last line so botline == source_lines.
+  vim.api.nvim_win_call(source_win, function()
+    vim.fn.cursor(source_lines, 1)
+    vim.cmd "normal! zb"
+  end)
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+
+  local render_botline = vim.api.nvim_win_call(render_win, function()
+    return vim.fn.line("w$")
+  end)
+  assert_eq(render_botline, render_lines,
+    "render.botline should equal render_lines when source is at file bottom")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("render at file top -> source at file top", function()
+  local source = setup_tall_md_buffer(200)
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local render_win = find_render_win(source)
+
+  -- Park source somewhere in the middle, then move render to top.
+  vim.api.nvim_set_current_win(source_win)
+  set_source_view(source_win, 100, 100)
+
+  vim.api.nvim_set_current_win(render_win)
+  set_view(render_win, 1, 1)
+
+  local source_view = vim.api.nvim_win_call(source_win, function()
+    return vim.fn.winsaveview()
+  end)
+  assert_eq(source_view.topline, 1,
+    "source.topline should be 1 when render is at file top")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("render at file bottom -> source at file bottom", function()
+  local source = setup_tall_md_buffer(200)
+  local source_win = vim.api.nvim_get_current_win()
+  local source_lines = vim.api.nvim_buf_line_count(source)
+
+  preview.split()
+  local render_win = find_render_win(source)
+  local session = preview._toggle_sessions[source]
+  local render_lines = vim.api.nvim_buf_line_count(session.buf)
+
+  -- Park render at its very last line.
+  vim.api.nvim_set_current_win(render_win)
+  vim.api.nvim_win_call(render_win, function()
+    vim.fn.cursor(render_lines, 1)
+    vim.cmd "normal! zb"
+  end)
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+
+  local source_botline = vim.api.nvim_win_call(source_win, function()
+    return vim.fn.line("w$")
+  end)
+  assert_eq(source_botline, source_lines,
+    "source.botline should equal source_lines when render is at file bottom")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+-- Repro of the user-reported bug: README.ja.md (long Japanese paragraphs
+-- that wrap in a typical headless 80-col window) showed render at the
+-- file bottom while source stayed several lines short. The pre-fix
+-- topline arithmetic assumed 1 buffer line == 1 screen row; with 'wrap'
+-- on (Vim's default), wrapped lines occupy more screen rows than buffer
+-- rows, so `topline = source_lines - height + 1` left the file's last
+-- lines below the destination's view.
+--
+-- These tests build a buffer of long lines that are guaranteed to wrap
+-- in any reasonable test window and assert the user-visible invariant
+-- (`line('w$') == source_lines`) on both sync directions.
+local function setup_wrapping_md_buffer(line_count, line_text_repeat)
+  local long = string.rep(line_text_repeat or "abcdefghij ", 30)
+  local lines = {}
+  for i = 1, line_count do
+    if i % 5 == 1 then
+      table.insert(lines, "## section " .. i)
+    else
+      table.insert(lines, long .. " (" .. i .. ")")
+    end
+  end
+  return setup_md_buffer(lines)
+end
+
+test("source at bottom -> render at bottom (with wrapped lines)", function()
+  local source = setup_wrapping_md_buffer(120)
+  local source_win = vim.api.nvim_get_current_win()
+  local source_lines = vim.api.nvim_buf_line_count(source)
+
+  preview.split()
+  local render_win = find_render_win(source)
+  local session = preview._toggle_sessions[source]
+  local render_lines = vim.api.nvim_buf_line_count(session.buf)
+
+  vim.api.nvim_set_current_win(source_win)
+  vim.api.nvim_win_call(source_win, function()
+    vim.fn.cursor(source_lines, 1)
+    vim.cmd "normal! zb"
+  end)
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+
+  local render_botline = vim.api.nvim_win_call(render_win, function()
+    return vim.fn.line("w$")
+  end)
+  assert_eq(render_botline, render_lines,
+    "render.botline should equal render_lines even when source has wrapped lines")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("render at bottom -> source at bottom (with wrapped lines)", function()
+  local source = setup_wrapping_md_buffer(120)
+  local source_win = vim.api.nvim_get_current_win()
+  local source_lines = vim.api.nvim_buf_line_count(source)
+
+  preview.split()
+  local render_win = find_render_win(source)
+  local session = preview._toggle_sessions[source]
+  local render_lines = vim.api.nvim_buf_line_count(session.buf)
+
+  vim.api.nvim_set_current_win(render_win)
+  vim.api.nvim_win_call(render_win, function()
+    vim.fn.cursor(render_lines, 1)
+    vim.cmd "normal! zb"
+  end)
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+
+  local source_botline = vim.api.nvim_win_call(source_win, function()
+    return vim.fn.line("w$")
+  end)
+  assert_eq(source_botline, source_lines,
+    "source.botline should equal source_lines even when render has wrapped lines")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("source at top -> render at top (with wrapped lines)", function()
+  local source = setup_wrapping_md_buffer(120)
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local render_win = find_render_win(source)
+
+  -- Park source somewhere in the middle first so the snap-to-top has
+  -- something to undo.
+  vim.api.nvim_set_current_win(source_win)
+  set_source_view(source_win, 60, 60)
+  set_source_view(source_win, 1, 1)
+
+  local render_topline = vim.api.nvim_win_call(render_win, function()
+    return vim.fn.line("w0")
+  end)
+  assert_eq(render_topline, 1,
+    "render.topline should be 1 when source snaps to file top")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("render at top -> source at top (with wrapped lines)", function()
+  local source = setup_wrapping_md_buffer(120)
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split()
+  local render_win = find_render_win(source)
+
+  -- Park source somewhere in the middle so the snap is observable.
+  vim.api.nvim_set_current_win(source_win)
+  set_source_view(source_win, 60, 60)
+
+  vim.api.nvim_set_current_win(render_win)
+  set_view(render_win, 1, 1)
+
+  local source_topline = vim.api.nvim_win_call(source_win, function()
+    return vim.fn.line("w0")
+  end)
+  assert_eq(source_topline, 1,
+    "source.topline should be 1 when render snaps to file top")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
 print(string.format("toggle_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then
   os.exit(1)
