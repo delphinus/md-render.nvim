@@ -271,27 +271,104 @@ function Session:rebuild()
   self.dirty = false
 end
 
---- Map a source-buffer line to the corresponding rendered line.
+--- Lazily build sync points from `content.source_line_map`. A sync point
+--- marks the first rendered line of each source-line "run" in the map,
+--- plus a terminal sentinel for past-the-end interpolation.
+---
+--- For map = [5, 5, 5, 7, 7, 10], sync_points becomes:
+---   [{src=5, render=1}, {src=7, render=4}, {src=10, render=6}, {src=11, render=7}]
+---
+--- The final sentinel lets `source_to_rendered_f` interpolate past the
+--- last point without degenerating, matching the VS Code preview's
+--- "interpolate between previous and next markers" approach.
+---@return { src: integer, render: integer }[]
+function Session:get_sync_points()
+  local content = self.content
+  if content._sync_points then return content._sync_points end
+  local map = content.source_line_map
+  local points = {}
+  if map and #map > 0 then
+    local prev = nil
+    for render_idx, src in ipairs(map) do
+      if src ~= prev then
+        table.insert(points, { src = src, render = render_idx })
+        prev = src
+      end
+    end
+    if #points > 0 then
+      local last = points[#points]
+      table.insert(points, { src = last.src + 1, render = #map + 1 })
+    end
+  end
+  content._sync_points = points
+  return points
+end
+
+--- Find the largest `i` such that `pts[i][key] <= value` (binary search).
+--- Returns `i = 1` if `value` is below all entries.
+local function bracket_index(pts, key, value)
+  local lo, hi = 1, #pts
+  if value < pts[1][key] then return 1 end
+  if value >= pts[hi][key] then return hi end
+  while lo + 1 < hi do
+    local mid = math.floor((lo + hi) / 2)
+    if pts[mid][key] <= value then lo = mid else hi = mid end
+  end
+  return lo
+end
+
+--- Float version of `source_to_rendered`. Linearly interpolates between
+--- adjacent sync points so a source line that sits "between" two known
+--- markers maps to a fractional rendered line, rather than snapping to
+--- the next marker.
+---@param src number 1-indexed source line (may be fractional)
+---@return number 1-indexed rendered line (float)
+function Session:source_to_rendered_f(src)
+  local pts = self:get_sync_points()
+  if #pts == 0 then return 1 end
+  if src <= pts[1].src then return pts[1].render end
+  if src >= pts[#pts].src then return pts[#pts].render end
+  local i = bracket_index(pts, "src", src)
+  local p1 = pts[i]
+  local p2 = pts[i + 1]
+  if not p2 or p2.src == p1.src then return p1.render end
+  local frac = (src - p1.src) / (p2.src - p1.src)
+  return p1.render + frac * (p2.render - p1.render)
+end
+
+--- Float version of `rendered_to_source`. Symmetric counterpart of
+--- `source_to_rendered_f`.
+---@param r number 1-indexed rendered line (may be fractional)
+---@return number 1-indexed source line (float)
+function Session:rendered_to_source_f(r)
+  local pts = self:get_sync_points()
+  if #pts == 0 then return 1 end
+  if r <= pts[1].render then return pts[1].src end
+  if r >= pts[#pts].render then return pts[#pts].src end
+  local i = bracket_index(pts, "render", r)
+  local p1 = pts[i]
+  local p2 = pts[i + 1]
+  if not p2 or p2.render == p1.render then return p1.src end
+  local frac = (r - p1.render) / (p2.render - p1.render)
+  return p1.src + frac * (p2.src - p1.src)
+end
+
+--- Integer-rounded `source_to_rendered_f`. Used by callers that need a
+--- concrete render line (cursor placement, initial scroll).
 ---@param src_line integer 1-indexed source line
 ---@return integer  1-indexed rendered line
 function Session:source_to_rendered(src_line)
-  local map = self.content.source_line_map
-  if not map or #map == 0 then return 1 end
-  for i, sl in ipairs(map) do
-    if sl >= src_line then return i end
-  end
-  return #map
+  return math.max(1, math.floor(self:source_to_rendered_f(src_line) + 0.5))
 end
 
---- Map a rendered line back to the source-buffer line.
+--- Integer-rounded `rendered_to_source_f`. Returns nil when the
+--- underlying map is empty, preserving the previous contract.
 ---@param rendered_line integer 1-indexed rendered line
----@return integer? 1-indexed source line, or nil if out of range
+---@return integer? 1-indexed source line, or nil if no map exists
 function Session:rendered_to_source(rendered_line)
-  local map = self.content.source_line_map
-  if map and rendered_line <= #map then
-    return map[rendered_line]
-  end
-  return nil
+  local pts = self:get_sync_points()
+  if #pts == 0 then return nil end
+  return math.max(1, math.floor(self:rendered_to_source_f(rendered_line) + 0.5))
 end
 
 --- Place cursor on the rendered line corresponding to a source line,
@@ -773,12 +850,33 @@ end
 ---   - WinScrolled on either -> sync the other side (covers Ctrl+E / Ctrl+Y
 ---     / mouse-wheel scrolling that doesn't move the cursor)
 ---
---- Sync target: place the other side's cursor on the corresponding mapped
---- line AND adjust its topline so the cursor lands at the same winrow as
---- the originating window's cursor. Without the topline adjustment, cursor
---- positions match but the views drift (1 source line maps to N rendered
---- lines, so the rendered cursor "falls down" the window relative to
---- source's cursor).
+--- Sync target: edge-aware. When the source is anchored to the file's
+--- start or end, snap the destination to its own start or end (this
+--- guarantees "I scrolled to the bottom, the other side did too" even
+--- when source has hidden lines like footnote/link reference defs that
+--- produce no render output and would otherwise leave the mapped end
+--- short of the file). Otherwise map the source's visible range (top,
+--- center, bottom) through `source_to_rendered_f` /
+--- `rendered_to_source_f` and center on the mapped center, clamped to
+--- stay inside the source's visible range. The destination cursor is
+--- set independently from the originating cursor.
+---
+--- Mapping is done in floating point so a source line that sits between
+--- two sync points yields a fractional render position rather than
+--- snapping to the next marker. The final topline is then rounded to an
+--- integer (Vim cannot scroll by fractional rows). This mirrors the way
+--- VS Code's preview interpolates between `data-line` markers.
+---
+--- An even earlier design tried to align the cursor's winrow directly,
+--- which jittered: pressing `j` on a source line whose mapped render
+--- line did not advance forced the render view *up* by one row to keep
+--- the cursor at the new winrow. Centering on a buffer-derived anchor
+--- decouples scroll from cursor motion — pressing `j` only moves the
+--- cursor unless the source view actually scrolls.
+---
+--- Both topline and cursor are written through a single `winrestview`
+--- call. Using `nvim_win_set_cursor` instead would re-apply 'scrolloff'
+--- and silently override the topline we just set.
 ---
 --- Loop prevention: a single `_syncing` flag, released after 30 ms via
 --- vim.defer_fn. Each sync action fires both CursorMoved and WinScrolled
@@ -804,22 +902,87 @@ local function install_scroll_sync(session)
     if not ok then error(err) end
   end
 
-  --- Move every window in `wins` (except `from_win`) so that `target_line`
-  --- lands at window row `from_winrow`.
-  local function fan_out(wins, from_win, target_line, from_winrow)
+  --- Apply a per-window scroll + cursor under the sync lock.
+  ---
+  --- For interior scrolls a single `winrestview` writes both topline
+  --- and lnum so 'scrolloff' cannot shift the topline as a side effect
+  --- of placing the cursor.
+  ---
+  --- For edge scrolls (`"top"` / `"bot"`) we cannot just compute
+  --- `topline = dest_lines - height + 1`: when the destination has
+  --- 'wrap' on (Vim's default), buffer lines that wrap occupy more
+  --- screen rows than buffer rows, so a row-arithmetic topline leaves
+  --- the file's last line off the bottom of the window. We instead
+  --- park the cursor at the file boundary and use `zt` / `zb` so Vim
+  --- itself computes a topline that respects 'wrap'.
+  local function fan_out(wins, from_win, compute_action, target_cursor)
     if #wins == 0 then return end
+    local cursor = math.max(1, math.floor(target_cursor + 0.5))
     with_sync_lock(function()
       for _, w in ipairs(wins) do
         if w ~= from_win and vim.api.nvim_win_is_valid(w) then
           pcall(function()
-            local desired_topline = math.max(1, target_line - from_winrow + 1)
+            local action = compute_action(w)
             vim.api.nvim_win_call(w, function()
-              vim.fn.winrestview { topline = desired_topline }
+              if action == "top" then
+                vim.fn.cursor(1, 1)
+                vim.cmd "normal! zt"
+                vim.fn.cursor(cursor, 1)
+              elseif action == "bot" then
+                local last = vim.api.nvim_buf_line_count(0)
+                vim.fn.cursor(last, 1)
+                vim.cmd "normal! zb"
+                vim.fn.cursor(cursor, 1)
+              else
+                vim.fn.winrestview { topline = action, lnum = cursor, col = 0 }
+              end
             end)
-            vim.api.nvim_win_set_cursor(w, { target_line, 0 })
           end)
         end
       end
+    end)
+  end
+
+  --- Decide what to do with one destination window.
+  ---
+  --- Returns either:
+  ---   * the literal string `"top"` — fan_out will scroll the window
+  ---     to its first line via `gg` + `zt` (handles 'wrap' correctly).
+  ---   * the literal string `"bot"` — fan_out will scroll the window
+  ---     to its last line via `G` + `zb` (handles 'wrap' correctly).
+  ---   * an integer topline for the interior (mid-scroll) case, where
+  ---     center alignment plus the [mapped_top, mapped_bot_end -
+  ---     dest_height + 1] clamp keeps the destination inside the
+  ---     source's visible range.
+  ---
+  --- For interior scrolls the topline is rounded and clamped to the
+  --- destination buffer's valid range.
+  local function pick_action(dest_height, dest_lines, mapped_top, mapped_center, mapped_bot_end, src_top_at_edge, src_bot_at_edge)
+    if src_top_at_edge then return "top" end
+    if src_bot_at_edge then return "bot" end
+    local topline = mapped_center - dest_height / 2
+    if topline < mapped_top then topline = mapped_top end
+    local max_top_in_range = mapped_bot_end - dest_height + 1
+    if topline > max_top_in_range then topline = max_top_in_range end
+    topline = math.floor(topline + 0.5)
+    local buf_max_top = math.max(1, dest_lines - dest_height + 1)
+    if topline < 1 then topline = 1 end
+    if topline > buf_max_top then topline = buf_max_top end
+    return topline
+  end
+
+  --- Read a window's actual visible buffer-line range. `line('w0')` /
+  --- `line('w$')` honour 'wrap', folds, and 'diff' filler lines, unlike
+  --- `topline + nvim_win_get_height() - 1` which counts screen rows and
+  --- would over- or under-shoot when a single buffer line spans
+  --- multiple screen rows.
+  ---
+  --- Returned as a 3-element array because `nvim_win_call` only
+  --- preserves the first return value of its callback.
+  ---@return integer[] # `{ topline, botline, cursor_line }`
+  local function visible_range(win)
+    return vim.api.nvim_win_call(win, function()
+      return { vim.fn.line("w0"), vim.fn.line("w$"), vim.fn.line(".") }
     end)
   end
 
@@ -829,16 +992,31 @@ local function install_scroll_sync(session)
     local render_wins = vim.fn.win_findbuf(session.buf)
     if #render_wins == 0 then return end
 
-    local source_line = vim.api.nvim_win_get_cursor(source_win)[1]
-    local source_winrow = vim.api.nvim_win_call(source_win, function()
-      return vim.fn.winline()
-    end)
-    local rendered_line = session:source_to_rendered(source_line)
-    if not rendered_line or rendered_line < 1 then return end
-    local total = vim.api.nvim_buf_line_count(session.buf)
-    rendered_line = math.min(rendered_line, total)
+    local source_lines = vim.api.nvim_buf_line_count(session.source_bufnr)
+    local sv = visible_range(source_win)
+    local source_topline, source_botline, source_cursor_line = sv[1], sv[2], sv[3]
+    source_topline = math.max(1, math.min(source_topline, source_lines))
+    source_botline = math.max(source_topline, math.min(source_botline, source_lines))
+    local source_center = (source_topline + source_botline) / 2
+    local src_top_at_edge = source_topline <= 1
+    local src_bot_at_edge = source_botline >= source_lines
 
-    fan_out(render_wins, source_win, rendered_line, source_winrow)
+    local render_lines = vim.api.nvim_buf_line_count(session.buf)
+    local function clamp(v) return math.min(math.max(v, 1), render_lines) end
+    local mapped_top = clamp(session:source_to_rendered_f(source_topline))
+    local mapped_center = clamp(session:source_to_rendered_f(source_center))
+    -- Use the *next* source line's mapped start, then step back one render
+    -- line, to capture where source.botline's render block actually ends.
+    -- The sync_points sentinel makes this safe past EOF.
+    local mapped_bot_end = clamp(session:source_to_rendered_f(source_botline + 1) - 1)
+    if mapped_bot_end < mapped_top then mapped_bot_end = mapped_top end
+    local target_cursor = clamp(session:source_to_rendered_f(source_cursor_line))
+
+    fan_out(render_wins, source_win, function(w)
+      local dest_height = vim.api.nvim_win_get_height(w)
+      return pick_action(dest_height, render_lines, mapped_top, mapped_center, mapped_bot_end,
+        src_top_at_edge, src_bot_at_edge)
+    end, target_cursor)
   end
 
   local function sync_from_render(render_win)
@@ -847,16 +1025,29 @@ local function install_scroll_sync(session)
     local source_wins = vim.fn.win_findbuf(session.source_bufnr)
     if #source_wins == 0 then return end
 
-    local rendered_line = vim.api.nvim_win_get_cursor(render_win)[1]
-    local render_winrow = vim.api.nvim_win_call(render_win, function()
-      return vim.fn.winline()
-    end)
-    local source_line = session:rendered_to_source(rendered_line)
-    if not source_line or source_line < 1 then return end
-    local total = vim.api.nvim_buf_line_count(session.source_bufnr)
-    source_line = math.min(source_line, total)
+    if #session:get_sync_points() == 0 then return end
+    local render_lines = vim.api.nvim_buf_line_count(session.buf)
+    local rv = visible_range(render_win)
+    local render_topline, render_botline, render_cursor_line = rv[1], rv[2], rv[3]
+    render_topline = math.max(1, math.min(render_topline, render_lines))
+    render_botline = math.max(render_topline, math.min(render_botline, render_lines))
+    local render_center = (render_topline + render_botline) / 2
+    local src_top_at_edge = render_topline <= 1
+    local src_bot_at_edge = render_botline >= render_lines
 
-    fan_out(source_wins, render_win, source_line, render_winrow)
+    local source_lines = vim.api.nvim_buf_line_count(session.source_bufnr)
+    local function clamp(v) return math.min(math.max(v, 1), source_lines) end
+    local mapped_top = clamp(session:rendered_to_source_f(render_topline))
+    local mapped_center = clamp(session:rendered_to_source_f(render_center))
+    local mapped_bot_end = clamp(session:rendered_to_source_f(render_botline + 1) - 1)
+    if mapped_bot_end < mapped_top then mapped_bot_end = mapped_top end
+    local target_cursor = clamp(session:rendered_to_source_f(render_cursor_line))
+
+    fan_out(source_wins, render_win, function(w)
+      local dest_height = vim.api.nvim_win_get_height(w)
+      return pick_action(dest_height, source_lines, mapped_top, mapped_center, mapped_bot_end,
+        src_top_at_edge, src_bot_at_edge)
+    end, target_cursor)
   end
 
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
