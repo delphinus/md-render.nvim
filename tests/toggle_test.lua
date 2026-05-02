@@ -62,6 +62,18 @@ local function clear_win_state(win)
   pcall(vim.api.nvim_win_del_var, win, "md_render_state")
 end
 
+-- Return the window in the current tab that is NOT in `before_wins`.
+-- Used after preview.split() because split returns focus to the source
+-- window, so nvim_get_current_win() does NOT identify the new split.
+local function find_new_win(before_wins)
+  local before_set = {}
+  for _, w in ipairs(before_wins) do before_set[w] = true end
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if not before_set[w] then return w end
+  end
+  return nil
+end
+
 -- ----------------------------------------------------------------------
 -- Test 1: source → render swaps the buffer in the same window
 -- ----------------------------------------------------------------------
@@ -609,15 +621,18 @@ end)
 test("split from source opens a split showing render", function()
   local source = setup_md_buffer({ "# Hello", "", "para" })
   local source_win = vim.api.nvim_get_current_win()
-  local before_count = #vim.api.nvim_tabpage_list_wins(0)
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
 
   preview.split()
 
-  local after_count = #vim.api.nvim_tabpage_list_wins(0)
-  assert_eq(after_count, before_count + 1, "should add exactly one window")
+  local after_wins = vim.api.nvim_tabpage_list_wins(0)
+  assert_eq(#after_wins, #before_wins + 1, "should add exactly one window")
 
-  local new_win = vim.api.nvim_get_current_win()
-  assert_false(new_win == source_win, "new window should be the active one")
+  -- split() returns focus to source; the new split is identified by diff.
+  assert_eq(vim.api.nvim_get_current_win(), source_win,
+    "focus should return to source window after split")
+  local new_win = find_new_win(before_wins)
+  assert_true(new_win ~= nil, "a new window should exist")
 
   -- Source window unchanged
   assert_eq(vim.api.nvim_win_get_buf(source_win), source, "source window unchanged")
@@ -643,9 +658,10 @@ test("split with mods.vertical = true produces a vertical split", function()
   local before_height = vim.api.nvim_win_get_height(source_win)
   local before_width = vim.api.nvim_win_get_width(source_win)
 
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
   preview.split({ mods = { vertical = true } })
 
-  local new_win = vim.api.nvim_get_current_win()
+  local new_win = find_new_win(before_wins)
   local after_height = vim.api.nvim_win_get_height(source_win)
   local after_width = vim.api.nvim_win_get_width(source_win)
   assert_true(math.abs(after_height - before_height) <= 1,
@@ -697,8 +713,9 @@ test("split shares the cached toggle render buffer", function()
   local toggle_render = vim.api.nvim_win_get_buf(orig_win)
   preview.toggle()  -- back to source
 
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
   preview.split()
-  local split_win = vim.api.nvim_get_current_win()
+  local split_win = find_new_win(before_wins)
   local split_render = vim.api.nvim_win_get_buf(split_win)
 
   assert_eq(split_render, toggle_render,
@@ -716,8 +733,9 @@ test("live update propagates to the split's render window", function()
   local source = setup_md_buffer({ "# Hello", "", "para" })
   local source_win = vim.api.nvim_get_current_win()
 
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
   preview.split()
-  local split_win = vim.api.nvim_get_current_win()
+  local split_win = find_new_win(before_wins)
   local render_buf = vim.api.nvim_win_get_buf(split_win)
   local before_lines = #vim.api.nvim_buf_get_lines(render_buf, 0, -1, false)
 
@@ -744,8 +762,9 @@ test("closing split window keeps render buf alive; subsequent toggle works", fun
   local source = setup_md_buffer({ "# Hello" })
   local source_win = vim.api.nvim_get_current_win()
 
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
   preview.split()
-  local split_win = vim.api.nvim_get_current_win()
+  local split_win = find_new_win(before_wins)
   local render_buf = vim.api.nvim_win_get_buf(split_win)
 
   vim.api.nvim_win_close(split_win, true)
@@ -801,8 +820,9 @@ test("split render window hides nu/rnu/list; source unchanged", function()
   vim.wo[source_win].relativenumber = true
   vim.wo[source_win].list = true
 
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
   preview.split()
-  local split_win = vim.api.nvim_get_current_win()
+  local split_win = find_new_win(before_wins)
 
   assert_false(vim.wo[split_win].number, "split render: number off")
   assert_false(vim.wo[split_win].relativenumber, "split render: relativenumber off")
@@ -842,12 +862,15 @@ test("source cursor move syncs render window cursor", function()
   local source = setup_md_buffer({ "# Heading", "", "para 1", "", "para 2" })
   local source_win = vim.api.nvim_get_current_win()
 
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
   preview.split()
-  local render_win = vim.api.nvim_get_current_win()
+  local render_win = find_new_win(before_wins)
   local session = preview._toggle_sessions[source]
   assert_true(session ~= nil, "session should exist after split")
 
-  -- Move source cursor to line 5 ("para 2"), trigger CursorMoved
+  -- Move source cursor to line 5 ("para 2"), trigger CursorMoved.
+  -- split() already returned focus to source_win, so set_current_win is
+  -- redundant but kept explicit for readability.
   vim.api.nvim_set_current_win(source_win)
   vim.api.nvim_win_set_cursor(source_win, { 5, 0 })
   vim.cmd "doautocmd CursorMoved"
@@ -869,11 +892,14 @@ test("render cursor move syncs source window cursor", function()
   local source = setup_md_buffer({ "# Heading", "", "para 1", "", "para 2" })
   local source_win = vim.api.nvim_get_current_win()
 
+  local before_wins = vim.api.nvim_tabpage_list_wins(0)
   preview.split()
-  local render_win = vim.api.nvim_get_current_win()
+  local render_win = find_new_win(before_wins)
   local session = preview._toggle_sessions[source]
 
-  -- Move render cursor and fire CursorMoved
+  -- Move render cursor and fire CursorMoved. CursorMoved must fire on
+  -- the render window, so jump there first (split() left us on source).
+  vim.api.nvim_set_current_win(render_win)
   local total_render = vim.api.nvim_buf_line_count(session.buf)
   local target_render = math.min(3, total_render)
   vim.api.nvim_win_set_cursor(render_win, { target_render, 0 })
