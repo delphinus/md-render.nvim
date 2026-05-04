@@ -783,6 +783,16 @@ local function win_resize_augroup(bufnr)
   return "md_render_toggle_resize_" .. bufnr
 end
 
+local function shadow_augroup(bufnr)
+  return "md_render_shadow_" .. bufnr
+end
+
+-- Dedicated namespace for MdRenderSplit shadow-cursor extmarks. Kept
+-- separate from session.ns so Session:rebuild's clear of session.ns does
+-- not wipe the shadow. nvim_create_namespace returns the same ID for
+-- the same name, so source and render buffers can safely share it.
+local SHADOW_NS = vim.api.nvim_create_namespace "md_render_shadow"
+
 -- Auto-toggle state declared up here so install_source_watcher's BufWipeout
 -- callback can clean it up. The auto_on / auto_off implementations live
 -- further down with the rest of the auto-toggle logic.
@@ -1096,6 +1106,245 @@ local function install_scroll_sync(session)
   })
 end
 
+--- Shadow cursor for MdRenderSplit: highlight the matching line(s) on
+--- the unfocused side so the user can see where the focused cursor maps
+--- to in the counterpart buffer.
+---
+--- - source -> render: highlight the contiguous render-line block that
+---   the source cursor's line expands into (a heading or paragraph that
+---   produces multiple render lines is shown as a block).
+--- - render -> source: highlight the single source line the render
+---   cursor's line maps back to (the map is 1:1 in this direction).
+---
+--- The focused side is always cleared so the shadow never overlaps with
+--- the real cursor + cursorline. When source and render are not both
+--- visible at once (toggle mode, split closed), no shadow is placed.
+---
+--- This handler intentionally ignores `_syncing`: scroll_sync moves the
+--- counterpart cursor under the lock, and we want shadow to follow the
+--- focused side's cursor regardless. Flicker is suppressed by a no-op
+--- early return when the new line set equals the existing one — the
+--- two sides converge on a fixpoint within one tick.
+---@param session MdRender.Session
+local function install_shadow_cursor(session)
+  local augroup = vim.api.nvim_create_augroup(
+    shadow_augroup(session.source_bufnr), { clear = true })
+
+  -- Map source line -> [start, end] render line range (inclusive).
+  --
+  -- Walks source_line_map directly instead of going through the
+  -- linear-interpolation `source_to_rendered_f`. The interpolation path
+  -- mis-sizes blocks whenever consecutive source lines collapse:
+  --   - headings followed by blanks that map to the heading itself
+  --   - <img>/<details>/callout/table whose body source lines never
+  --     appear in the map (the renderer attributes the entire rendered
+  --     block to the opening source line)
+  -- For those cases we want the *whole rendered block* of the cursor's
+  -- source line, including any orphan rows (map entry == 0) that are
+  -- structurally part of it.
+  --
+  -- Owner fallback: if `source_line` itself isn't in the map (e.g. the
+  -- cursor sits inside a callout/details body whose lines don't emit
+  -- their own render rows), we fall back to the largest mapped source
+  -- line `<= source_line` whose rendered block extends past the cursor
+  -- — i.e. the container that swallowed the body. This makes the shadow
+  -- track the visible block instead of disappearing mid-container.
+  local function compute_render_range(source_line)
+    local map = session.content.source_line_map
+    if not map or #map == 0 then return nil end
+
+    -- Direct hit: source_line is in the map.
+    local first = nil
+    for i = 1, #map do
+      if map[i] == source_line then
+        first = i
+        break
+      end
+    end
+
+    -- Owner fallback: pick the closest mapped source line <= source_line.
+    if not first then
+      local owner_src = nil
+      local owner_first = nil
+      for i = 1, #map do
+        local m = map[i]
+        if m > 0 and m <= source_line and (not owner_src or m > owner_src) then
+          owner_src = m
+          owner_first = i
+        end
+      end
+      if not owner_src then return nil end
+      -- Only use the owner's block when it actually swallows source_line:
+      -- the next mapped source line must be strictly greater than
+      -- source_line. Otherwise the cursor sits past the container.
+      local next_src = nil
+      for i = owner_first + 1, #map do
+        if map[i] > owner_src then
+          next_src = map[i]
+          break
+        end
+      end
+      if next_src and source_line >= next_src then return nil end
+      first = owner_first
+      source_line = owner_src
+    end
+
+    -- Extend forward to include consecutive rows that belong to the
+    -- same block: the source line itself, smaller source lines (rare),
+    -- and orphan rows (0). Stop at the first row mapped to a strictly
+    -- greater source line — that's the next semantic block.
+    local last = first
+    for i = first + 1, #map do
+      if map[i] > source_line then break end
+      last = i
+    end
+
+    local render_lines = vim.api.nvim_buf_line_count(session.buf)
+    if first < 1 then first = 1 end
+    if last > render_lines then last = render_lines end
+    if last < first then return nil end
+    return first, last
+  end
+
+  -- Map render line -> single source line.
+  local function compute_source_line(render_line)
+    local map = session.content.source_line_map
+    if not map or render_line < 1 or render_line > #map then return nil end
+    local src = map[render_line]
+    if not src or src < 1 then return nil end
+    local source_lines = vim.api.nvim_buf_line_count(session.source_bufnr)
+    if src > source_lines then src = source_lines end
+    return src
+  end
+
+  -- Read existing shadow extmark line numbers (1-based, sorted) so we
+  -- can no-op when nothing changed.
+  local function current_shadow_lines(buf)
+    if not vim.api.nvim_buf_is_valid(buf) then return {} end
+    local marks = vim.api.nvim_buf_get_extmarks(buf, SHADOW_NS, 0, -1, {})
+    local lines = {}
+    for _, m in ipairs(marks) do table.insert(lines, m[2] + 1) end
+    table.sort(lines)
+    return lines
+  end
+
+  local function lines_equal(a, b)
+    if #a ~= #b then return false end
+    for i = 1, #a do
+      if a[i] ~= b[i] then return false end
+    end
+    return true
+  end
+
+  local function clear_shadow(buf)
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    if #current_shadow_lines(buf) == 0 then return end
+    vim.api.nvim_buf_clear_namespace(buf, SHADOW_NS, 0, -1)
+  end
+
+  local function set_shadow(buf, lines)
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    if lines_equal(current_shadow_lines(buf), lines) then return end
+    vim.api.nvim_buf_clear_namespace(buf, SHADOW_NS, 0, -1)
+    for _, l in ipairs(lines) do
+      pcall(vim.api.nvim_buf_set_extmark, buf, SHADOW_NS, l - 1, 0, {
+        line_hl_group = "MdRenderShadowCursor",
+      })
+    end
+  end
+
+  -- Active win drives direction. Guard with win_findbuf so we only
+  -- place a shadow when both sides are simultaneously visible.
+  local function recompute()
+    if not vim.api.nvim_buf_is_valid(session.source_bufnr) then return end
+    if not vim.api.nvim_buf_is_valid(session.buf) then return end
+
+    local active_win = vim.api.nvim_get_current_win()
+    if not vim.api.nvim_win_is_valid(active_win) then return end
+    local active_buf = vim.api.nvim_win_get_buf(active_win)
+
+    local source_visible = #vim.fn.win_findbuf(session.source_bufnr) > 0
+    local render_visible = #vim.fn.win_findbuf(session.buf) > 0
+    if not (source_visible and render_visible) then
+      clear_shadow(session.source_bufnr)
+      clear_shadow(session.buf)
+      return
+    end
+
+    if active_buf == session.source_bufnr then
+      clear_shadow(session.source_bufnr)
+      local cursor_line = vim.api.nvim_win_get_cursor(active_win)[1]
+      local s, e = compute_render_range(cursor_line)
+      if not s then
+        clear_shadow(session.buf)
+        return
+      end
+      local lines = {}
+      for l = s, e do table.insert(lines, l) end
+      set_shadow(session.buf, lines)
+    elseif active_buf == session.buf then
+      clear_shadow(session.buf)
+      local cursor_line = vim.api.nvim_win_get_cursor(active_win)[1]
+      local src = compute_source_line(cursor_line)
+      if not src then
+        clear_shadow(session.source_bufnr)
+        return
+      end
+      set_shadow(session.source_bufnr, { src })
+    end
+    -- If the active window shows neither side, leave existing shadows
+    -- alone — focus may return shortly without disturbing the user.
+  end
+
+  -- Stash so MdPreview.split can trigger the initial paint.
+  session._shadow_recompute = recompute
+
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = augroup,
+    buffer = session.source_bufnr,
+    callback = recompute,
+  })
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = augroup,
+    buffer = session.buf,
+    callback = recompute,
+  })
+
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = augroup,
+    callback = function()
+      local win = vim.api.nvim_get_current_win()
+      if not vim.api.nvim_win_is_valid(win) then return end
+      local buf = vim.api.nvim_win_get_buf(win)
+      if buf == session.source_bufnr or buf == session.buf then
+        recompute()
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = augroup,
+    callback = function(ev)
+      local closed_win = tonumber(ev.match)
+      if not closed_win then return end
+      -- Re-evaluate after the close so win_findbuf reflects the new state.
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(session.source_bufnr) then return end
+        if not vim.api.nvim_buf_is_valid(session.buf) then return end
+        local source_visible = #vim.fn.win_findbuf(session.source_bufnr) > 0
+        local render_visible = #vim.fn.win_findbuf(session.buf) > 0
+        if not (source_visible and render_visible) then
+          clear_shadow(session.source_bufnr)
+          clear_shadow(session.buf)
+        else
+          recompute()
+        end
+      end)
+    end,
+  })
+end
+
 --- Rebuild render content when a render window is resized and max_width is
 --- not explicitly set, so that text wrapping and image sizing adapt to the
 --- new window dimensions.
@@ -1258,6 +1507,7 @@ local function install_source_watcher(session)
       pcall(vim.api.nvim_del_augroup_by_name, toggle_src_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, live_update_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, scroll_sync_augroup(source_bufnr))
+      pcall(vim.api.nvim_del_augroup_by_name, shadow_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, win_resize_augroup(source_bufnr))
       pcall(vim.api.nvim_del_augroup_by_name, auto_augroup(source_bufnr))
     end,
@@ -1294,6 +1544,7 @@ local function get_or_create_toggle_session(source_bufnr, opts)
   install_source_watcher(session)
   install_live_update(session)
   install_scroll_sync(session)
+  install_shadow_cursor(session)
   install_win_resize_handler(session)
   _toggle_sessions[source_bufnr] = session
   return session
@@ -1438,6 +1689,10 @@ MdPreview.split = function(opts)
     -- restore the source view's options from the originals stashed on
     -- cur_win when it first went source -> render.
     restore_render_win_opts(new_win, state.source_wo)
+    -- New split now shows the source while cur_win still shows render;
+    -- both sides are visible, so paint the shadow immediately.
+    local session = _toggle_sessions[state.source_buf]
+    if session and session._shadow_recompute then session._shadow_recompute() end
     return
   end
 
@@ -1489,6 +1744,10 @@ MdPreview.split = function(opts)
   -- Return focus to the source window — the render split is a preview,
   -- not an editing target.
   vim.cmd.wincmd "p"
+
+  -- Initial shadow paint. Neither WinEnter nor CursorMoved fires
+  -- reliably from the :split + wincmd p sequence, so call directly.
+  if session._shadow_recompute then session._shadow_recompute() end
 end
 
 -- =====================================================================

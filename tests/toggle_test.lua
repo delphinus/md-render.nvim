@@ -1238,6 +1238,255 @@ test("render at top -> source at top (with wrapped lines)", function()
   cleanup_buffer(source)
 end)
 
+-- ----------------------------------------------------------------------
+-- Shadow cursor tests (MdRenderSplit)
+-- ----------------------------------------------------------------------
+-- The shadow ns is created at module load with a fixed name; reusing
+-- the same name from the test gives back the same numeric ID.
+local SHADOW_NS = vim.api.nvim_create_namespace "md_render_shadow"
+
+local function get_shadow_lines(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then return {} end
+  local marks = vim.api.nvim_buf_get_extmarks(buf, SHADOW_NS, 0, -1, {})
+  local lines = {}
+  for _, m in ipairs(marks) do table.insert(lines, m[2] + 1) end
+  table.sort(lines)
+  return lines
+end
+
+-- Trigger a shadow recompute synchronously. The autocmd path is hard
+-- to drive deterministically in headless tests (CursorMoved doesn't
+-- always fire from nvim_win_set_cursor in noplugin mode), so reach in.
+local function trigger_shadow(source_buf)
+  local session = preview._toggle_sessions[source_buf]
+  if session and session._shadow_recompute then session._shadow_recompute() end
+end
+
+test("split paints render shadow on initial source cursor line", function()
+  local source = setup_md_buffer({
+    "# Heading",
+    "",
+    "paragraph one",
+    "paragraph two",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_cursor(source_win, { 3, 0 })
+
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+  assert_true(render_win ~= nil, "render window should exist after split")
+
+  trigger_shadow(source)
+
+  local render_shadow = get_shadow_lines(session.buf)
+  assert_true(#render_shadow > 0,
+    "render buf should carry shadow extmarks for source line 3")
+  assert_eq(get_shadow_lines(source), {},
+    "source buf has no shadow while it owns focus")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("focus on render buffer paints shadow on source side and clears render side", function()
+  local source = setup_md_buffer({
+    "# Heading",
+    "",
+    "paragraph one",
+    "paragraph two",
+  })
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+  trigger_shadow(source)
+  assert_true(#get_shadow_lines(session.buf) > 0, "render shadow precondition")
+
+  vim.api.nvim_set_current_win(render_win)
+  vim.api.nvim_win_set_cursor(render_win, { 1, 0 })
+  trigger_shadow(source)
+
+  local source_shadow = get_shadow_lines(source)
+  assert_eq(#source_shadow, 1, "source side should hold a single-line shadow")
+  assert_eq(get_shadow_lines(session.buf), {},
+    "render side should clear its shadow once it owns focus")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("focus back to source clears source shadow and re-paints render", function()
+  local source = setup_md_buffer({
+    "# Heading",
+    "",
+    "paragraph one",
+    "paragraph two",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_set_current_win(render_win)
+  trigger_shadow(source)
+  assert_true(#get_shadow_lines(source) > 0, "source shadow precondition")
+
+  vim.api.nvim_set_current_win(source_win)
+  trigger_shadow(source)
+  assert_eq(get_shadow_lines(source), {}, "source side cleared on focus")
+  assert_true(#get_shadow_lines(session.buf) > 0, "render side re-painted")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("source cursor movement updates render shadow", function()
+  -- Blank lines between paragraphs so each is its own block; otherwise
+  -- join_paragraph_continuations collapses them and only the first
+  -- source line of the paragraph appears in source_line_map.
+  local source = setup_md_buffer({
+    "# Heading",
+    "",
+    "paragraph one",
+    "",
+    "paragraph two",
+    "",
+    "paragraph three",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_win_set_cursor(source_win, { 3, 0 })
+  trigger_shadow(source)
+  local first = get_shadow_lines(session.buf)
+
+  vim.api.nvim_win_set_cursor(source_win, { 7, 0 })
+  trigger_shadow(source)
+  local second = get_shadow_lines(session.buf)
+
+  assert_true(#first > 0 and #second > 0,
+    "both positions should produce shadows")
+  assert_false(vim.deep_equal(first, second),
+    "shadow should differ between source cursor positions")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("heading source line maps to a contiguous render shadow range", function()
+  local source = setup_md_buffer({
+    "# Heading One",
+    "",
+    "body line",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_win_set_cursor(source_win, { 1, 0 })
+  trigger_shadow(source)
+
+  local shadow = get_shadow_lines(session.buf)
+  assert_true(#shadow >= 1, "heading should yield at least one shadow line")
+  if #shadow > 1 then
+    for i = 2, #shadow do
+      assert_eq(shadow[i], shadow[i - 1] + 1,
+        "shadow lines should be contiguous (no gaps)")
+    end
+  end
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("source cursor on the last line does not crash (sentinel handling)", function()
+  local source = setup_md_buffer({
+    "# Heading",
+    "",
+    "tail line",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+  local last = vim.api.nvim_buf_line_count(source)
+
+  vim.api.nvim_win_set_cursor(source_win, { last, 0 })
+  local ok = pcall(trigger_shadow, source)
+  assert_true(ok, "recompute on final line should not error")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("closing the render split clears shadows on both sides", function()
+  local source = setup_md_buffer({
+    "# Heading",
+    "",
+    "body",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_set_current_win(render_win)
+  trigger_shadow(source)
+  assert_true(#get_shadow_lines(source) > 0, "source shadow precondition")
+
+  vim.api.nvim_set_current_win(source_win)
+  vim.api.nvim_win_close(render_win, true)
+  -- WinClosed handler defers via vim.schedule.
+  vim.wait(50, function() return false end)
+
+  assert_eq(get_shadow_lines(source), {},
+    "source shadow cleared after split closes")
+  assert_eq(get_shadow_lines(session.buf), {},
+    "render shadow cleared after split closes")
+
+  cleanup_buffer(source)
+end)
+
+test("source line inside a joined paragraph highlights the whole block", function()
+  -- Three consecutive non-blank lines form a single paragraph in
+  -- CommonMark; only the first source line appears in source_line_map,
+  -- so cursor on lines 2 or 3 must fall back to the owner block (line 1).
+  local source = setup_md_buffer({
+    "first paragraph line",
+    "continuation line",
+    "another continuation",
+    "",
+    "next paragraph",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_win_set_cursor(source_win, { 1, 0 })
+  trigger_shadow(source)
+  local block_for_line_1 = get_shadow_lines(session.buf)
+  assert_true(#block_for_line_1 > 0, "line 1 should produce a shadow")
+
+  vim.api.nvim_win_set_cursor(source_win, { 2, 0 })
+  trigger_shadow(source)
+  local block_for_line_2 = get_shadow_lines(session.buf)
+  assert_eq(block_for_line_2, block_for_line_1,
+    "continuation line 2 should highlight the same block as line 1")
+
+  vim.api.nvim_win_set_cursor(source_win, { 3, 0 })
+  trigger_shadow(source)
+  local block_for_line_3 = get_shadow_lines(session.buf)
+  assert_eq(block_for_line_3, block_for_line_1,
+    "continuation line 3 should also highlight the owner block")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
 print(string.format("toggle_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then
   os.exit(1)
