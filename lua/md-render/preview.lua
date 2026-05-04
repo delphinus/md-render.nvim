@@ -925,6 +925,14 @@ local function install_scroll_sync(session)
   --- the file's last line off the bottom of the window. We instead
   --- park the cursor at the file boundary and use `zt` / `zb` so Vim
   --- itself computes a topline that respects 'wrap'.
+  ---
+  --- After applying the action, position the cursor and let Vim
+  --- auto-scroll for visibility — without this, a topline computed
+  --- from buffer rows can leave the cursor's row outside the visible
+  --- screen rows when the destination has many wrapped or
+  --- image-occupied buffer lines (e.g. README with kitty image
+  --- placeholders), causing the shadow highlight to disappear past
+  --- the bottom of the window.
   local function fan_out(wins, from_win, compute_action, target_cursor)
     if #wins == 0 then return end
     local cursor = math.max(1, math.floor(target_cursor + 0.5))
@@ -937,15 +945,19 @@ local function install_scroll_sync(session)
               if action == "top" then
                 vim.fn.cursor(1, 1)
                 vim.cmd "normal! zt"
-                vim.fn.cursor(cursor, 1)
               elseif action == "bot" then
                 local last = vim.api.nvim_buf_line_count(0)
                 vim.fn.cursor(last, 1)
                 vim.cmd "normal! zb"
-                vim.fn.cursor(cursor, 1)
               else
-                vim.fn.winrestview { topline = action, lnum = cursor, col = 0 }
+                vim.fn.winrestview { topline = action, col = 0 }
               end
+              -- Final cursor placement: vim.fn.cursor() respects
+              -- 'wrap' / image-row layout when deciding whether to
+              -- scroll, unlike a row-arithmetic topline. We keep the
+              -- intended topline action above, then let Vim adjust if
+              -- placing the cursor would push it off-screen.
+              vim.fn.cursor(cursor, 1)
             end)
           end)
         end
@@ -966,10 +978,22 @@ local function install_scroll_sync(session)
   ---     source's visible range.
   ---
   --- For interior scrolls the topline is rounded and clamped to the
-  --- destination buffer's valid range.
-  local function pick_action(dest_height, dest_lines, mapped_top, mapped_center, mapped_bot_end, src_top_at_edge, src_bot_at_edge)
-    if src_top_at_edge then return "top" end
-    if src_bot_at_edge then return "bot" end
+  --- destination buffer's valid range, then post-adjusted so the
+  --- cursor's mapped position never sits outside the destination
+  --- viewport. Without that adjustment a wide source window
+  --- (1 source line ~ many render rows because of images / tables)
+  --- can leave the mapped cursor pinned to the bottom edge so a
+  --- single `j` flicks it off-screen.
+  local function pick_action(dest_height, dest_lines, mapped_top, mapped_center, mapped_bot_end, src_top_at_edge, src_bot_at_edge, target_cursor)
+    -- Edge snap only when the mapped cursor still fits in the window
+    -- from that edge. Otherwise the snap pins topline=1 / botline=last
+    -- but the cursor (and shadow) sit beyond the visible rows — common
+    -- when the source is short but the render is much taller (images,
+    -- tables, wrap). Fall through to the cursor-anchored interior path
+    -- in that case.
+    local cursor = target_cursor and math.max(1, math.floor(target_cursor + 0.5)) or nil
+    if src_top_at_edge and (not cursor or cursor <= dest_height) then return "top" end
+    if src_bot_at_edge and (not cursor or cursor >= dest_lines - dest_height + 1) then return "bot" end
     local topline = mapped_center - dest_height / 2
     if topline < mapped_top then topline = mapped_top end
     local max_top_in_range = mapped_bot_end - dest_height + 1
@@ -978,6 +1002,21 @@ local function install_scroll_sync(session)
     local buf_max_top = math.max(1, dest_lines - dest_height + 1)
     if topline < 1 then topline = 1 end
     if topline > buf_max_top then topline = buf_max_top end
+
+    -- Keep the mapped cursor inside the destination viewport with a
+    -- small margin so a one-line move on the source side doesn't
+    -- immediately push it off-screen on the render side.
+    if target_cursor then
+      local cursor = math.max(1, math.floor(target_cursor + 0.5))
+      local margin = math.min(3, math.floor(dest_height / 4))
+      if cursor < topline + margin then
+        topline = cursor - margin
+      elseif cursor > topline + dest_height - 1 - margin then
+        topline = cursor - dest_height + 1 + margin
+      end
+      if topline < 1 then topline = 1 end
+      if topline > buf_max_top then topline = buf_max_top end
+    end
     return topline
   end
 
@@ -1025,7 +1064,7 @@ local function install_scroll_sync(session)
     fan_out(render_wins, source_win, function(w)
       local dest_height = vim.api.nvim_win_get_height(w)
       return pick_action(dest_height, render_lines, mapped_top, mapped_center, mapped_bot_end,
-        src_top_at_edge, src_bot_at_edge)
+        src_top_at_edge, src_bot_at_edge, target_cursor)
     end, target_cursor)
   end
 
@@ -1056,7 +1095,7 @@ local function install_scroll_sync(session)
     fan_out(source_wins, render_win, function(w)
       local dest_height = vim.api.nvim_win_get_height(w)
       return pick_action(dest_height, source_lines, mapped_top, mapped_center, mapped_bot_end,
-        src_top_at_edge, src_bot_at_edge)
+        src_top_at_edge, src_bot_at_edge, target_cursor)
     end, target_cursor)
   end
 
