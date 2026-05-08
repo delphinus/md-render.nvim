@@ -15,6 +15,19 @@ local MdPreview = {}
 --- render windows here while still adapting downward in narrow splits.
 local DEFAULT_MAX_WIDTH = 80
 
+--- Usable text-area width of a window, excluding the gutter (signcolumn,
+--- number column, foldcolumn, statuscolumn). `nvim_win_get_width` returns the
+--- full window width including these, which would mis-size content centered
+--- against the visible text area.
+---@param win integer
+---@return integer
+local function usable_win_width(win)
+  local total = vim.api.nvim_win_get_width(win)
+  local wininfo = vim.fn.getwininfo(win)[1]
+  local textoff = (wininfo and wininfo.textoff) or 0
+  return math.max(1, total - textoff)
+end
+
 --- Parse simple YAML frontmatter lines into key-value pairs
 ---@param fm_lines string[]
 ---@return {key: string, value: string}[]
@@ -392,7 +405,7 @@ end
 function Session:bind_window(win)
   self.win = win
   if not self._explicit_max_width then
-    local win_width = math.min(vim.api.nvim_win_get_width(win), DEFAULT_MAX_WIDTH)
+    local win_width = math.min(usable_win_width(win), DEFAULT_MAX_WIDTH)
     if win_width ~= (self.opts.max_width or DEFAULT_MAX_WIDTH) then
       self.opts.max_width = win_width
       self:rebuild()
@@ -577,6 +590,7 @@ MdPreview.show_tab = function(opts)
   vim.wo[win].relativenumber = false
   vim.wo[win].signcolumn = "no"
   vim.wo[win].foldcolumn = "0"
+  vim.wo[win].statuscolumn = ""
   vim.wo[win].cursorline = true
   vim.wo[win].wrap = true
   vim.wo[win].spell = false
@@ -625,6 +639,7 @@ MdPreview.show_pager = function(opts)
   vim.wo[win].relativenumber = false
   vim.wo[win].signcolumn = "no"
   vim.wo[win].foldcolumn = "0"
+  vim.wo[win].statuscolumn = ""
   vim.wo[win].cursorline = true
   vim.wo[win].wrap = true
   vim.wo[win].spell = false
@@ -738,6 +753,7 @@ local RENDER_WIN_OPTS = {
   { "list", false },
   { "signcolumn", "no" },
   { "foldcolumn", "0" },
+  { "statuscolumn", "" },
 }
 
 local function save_render_win_opts(win)
@@ -1401,7 +1417,7 @@ local function install_win_resize_handler(session)
 
       local win = render_wins[1]
       if not vim.api.nvim_win_is_valid(win) then return end
-      local win_width = math.min(vim.api.nvim_win_get_width(win), DEFAULT_MAX_WIDTH)
+      local win_width = math.min(usable_win_width(win), DEFAULT_MAX_WIDTH)
       if win_width == (session.opts.max_width or DEFAULT_MAX_WIDTH) then return end
 
       session.opts.max_width = win_width
