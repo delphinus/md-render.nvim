@@ -141,7 +141,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `<Plug>(md-render-preview-tab)` | 現在の Markdown バッファのタブプレビューをトグル |
 | `<Plug>(md-render-toggle)` | 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
 | `<Plug>(md-render-auto)` | **[実験的]** 現在のバッファで auto モード(Insert 以外で render)をトグル |
-| `<Plug>(md-render-split)` | ソースとレンダリング表示のスプリットを開く |
+| `<Plug>(md-render-split)` | ウィンドウを分割してソースとレンダリング表示を並べる |
 | `<Plug>(md-render-demo)` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
 ## コマンド
@@ -152,7 +152,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `:MdRenderTab` | タブプレビューをトグル |
 | `:MdRenderToggle` | 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
 | `:MdRenderAuto [on\|off]` | **[実験的]** Insert モードに連動して source/render を自動切替(バッファ単位) |
-| `:MdRenderSplit` | ソースとレンダリング表示のスプリットを開く |
+| `:MdRenderSplit` | ウィンドウを分割してソースとレンダリング表示を並べる |
 | `:MdRenderPager` | ページャーモード — フルスクリーン、装飾なし、`q` で Neovim 終了 |
 | `:MdRenderDemo` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
@@ -185,9 +185,9 @@ autocmd FileType markdown silent! MdRenderAuto on
 
 `i` / `I` / `a` / `A` / `o` / `O` の再マップ、`:w` の source への転送、読み取り専用なレンダーバッファ上で効かない編集操作などの詳細は `:help :MdRenderAuto` を参照してください。
 
-### ソース/レンダースプリット
+### ソース/レンダーの分割表示
 
-`:MdRenderSplit` は、ソースとレンダリング表示を一緒に見るためのスプリットを開きます。スプリット方向は標準的な Vim のモディファイアに従います:
+`:MdRenderSplit` は、現在のウィンドウを分割してソースとレンダリング表示を並べます。スプリット方向は標準的な Vim のモディファイアに従います:
 
 - `:MdRenderSplit` — 水平スプリット
 - `:vert MdRenderSplit` — 垂直スプリット(README とコードを並べる定番)
