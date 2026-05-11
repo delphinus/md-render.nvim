@@ -782,6 +782,14 @@ Details ~
   *MdRenderImagePlaceholder*
                         画像読み込み中に表示されるプレースホルダー
 
+分割モード ~
+
+  *MdRenderShadowCursor*
+                        |:MdRenderSplit| でフォーカスしていない側のウィ
+                        ンドウに表示される shadow cursor。フォーカス側
+                        のカーソルに対応する行をハイライトする
+                        （ `CursorLine` にリンク）
+
 ==============================================================================
 オプション依存						*md-render-dependencies*
 

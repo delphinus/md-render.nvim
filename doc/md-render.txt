@@ -777,6 +777,13 @@ IMAGE ~
   *MdRenderImagePlaceholder*
                         Placeholder shown while images are loading
 
+SPLIT MODE ~
+
+  *MdRenderShadowCursor*
+                        Shadow cursor shown on the unfocused side of
+                        |:MdRenderSplit| to mark the line(s) corresponding
+                        to the focused side's cursor (links to `CursorLine`)
+
 ==============================================================================
 OPTIONAL DEPENDENCIES					*md-render-dependencies*
 
