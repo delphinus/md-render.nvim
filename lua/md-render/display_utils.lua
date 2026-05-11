@@ -460,7 +460,7 @@ function M.setup_images(win, content, ns, opts)
     local wininfo = vim.fn.getwininfo(state.win)[1]
     if not wininfo then return false end
     local topline = wininfo.topline - 1
-    local win_height = vim.api.nvim_win_get_height(state.win)
+    local win_height = wininfo.height  -- excludes winbar; matches put_image()
     local p_start = placement.line or 0
     local p_end = p_start + (placement.rows or 1) - 1
     return p_end >= topline - LAZY_PADDING

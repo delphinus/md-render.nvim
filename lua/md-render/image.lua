@@ -1509,9 +1509,14 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
 
   local win_pos = vim.api.nvim_win_get_position(win)
 
-  -- Check if the image is within visible window area
-  local win_height = vim.api.nvim_win_get_height(win)
+  -- Check if the image is within visible window area.
+  -- Use wininfo.height (documented to exclude the winbar) rather than
+  -- nvim_win_get_height(), which still counts the winbar row.  Without
+  -- this, the winbar offset added to `screen_row` further below is not
+  -- mirrored in `visible_rows`, and the bottom-crop math lets images
+  -- spill `winbar_height` rows into the statusline.
   local wininfo = vim.fn.getwininfo(win)[1]
+  local win_height = wininfo.height
   local topline = wininfo.topline - 1  -- 0-indexed
   local leftcol = wininfo.leftcol or 0
   -- Gutter width (signcolumn + number + foldcolumn + statuscolumn). Buffer
