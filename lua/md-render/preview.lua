@@ -1334,8 +1334,25 @@ local function install_shadow_cursor(session)
         clear_shadow(session.buf)
         return
       end
+      -- Skip image-overlay rows: setting line_hl_group on a line that
+      -- carries a Kitty Graphics placement causes the terminal to repaint
+      -- those cells with the new background, wiping the image overlay.
+      -- The image redraw autocmd in display_utils only fires for
+      -- CursorMoved/WinScrolled inside the render window, so source-side
+      -- cursor moves leave the image gone until something else forces a
+      -- redraw. image_placements use 0-indexed `line`; shadow tracks
+      -- 1-indexed render lines.
+      local image_rows = {}
+      local placements = session.content and session.content.image_placements or {}
+      for _, p in ipairs(placements) do
+        for r = p.line + 1, p.line + (p.rows or 1) do
+          image_rows[r] = true
+        end
+      end
       local lines = {}
-      for l = s, e do table.insert(lines, l) end
+      for l = s, e do
+        if not image_rows[l] then table.insert(lines, l) end
+      end
       set_shadow(session.buf, lines)
     elseif active_buf == session.buf then
       clear_shadow(session.buf)

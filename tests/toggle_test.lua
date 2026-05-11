@@ -1487,6 +1487,100 @@ test("source line inside a joined paragraph highlights the whole block", functio
   cleanup_buffer(source)
 end)
 
+test("render shadow skips rows occupied by image placements", function()
+  -- The shadow uses line_hl_group, which causes the terminal to repaint
+  -- the cells under the image — Kitty/WezTerm wipe the graphics overlay
+  -- on cell repaint and the image-redraw autocmd in display_utils only
+  -- fires from CursorMoved inside the render window, so source-side
+  -- cursor moves would leave the image gone. Image rows must be
+  -- excluded from the shadow line set.
+  local source = setup_md_buffer({
+    "first paragraph line",
+    "continuation line",
+    "another continuation",
+    "",
+    "next paragraph",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_win_set_cursor(source_win, { 1, 0 })
+  trigger_shadow(source)
+  local before = get_shadow_lines(session.buf)
+  assert_true(#before >= 1,
+    "paragraph block should produce at least one shadow row")
+
+  -- Inject a fake image placement that occupies one of the rows the
+  -- shadow currently covers. Use 0-indexed line + rows like real
+  -- placements do.
+  local target = before[1]
+  table.insert(session.content.image_placements, {
+    path = "/dev/null",
+    line = target - 1,
+    col = 0,
+    rows = 1,
+    cols = 1,
+  })
+
+  trigger_shadow(source)
+  local after = get_shadow_lines(session.buf)
+  for _, l in ipairs(after) do
+    assert_false(l == target,
+      "image-occupied row " .. tostring(target) ..
+        " should be absent from the shadow line set")
+  end
+  assert_eq(#after, #before - 1,
+    "shadow should drop exactly the image-occupied row")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("render shadow excludes multi-row image placements entirely", function()
+  local source = setup_md_buffer({
+    "first paragraph line",
+    "continuation line",
+    "another continuation",
+    "tail line",
+    "",
+    "next paragraph",
+  })
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_win_set_cursor(source_win, { 1, 0 })
+  trigger_shadow(source)
+  local before = get_shadow_lines(session.buf)
+  assert_true(#before >= 1,
+    "paragraph block should produce at least one shadow row")
+
+  -- Place a 3-row image starting at the first shadow row. Even if the
+  -- block is shorter than 3 render lines, the placement still claims
+  -- this row and the assertion below verifies it gets excluded.
+  local start_render = before[1]
+  table.insert(session.content.image_placements, {
+    path = "/dev/null",
+    line = start_render - 1,
+    col = 0,
+    rows = 3,
+    cols = 1,
+  })
+
+  trigger_shadow(source)
+  local after = get_shadow_lines(session.buf)
+  for _, l in ipairs(after) do
+    assert_false(l >= start_render and l < start_render + 3,
+      "row " .. tostring(l) .. " falls inside the image span and should be excluded")
+  end
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
 print(string.format("toggle_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then
   os.exit(1)
