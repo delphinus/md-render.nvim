@@ -139,6 +139,9 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `<Plug>(md-render-preview)` | 現在の Markdown バッファのフローティングプレビューをトグル |
 | `<Plug>(md-render-preview-tab)` | 現在の Markdown バッファのタブプレビューをトグル |
+| `<Plug>(md-render-toggle)` | 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
+| `<Plug>(md-render-auto)` | **[実験的]** 現在のバッファで auto モード(Insert 以外で render)をトグル |
+| `<Plug>(md-render-split)` | ウィンドウを分割してソースとレンダリング表示を並べる |
 | `<Plug>(md-render-demo)` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
 ## コマンド
@@ -147,8 +150,51 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `:MdRender` | フローティングプレビューをトグル |
 | `:MdRenderTab` | タブプレビューをトグル |
+| `:MdRenderToggle` | 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
+| `:MdRenderAuto [on\|off]` | **[実験的]** Insert モードに連動して source/render を自動切替(バッファ単位) |
+| `:MdRenderSplit` | ウィンドウを分割してソースとレンダリング表示を並べる |
 | `:MdRenderPager` | ページャーモード — フルスクリーン、装飾なし、`q` で Neovim 終了 |
 | `:MdRenderDemo` | 対応する全 Markdown 記法のデモウィンドウを表示 |
+
+### その場トグル
+
+`:MdRenderToggle` は、現在のウィンドウをソース Markdown バッファとそのレンダリング表示の間で**その場で**切り替えます。新しいタブやフローティングウィンドウは開きません。スプリットレイアウトでコードと README のレンダリングを並べたい、といった用途を想定しています。
+
+```vim
+:vsplit README.md
+:MdRenderToggle
+```
+
+挙動:
+
+- レンダーバッファは**読み取り専用**で、トグル間で再利用されます(ソース1つにつきレンダーバッファ1つ)。
+- 同じソースが複数のウィンドウで表示されている場合、切替はそのウィンドウだけに作用し、他のウィンドウの編集は次に当該ウィンドウをレンダーモードにした時点で反映されます。
+- カーソル位置は source line マップを介してソース ↔ レンダー間を往復します。
+- レンダーモードのウィンドウでは `number` / `relativenumber` / `list` が無効化されます。元の値はウィンドウに保存され、ソースに戻したときに復元されます。
+- レンダーモード中、`q` / `<Esc>` / `<CR>` は閉じる動作に**割り当てられません**。ソースに戻すには再度 `:MdRenderToggle` を呼びます。`<LeftMouse>` は折りたたみ・展開・リンク open を引き続き処理します。
+
+### Insert モード連動の自動トグル(実験的)
+
+> **実験的機能です。** 新しく追加された機能で、UX が変わる可能性があります。問題や違和感があればぜひお知らせください。
+
+`:MdRenderAuto on` は、現在のバッファを Normal モード中はレンダー表示にしておき、編集を始めると自動的に source に戻すモードです。`off` で解除、引数なしでトグル。すべての Markdown バッファで有効にしたいときは:
+
+```vim
+autocmd FileType markdown silent! MdRenderAuto on
+```
+
+`i` / `I` / `a` / `A` / `o` / `O` の再マップ、`:w` の source への転送、読み取り専用なレンダーバッファ上で効かない編集操作などの詳細は `:help :MdRenderAuto` を参照してください。
+
+### ソース/レンダーの分割表示
+
+`:MdRenderSplit` は、現在のウィンドウを分割してソースとレンダリング表示を並べます。分割方向は標準的な Vim のモディファイアに従います:
+
+- `:MdRenderSplit` — 水平分割
+- `:vert MdRenderSplit` — 垂直分割(README とコードを並べる定番)
+- `:topleft MdRenderSplit` — 一番上に配置
+- `:botright MdRenderSplit` — 一番下に配置
+
+ソースの編集はライブでもう一方のウィンドウに反映され、カーソル/スクロール位置も双方向に同期します。詳細な挙動とインライン画像の制限事項は `:help :MdRenderSplit` を参照してください。
 
 ### ページャーモード
 

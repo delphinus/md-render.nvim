@@ -332,10 +332,16 @@ end
 ---@return string[] lines
 ---@return MdRender.Highlight.Group[][] per_line_highlights
 ---@return {line: integer, col_start: integer, col_end: integer, url: string}[][] per_line_links
+---@return table[] image_placements
+---@return integer[] per_line_source_offsets 0-based offset into the original table source rows for each output line: 0=header, 1=separator, 2+N=Nth data row
 function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir)
   local out_lines = {}
   local out_highlights = {}
   local out_links = {}
+  -- Parallel array: source-row offset (0-based) within the table for each
+  -- output line. Lets callers stamp source_line_map per row instead of
+  -- attributing the whole rendered table to a single source line.
+  local out_source_offsets = {}
   local num_cols = #parsed_table.col_widths
   local col_widths = vim.deepcopy(parsed_table.col_widths)
   local sep_width = vim.api.nvim_strwidth("│") -- border char display width (varies with ambiwidth)
@@ -846,18 +852,21 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
         table.insert(out_lines, line)
         table.insert(out_highlights, h_hls_list[i])
         table.insert(out_links, h_links_list[i])
+        table.insert(out_source_offsets, 0) -- header row
       end
     else
       local h_line, h_hls, h_links = build_row(parsed_table.headers, true)
       table.insert(out_lines, h_line)
       table.insert(out_highlights, h_hls)
       table.insert(out_links, h_links)
+      table.insert(out_source_offsets, 0) -- header row
     end
 
     local s_line, s_hls = build_separator()
     table.insert(out_lines, s_line)
     table.insert(out_highlights, s_hls)
     table.insert(out_links, {})
+    table.insert(out_source_offsets, 1) -- separator row
   end
 
   --- Build an empty row line with borders only (for image placeholder rows)
@@ -963,6 +972,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
       table.insert(out_lines, label_line)
       table.insert(out_highlights, label_hls)
       table.insert(out_links, label_links)
+      table.insert(out_source_offsets, 1 + row_idx) -- data row N -> offset 1+N (separator at 1)
 
       -- Add placeholder rows for images
       local img_start_line_idx = #out_lines  -- 0-indexed line where images start
@@ -971,6 +981,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
         table.insert(out_lines, empty_line)
         table.insert(out_highlights, empty_hls)
         table.insert(out_links, {})
+        table.insert(out_source_offsets, 1 + row_idx)
       end
 
       -- Record image placements (positions relative to table start)
@@ -1015,6 +1026,10 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
         table.insert(out_lines, sep_line)
         table.insert(out_highlights, sep_hls)
         table.insert(out_links, {})
+        -- Inter-row separator stays attributed to the row above so a
+        -- cursor on row N highlights row N's content + its trailing
+        -- separator (instead of leaving a thin gap).
+        table.insert(out_source_offsets, 1 + row_idx)
       end
     else
       if expanded then
@@ -1023,6 +1038,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
           table.insert(out_lines, line)
           table.insert(out_highlights, r_hls_list[i])
           table.insert(out_links, r_links_list[i])
+          table.insert(out_source_offsets, 1 + row_idx)
         end
         -- Add separator between all rows when expanded (not after the last row)
         if row_idx < #parsed_table.rows then
@@ -1030,17 +1046,19 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
           table.insert(out_lines, sep_line)
           table.insert(out_highlights, sep_hls)
           table.insert(out_links, {})
+          table.insert(out_source_offsets, 1 + row_idx)
         end
       else
         local r_line, r_hls, r_links = build_row(row, false)
         table.insert(out_lines, r_line)
         table.insert(out_highlights, r_hls)
         table.insert(out_links, r_links)
+        table.insert(out_source_offsets, 1 + row_idx)
       end
     end
   end
 
-  return out_lines, out_highlights, out_links, out_image_placements
+  return out_lines, out_highlights, out_links, out_image_placements, out_source_offsets
 end
 
 return MarkdownTable

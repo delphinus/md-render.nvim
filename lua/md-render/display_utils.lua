@@ -67,7 +67,7 @@ end
 ---@param content MdRender.Content
 function M.apply_treesitter_highlights(buf, ns, content)
   for _, block in ipairs(content.code_blocks or {}) do
-    local prefix_len = block.prefix_len or 2
+    local prefix_len = block.prefix_len or 0
     local code_lines
     if block.source_lines then
       -- Use original non-truncated lines for accurate treesitter parsing
@@ -134,6 +134,11 @@ end
 function M.apply_content_to_buffer(buf, ns, content, opts)
   opts = opts or {}
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, content.lines)
+  -- Clear 'modified' synchronously so callers (toggle/split render bufs
+  -- with buftype=acwrite, telescope/snacks previewers, etc.) don't have
+  -- a window where :qa would see the buffer as dirty before any
+  -- TextChanged-based reset has a chance to fire.
+  vim.bo[buf].modified = false
 
   for _, hl_info in ipairs(content.highlights) do
     local line_text = content.lines[hl_info.line + 1]
@@ -255,14 +260,17 @@ function M.open_float_window(buf, content, float_win, opts)
   return win
 end
 
---- Set up keymaps and mouse click handlers for the floating window
+--- Set up keymaps and mouse click handlers for the floating window.
+--- When `opts.close_keys` is an empty list and `close_handle` is nil, no
+--- close behavior is installed — useful for toggle-mode render buffers
+--- that should not close themselves.
 ---@param buf integer
 ---@param ns integer
 ---@param win integer
 ---@param content MdRender.Content
----@param float_win MdRender.FloatWin
----@param opts? { close_line_idx?: integer, on_fold_toggle?: fun(source_line: integer, collapsed: boolean), on_expand_toggle?: fun(block_id: integer, expanded: boolean), get_content?: fun(): MdRender.Content }
-function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
+---@param close_handle MdRender.FloatWin|MdRender.TabWin|nil
+---@param opts? { close_line_idx?: integer, close_keys?: string[], on_fold_toggle?: fun(source_line: integer, collapsed: boolean), on_expand_toggle?: fun(block_id: integer, expanded: boolean), get_content?: fun(): MdRender.Content }
+function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
   opts = opts or {}
   local close_line_idx = opts.close_line_idx
   local on_fold_toggle = opts.on_fold_toggle
@@ -271,7 +279,7 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
     return content
   end
 
-  local close_keys = { "q", "<Esc>", "<CR>" }
+  local close_keys = opts.close_keys or { "q", "<Esc>", "<CR>" }
   for _, key in ipairs(close_keys) do
     vim.api.nvim_buf_set_keymap(buf, "n", key, ":close<CR>", { noremap = true, silent = true })
   end
@@ -279,8 +287,8 @@ function M.setup_float_keymaps(buf, ns, win, content, float_win, opts)
   vim.keymap.set("n", "<LeftRelease>", function()
     local mouse = vim.fn.getmousepos()
     if mouse.winid == win then
-      if close_line_idx and mouse.line == close_line_idx + 1 then
-        float_win:close_if_valid()
+      if close_line_idx and close_handle and mouse.line == close_line_idx + 1 then
+        close_handle:close_if_valid()
         return
       end
 
@@ -452,7 +460,7 @@ function M.setup_images(win, content, ns, opts)
     local wininfo = vim.fn.getwininfo(state.win)[1]
     if not wininfo then return false end
     local topline = wininfo.topline - 1
-    local win_height = vim.api.nvim_win_get_height(state.win)
+    local win_height = wininfo.height  -- excludes winbar; matches put_image()
     local p_start = placement.line or 0
     local p_end = p_start + (placement.rows or 1) - 1
     return p_end >= topline - LAZY_PADDING
@@ -665,6 +673,11 @@ function M.setup_images(win, content, ns, opts)
         end
       end
       vim.bo[buf].modifiable = was_modifiable
+      -- Clear 'modified' synchronously: with buftype=acwrite (toggle/split
+      -- render bufs), an async image-placement write here would otherwise
+      -- leave the buffer marked dirty until the TextChanged-based reset
+      -- catches up, which races with :qa.
+      vim.bo[buf].modified = false
     end
   end
 

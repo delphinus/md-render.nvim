@@ -1509,11 +1509,20 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
 
   local win_pos = vim.api.nvim_win_get_position(win)
 
-  -- Check if the image is within visible window area
-  local win_height = vim.api.nvim_win_get_height(win)
+  -- Check if the image is within visible window area.
+  -- Use wininfo.height (documented to exclude the winbar) rather than
+  -- nvim_win_get_height(), which still counts the winbar row.  Without
+  -- this, the winbar offset added to `screen_row` further below is not
+  -- mirrored in `visible_rows`, and the bottom-crop math lets images
+  -- spill `winbar_height` rows into the statusline.
   local wininfo = vim.fn.getwininfo(win)[1]
+  local win_height = wininfo.height
   local topline = wininfo.topline - 1  -- 0-indexed
   local leftcol = wininfo.leftcol or 0
+  -- Gutter width (signcolumn + number + foldcolumn + statuscolumn). Buffer
+  -- text starts at win_pos[2] + textoff, so Kitty placements need the same
+  -- offset to line up with the centered placeholder text in the buffer.
+  local textoff = wininfo.textoff or 0
 
   -- Image entirely above or below visible area
   local img_end_row = row + display_rows - 1
@@ -1546,11 +1555,14 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   -- Adjust for horizontal scroll offset
   local visual_col = col - leftcol
 
-  -- Image entirely to the left or right of visible area
+  -- Image entirely to the left or right of visible area. The visible buffer
+  -- column span is `win_width - textoff`, since the gutter consumes screen
+  -- columns but not buffer columns.
+  local visible_text_cols = vim.api.nvim_win_get_width(win) - textoff
   local img_end_col = col + display_cols - 1
-  if img_end_col < leftcol or col >= leftcol + vim.api.nvim_win_get_width(win) then return end
+  if img_end_col < leftcol or col >= leftcol + visible_text_cols then return end
 
-  local screen_col = win_pos[2] + visual_col + border_left_width + 1
+  local screen_col = win_pos[2] + visual_col + border_left_width + textoff + 1
 
   -- Crop to visible area using source rectangle (no scaling distortion).
   -- Track x/y/w/h independently; emit them all together at the end so that
@@ -1567,7 +1579,7 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     end
     display_cols = display_cols - hidden_cols
     visual_col = 0
-    screen_col = win_pos[2] + border_left_width + 1
+    screen_col = win_pos[2] + border_left_width + textoff + 1
   end
 
   -- Top crop: image starts above visible area
@@ -1581,7 +1593,17 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     visual_row = 0
   end
 
-  local screen_row = wininfo.winrow + visual_row + border_top_height
+  -- Account for the winbar (1 screen row above the buffer content).
+  -- `wininfo.winrow` is the topmost screen row of the window frame, which
+  -- includes the winbar when one is present. Without this offset, images
+  -- are placed one row too high and overlap any wrapped header lines below
+  -- the image label (most visible with long alt text).
+  local winbar_height = 0
+  local ok_wb, wb = pcall(function() return vim.wo[win].winbar end)
+  if ok_wb and wb and wb ~= "" then
+    winbar_height = 1
+  end
+  local screen_row = wininfo.winrow + visual_row + border_top_height + winbar_height
 
   -- Bottom crop: image extends below visible area
   local visible_rows = win_height - visual_row
@@ -1592,8 +1614,7 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     display_rows = visible_rows
   end
 
-  local win_width = vim.api.nvim_win_get_width(win)
-  local visible_cols = win_width - visual_col
+  local visible_cols = visible_text_cols - visual_col
   if visible_cols <= 0 then return end
   if display_cols > visible_cols and img_w then
     local remaining_w = src_w or img_w

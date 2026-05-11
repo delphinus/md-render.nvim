@@ -139,6 +139,9 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `<Plug>(md-render-preview)` | Toggle a floating preview window for the current Markdown buffer |
 | `<Plug>(md-render-preview-tab)` | Toggle a tab preview for the current Markdown buffer |
+| `<Plug>(md-render-toggle)` | Toggle the current window between source and render mode in place |
+| `<Plug>(md-render-auto)` | **[experimental]** Toggle auto mode (render outside Insert) for the current buffer |
+| `<Plug>(md-render-split)` | Open a split showing source and rendered Markdown |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
 ## Commands
@@ -147,8 +150,51 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `:MdRender` | Toggle a floating preview window |
 | `:MdRenderTab` | Toggle a tab preview |
+| `:MdRenderToggle` | Toggle the current window between source and render mode in place |
+| `:MdRenderAuto [on\|off]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
+| `:MdRenderSplit` | Open a split showing source and rendered Markdown |
 | `:MdRenderPager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRenderDemo` | Show a demo window with all supported Markdown notations |
+
+### In-place toggle
+
+`:MdRenderToggle` swaps the current window between the source Markdown buffer and a rendered view of it — without opening a new tab or floating window. This is designed for split layouts where you want, for example, code in one split and the rendered README in the other.
+
+```vim
+:vsplit README.md
+:MdRenderToggle
+```
+
+Behavior:
+
+- The render buffer is **read-only** and reused across toggles (one render buffer per source).
+- When the same source is shown in multiple windows, only the invoking window swaps; edits from other windows are reflected on the next toggle into render mode.
+- Cursor position round-trips between source and render via the source-line mapping.
+- `number`, `relativenumber`, and `list` are turned off on render-mode windows. The originals are stashed on the window and restored when toggling back to source.
+- Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRenderToggle` again to return to source mode. `<LeftMouse>` still toggles folds, expands regions, and opens links.
+
+### Auto-toggle on Insert mode (experimental)
+
+> **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
+
+`:MdRenderAuto on` keeps the current buffer in render mode while in Normal mode and swaps back to source automatically when you start editing. Pass `off` to disable, or call without arguments to toggle. To opt every Markdown buffer in:
+
+```vim
+autocmd FileType markdown silent! MdRenderAuto on
+```
+
+See `:help :MdRenderAuto` for behavior details — the `i` / `I` / `a` / `A` / `o` / `O` remaps, `:w` forwarding, and the editing operations that are blocked on the read-only render buffer.
+
+### Source/render split
+
+`:MdRenderSplit` opens a split showing the source buffer and the rendered view together. Direction follows standard Vim split modifiers:
+
+- `:MdRenderSplit` — horizontal split
+- `:vert MdRenderSplit` — vertical split (typical "README + code" layout)
+- `:topleft MdRenderSplit` — place at the top
+- `:botright MdRenderSplit` — place at the bottom
+
+Edits to the source propagate live, and cursor/scroll position is synchronized in both directions. See `:help :MdRenderSplit` for full behavior and the inline-image limitation.
 
 ### Pager mode
 

@@ -392,7 +392,12 @@ end
 ---@param max_width integer
 ---@param repo_base_url? string
 ---@param autolinks? MdRender.Autolink[]
-function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url, autolinks, expanded, buf_dir)
+--- @param per_row_source? boolean When true (markdown pipe tables), each
+---   rendered line gets its source attribution from the corresponding
+---   source row offset. When false/nil (HTML tables, where the source
+---   isn't a per-row enumeration), all rows inherit the caller's
+---   _current_source_line as-is.
+function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url, autolinks, expanded, buf_dir, per_row_source)
   local markdown_table = require "md-render.markdown_table"
   local parsed = markdown_table.parse(table_lines, repo_base_url, autolinks)
   if not parsed then
@@ -402,10 +407,17 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
     end
     return
   end
-  local lines, per_line_hls, per_line_links, tbl_image_placements =
+  local lines, per_line_hls, per_line_links, tbl_image_placements, src_offsets =
     markdown_table.render(parsed, indent, max_width, expanded, buf_dir)
   local base_line = #self.lines
+  -- For pipe tables, table_lines[i] corresponds to source line
+  -- (caller's _current_source_line + i - 1). Use the offset returned by
+  -- render to stamp each emitted line at the right source row.
+  local saved_src_line = self._current_source_line
   for i, line in ipairs(lines) do
+    if per_row_source and src_offsets and src_offsets[i] then
+      self._current_source_line = saved_src_line + src_offsets[i]
+    end
     self:add_line(line, #per_line_hls[i] > 0 and per_line_hls[i] or nil)
     for _, link in ipairs(per_line_links[i] or {}) do
       table.insert(self.link_metadata, {
@@ -416,6 +428,7 @@ function ContentBuilder:add_table(table_lines, indent, max_width, repo_base_url,
       })
     end
   end
+  self._current_source_line = saved_src_line
 
   -- Register image placements from table cells (inline within table borders)
   if tbl_image_placements then
@@ -500,7 +513,7 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
   end
 
   local lines_before_fn = #self.lines
-  if vim.api.nvim_strwidth(rendered_text) > max_width then
+  if vim.api.nvim_strwidth(indent) + vim.api.nvim_strwidth(rendered_text) > max_width then
     self:add_wrapped_markdown(rendered_text, md_highlights, md_links, indent, max_width, quote_prefix, list_marker)
   else
     self:add_simple_markdown(rendered_text, md_highlights, md_links, indent)
@@ -786,15 +799,33 @@ end
 --- In CommonMark, consecutive lines that don't start block-level constructs
 --- form a single paragraph. This is needed for inline constructs (like links)
 --- that span multiple source lines.
+---
+--- `src_indices` is a parallel array giving the original buffer line
+--- number for each input line. The returned `result_indices` carries the
+--- original line number of the *first* line of each joined paragraph,
+--- so `source_line_map` can point back to the real buffer position.
 ---@param lines string[]
----@return string[]
-local function join_paragraph_continuations(lines)
+---@param src_indices integer[]
+---@return string[] result, integer[] result_indices
+local function join_paragraph_continuations(lines, src_indices)
   local result = {}
+  local result_indices = {}
   local para = {}
+  local para_src = nil
   local in_code = false
   local in_html_comment = false
 
-  for _, line in ipairs(lines) do
+  local function flush_para()
+    if #para > 0 then
+      table.insert(result, table.concat(para, " "))
+      table.insert(result_indices, para_src)
+      para = {}
+      para_src = nil
+    end
+  end
+
+  for idx, line in ipairs(lines) do
+    local src = src_indices[idx]
     -- Track code fences
     if line:match "^```" or line:match "^~~~" then
       in_code = not in_code
@@ -804,11 +835,9 @@ local function join_paragraph_continuations(lines)
     if not in_code then
       if in_html_comment then
         -- Flush paragraph, keep comment lines separate
-        if #para > 0 then
-          table.insert(result, table.concat(para, " "))
-          para = {}
-        end
+        flush_para()
         table.insert(result, line)
+        table.insert(result_indices, src)
         if line:match "%-%->" then
           in_html_comment = false
         end
@@ -816,43 +845,49 @@ local function join_paragraph_continuations(lines)
       end
       if line:match "^%s*<!%-%-" and not line:match "%-%->%s*$" then
         in_html_comment = true
-        if #para > 0 then
-          table.insert(result, table.concat(para, " "))
-          para = {}
-        end
+        flush_para()
         table.insert(result, line)
+        table.insert(result_indices, src)
         goto next_line
       end
     end
 
     if in_code or is_block_start(line) then
       -- Flush accumulated paragraph
-      if #para > 0 then
-        table.insert(result, table.concat(para, " "))
-        para = {}
-      end
+      flush_para()
       table.insert(result, line)
+      table.insert(result_indices, src)
     else
+      if #para == 0 then para_src = src end
       table.insert(para, line)
     end
 
     ::next_line::
   end
 
-  -- Flush remaining
-  if #para > 0 then
-    table.insert(result, table.concat(para, " "))
-  end
+  flush_para()
 
-  return result
+  return result, result_indices
 end
 
-local function preprocess_multiline_html(lines)
+--- Preprocess multi-line HTML constructs into single result lines.
+---
+--- `src_indices` is a parallel array giving the original buffer line
+--- number for each input line. The returned `result_indices` carries the
+--- original line of the *first* input line of each accumulated
+--- multi-line block, so callers can set source_line_map back to the
+--- correct buffer position even after collapse.
+---@param lines string[]
+---@param src_indices integer[]  parallel original-line indices for `lines`
+---@return string[] result, integer[] result_indices
+local function preprocess_multiline_html(lines, src_indices)
   local result = {}
-  local accum = nil -- { tag: string, lines: string[], depth: integer }
+  local result_indices = {}
+  local accum = nil -- { tag: string, lines: string[], depth: integer, src: integer }
   local in_code = false
 
-  for _, l in ipairs(lines) do
+  for idx, l in ipairs(lines) do
+    local src = src_indices[idx]
     if accum then
       table.insert(accum.lines, l)
       local ll = l:lower()
@@ -867,6 +902,7 @@ local function preprocess_multiline_html(lines)
         local joined = table.concat(accum.lines, " ")
         joined = joined:gsub("  +", " ")
         table.insert(result, joined)
+        table.insert(result_indices, accum.src)
         accum = nil
       end
     else
@@ -892,39 +928,57 @@ local function preprocess_multiline_html(lines)
                 tag = lower_tag,
                 lines = { l },
                 depth = open_count - close_count,
+                src = src,
               }
             else
               table.insert(result, l)
+              table.insert(result_indices, src)
             end
           else
             table.insert(result, l)
+            table.insert(result_indices, src)
           end
         else
           table.insert(result, l)
+          table.insert(result_indices, src)
         end
       else
         table.insert(result, l)
+        table.insert(result_indices, src)
       end
     end
   end
 
-  -- Unclosed accumulation: output lines as-is
+  -- Unclosed accumulation: output lines as-is, each at its own original
+  -- line. We don't have src indices for the inner lines anymore (we only
+  -- stashed accum.src), so fall back to that for all of them; the
+  -- shadow's owner-fallback will treat them as one block.
   if accum then
     for _, l in ipairs(accum.lines) do
       table.insert(result, l)
+      table.insert(result_indices, accum.src)
     end
   end
 
-  return result
+  return result, result_indices
 end
 
 function ContentBuilder:render_document(lines, opts)
   opts = opts or {}
   local markdown = require "md-render.markdown"
 
-  lines = preprocess_multiline_html(lines)
-  lines = join_paragraph_continuations(lines)
+  -- Track each transformed line back to its original buffer line so
+  -- source_line_map records real buffer positions, not post-transform
+  -- array indices.
+  local src_indices = {}
+  for i = 1, #lines do
+    src_indices[i] = i
+  end
+  lines, src_indices = preprocess_multiline_html(lines, src_indices)
+  lines, src_indices = join_paragraph_continuations(lines, src_indices)
   lines = markdown.renumber_ordered_lists(lines)
+  -- renumber_ordered_lists rewrites text but keeps line count, so
+  -- src_indices stays valid.
   local ref_links = markdown.parse_reference_links(lines)
   local footnote_defs, footnote_map = markdown.parse_footnotes(lines)
 
@@ -977,6 +1031,10 @@ function ContentBuilder:render_document(lines, opts)
   local details_summary_parts = {}
   local in_figure = false
   local figure_caption = nil
+  -- Original buffer line of the <figcaption> tag, captured at parse
+  -- time so we can stamp source_line_map under it when the caption is
+  -- actually rendered at </figure>.
+  local figure_caption_src = nil
   local in_p_tag = false
   local skip_details_body = false
   local in_qiita_note = false
@@ -992,7 +1050,16 @@ function ContentBuilder:render_document(lines, opts)
     if #table_buf > 0 then
       local lines_before_tbl = #self.lines
       local tbl_expanded = table_buf_start_idx and expand_state[table_buf_start_idx]
-      self:add_table(table_buf, indent, max_width, repo_base_url, autolinks, tbl_expanded or false, buf_dir)
+      -- The trigger line (e.g. the blank after the table) has already
+      -- advanced _current_source_line. Stamp the table's first source
+      -- line so add_table's emissions land in source_line_map under the
+      -- table itself, then restore for the caller.
+      local saved_src_line = self._current_source_line
+      if table_buf_start_idx then
+        self._current_source_line = table_buf_start_idx + source_line_offset
+      end
+      self:add_table(table_buf, indent, max_width, repo_base_url, autolinks, tbl_expanded or false, buf_dir, true)
+      self._current_source_line = saved_src_line
       local lines_added = #self.lines - lines_before_tbl
       lines_shown = lines_shown + lines_added
       local has_truncation = false
@@ -1123,7 +1190,10 @@ function ContentBuilder:render_document(lines, opts)
   end
 
   for src_idx, line in ipairs(lines) do
-    self:set_source_line(src_idx + source_line_offset)
+    -- src_idx is the post-transform array index; src_indices[src_idx]
+    -- is the original buffer line, which is what consumers (cursor sync,
+    -- shadow cursor, link/anchor extraction) actually expect.
+    self:set_source_line(src_indices[src_idx] + source_line_offset)
 
     -- Skip setext heading underline
     if skip_next_line then
@@ -1201,8 +1271,12 @@ function ContentBuilder:render_document(lines, opts)
         if img_tag then
           -- Extract the img tag as a standalone line, render it before the heading
           local remaining = h_content:gsub("<img%s[^>]*>", ""):gsub("^%s+", ""):gsub("%s+$", "")
-          -- Insert the img tag line (will be processed by subsequent iteration)
+          -- Insert the img tag line (will be processed by subsequent iteration);
+          -- keep src_indices in sync so set_source_line() at line 1170 doesn't
+          -- index past the end. The synthetic img line shares the heading's
+          -- original buffer line.
           table.insert(lines, src_idx + 1, img_tag)
+          table.insert(src_indices, src_idx + 1, src_indices[src_idx])
           if remaining ~= "" then
             line = string.rep("#", tonumber(h_level)) .. " " .. remaining
           else
@@ -1363,6 +1437,12 @@ function ContentBuilder:render_document(lines, opts)
           -- Process inline markdown so tags like <em>/<strong> render properly,
           -- and wrap long captions instead of overflowing the window.
           if figure_caption then
+            -- Trigger line is </figure>; restore the figcaption's own
+            -- source line so its render rows are attributed to it.
+            local saved_src_line = self._current_source_line
+            if figure_caption_src then
+              self._current_source_line = figure_caption_src + source_line_offset
+            end
             local rendered_text, md_highlights, md_links =
               markdown.render(figure_caption, repo_base_url, autolinks, ref_links, footnote_map)
             -- Apply Comment as the base highlight covering the whole caption
@@ -1420,6 +1500,8 @@ function ContentBuilder:render_document(lines, opts)
               lines_shown = lines_shown + 1
             end
             figure_caption = nil
+            figure_caption_src = nil
+            self._current_source_line = saved_src_line
           end
           goto continue
         end
@@ -1427,6 +1509,7 @@ function ContentBuilder:render_document(lines, opts)
         local cap = line:match "^%s*<figcaption>(.-)</figcaption>%s*$"
         if cap and cap:match "%S" then
           figure_caption = cap
+          figure_caption_src = src_indices[src_idx]
           goto continue
         end
         -- Other lines inside <figure> (e.g. <img>) fall through to normal processing
@@ -1574,7 +1657,13 @@ function ContentBuilder:render_document(lines, opts)
             end
             local tbl_lines_before = #self.lines
             local tbl_expanded = html_table_src_idx and expand_state[html_table_src_idx]
+            -- Same source-line stamping rationale as flush_table above.
+            local saved_src_line = self._current_source_line
+            if html_table_src_idx then
+              self._current_source_line = html_table_src_idx + source_line_offset
+            end
             self:add_table(pipe_lines, indent, max_width, repo_base_url, autolinks, tbl_expanded or false)
+            self._current_source_line = saved_src_line
             local tbl_lines_added = #self.lines - tbl_lines_before
             lines_shown = lines_shown + tbl_lines_added
             local has_truncation = false
@@ -1610,7 +1699,7 @@ function ContentBuilder:render_document(lines, opts)
         in_html_table = true
         html_table_depth = 1
         html_table_lines = { line }
-        html_table_src_idx = src_idx
+        html_table_src_idx = src_indices[src_idx]
         -- Check if </table> is on the same line
         if line:lower():match "</table" then
           html_table_depth = 0
@@ -1689,7 +1778,10 @@ function ContentBuilder:render_document(lines, opts)
     -- Accumulate table lines
     if is_table_line then
       if #table_buf == 0 then
-        table_buf_start_idx = src_idx
+        -- Record the table's original buffer line so flush_table can
+        -- stamp source_line_map with the table itself rather than the
+        -- line that happens to trigger the flush.
+        table_buf_start_idx = src_indices[src_idx]
         -- Ensure exactly 1 blank line before table
         if lines_shown > 0 and not prev_rendered_blank then
           self:add_line(indent)
@@ -2001,9 +2093,9 @@ function ContentBuilder:render_document(lines, opts)
 
         if not mermaid_handled then
           if code_block_lang and code_block_start < #self.lines then
-            local cb_prefix = nil
+            local cb_prefix = #indent
             if in_details and details_summary_rendered then
-              cb_prefix = #indent + #"│ "
+              cb_prefix = cb_prefix + #"│ "
             end
             table.insert(self.code_blocks, {
               language = code_block_lang,
