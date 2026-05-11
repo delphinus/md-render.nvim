@@ -188,7 +188,7 @@ See `:help :MdRenderAuto` for behavior details — the `i` / `I` / `a` / `A` / `
 ### Source/render split
 
 <figure>
-  <video src="https://github.com/user-attachments/assets/24999fe8-9ff0-4ca3-9bd1-b72ec5d7f33c" width="407" height="328" controls muted></video>
+  <img src="https://github.com/user-attachments/assets/24999fe8-9ff0-4ca3-9bd1-b72ec5d7f33c" width="407" height="328" alt="Source/render split" />
   <figcaption><em>Source/render split — edits propagate live, including inline images</em></figcaption>
 </figure>
 

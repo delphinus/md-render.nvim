@@ -188,7 +188,7 @@ autocmd FileType markdown silent! MdRenderAuto on
 ### ソース/レンダーの分割表示
 
 <figure>
-  <video src="https://github.com/user-attachments/assets/24999fe8-9ff0-4ca3-9bd1-b72ec5d7f33c" width="407" height="328" controls muted></video>
+  <img src="https://github.com/user-attachments/assets/24999fe8-9ff0-4ca3-9bd1-b72ec5d7f33c" width="407" height="328" alt="ソース/レンダーの分割表示" />
   <figcaption><em>ソース/レンダーの分割表示 — 編集がインライン画像も含めてリアルタイムに反映される</em></figcaption>
 </figure>
 
