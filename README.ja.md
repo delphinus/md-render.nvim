@@ -187,14 +187,14 @@ autocmd FileType markdown silent! MdRenderAuto on
 
 ### ソース/レンダーの分割表示
 
-`:MdRenderSplit` は、現在のウィンドウを分割してソースとレンダリング表示を並べます。スプリット方向は標準的な Vim のモディファイアに従います:
+`:MdRenderSplit` は、現在のウィンドウを分割してソースとレンダリング表示を並べます。分割方向は標準的な Vim のモディファイアに従います:
 
-- `:MdRenderSplit` — 水平スプリット
-- `:vert MdRenderSplit` — 垂直スプリット(README とコードを並べる定番)
+- `:MdRenderSplit` — 水平分割
+- `:vert MdRenderSplit` — 垂直分割(README とコードを並べる定番)
 - `:topleft MdRenderSplit` — 一番上に配置
 - `:botright MdRenderSplit` — 一番下に配置
 
-ソースの編集はライブでスプリット側に反映され、カーソル/スクロール位置も双方向に同期します。詳細な挙動とインライン画像の制限事項は `:help :MdRenderSplit` を参照してください。
+ソースの編集はライブでもう一方のウィンドウに反映され、カーソル/スクロール位置も双方向に同期します。詳細な挙動とインライン画像の制限事項は `:help :MdRenderSplit` を参照してください。
 
 ### ページャーモード
 
