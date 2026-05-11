@@ -139,9 +139,9 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `<Plug>(md-render-preview)` | 現在の Markdown バッファのフローティングプレビューをトグル |
 | `<Plug>(md-render-preview-tab)` | 現在の Markdown バッファのタブプレビューをトグル |
-| `<Plug>(md-render-toggle)` | **[実験的]** 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
+| `<Plug>(md-render-toggle)` | 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
 | `<Plug>(md-render-auto)` | **[実験的]** 現在のバッファで auto モード(Insert 以外で render)をトグル |
-| `<Plug>(md-render-split)` | **[実験的]** ソースとレンダリング表示を並べたスプリットを開く |
+| `<Plug>(md-render-split)` | ソースとレンダリング表示のスプリットを開く |
 | `<Plug>(md-render-demo)` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
 ## コマンド
@@ -150,15 +150,13 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `:MdRender` | フローティングプレビューをトグル |
 | `:MdRenderTab` | タブプレビューをトグル |
-| `:MdRenderToggle` | **[実験的]** 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
+| `:MdRenderToggle` | 現在のウィンドウをソース ↔ レンダーモードでその場切替 |
 | `:MdRenderAuto [on\|off]` | **[実験的]** Insert モードに連動して source/render を自動切替(バッファ単位) |
-| `:MdRenderSplit` | **[実験的]** ソースとレンダリング表示を並べたスプリットを開く |
+| `:MdRenderSplit` | ソースとレンダリング表示のスプリットを開く |
 | `:MdRenderPager` | ページャーモード — フルスクリーン、装飾なし、`q` で Neovim 終了 |
 | `:MdRenderDemo` | 対応する全 Markdown 記法のデモウィンドウを表示 |
 
-### その場トグル(実験的)
-
-> **実験的機能です。** 新しく追加された機能で、UX が変わる可能性があります。問題や違和感があればぜひお知らせください。
+### その場トグル
 
 `:MdRenderToggle` は、現在のウィンドウをソース Markdown バッファとそのレンダリング表示の間で**その場で**切り替えます。新しいタブやフローティングウィンドウは開きません。スプリットレイアウトでコードと README のレンダリングを並べたい、といった用途を想定しています。
 
@@ -187,11 +185,9 @@ autocmd FileType markdown silent! MdRenderAuto on
 
 `i` / `I` / `a` / `A` / `o` / `O` の再マップ、`:w` の source への転送、読み取り専用なレンダーバッファ上で効かない編集操作などの詳細は `:help :MdRenderAuto` を参照してください。
 
-### 横並びスプリット(実験的)
+### ソース/レンダースプリット
 
-> **実験的機能です。** 新しく追加された機能で、UX が変わる可能性があります。問題や違和感があればぜひお知らせください。
-
-`:MdRenderSplit` は、ソースとレンダリング表示を並べたスプリットを開きます。スプリット方向は標準的な Vim のモディファイアに従います:
+`:MdRenderSplit` は、ソースとレンダリング表示を一緒に見るためのスプリットを開きます。スプリット方向は標準的な Vim のモディファイアに従います:
 
 - `:MdRenderSplit` — 水平スプリット
 - `:vert MdRenderSplit` — 垂直スプリット(README とコードを並べる定番)

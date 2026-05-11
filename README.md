@@ -139,9 +139,9 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `<Plug>(md-render-preview)` | Toggle a floating preview window for the current Markdown buffer |
 | `<Plug>(md-render-preview-tab)` | Toggle a tab preview for the current Markdown buffer |
-| `<Plug>(md-render-toggle)` | **[experimental]** Toggle the current window between source and render mode in place |
+| `<Plug>(md-render-toggle)` | Toggle the current window between source and render mode in place |
 | `<Plug>(md-render-auto)` | **[experimental]** Toggle auto mode (render outside Insert) for the current buffer |
-| `<Plug>(md-render-split)` | **[experimental]** Open a split with source and rendered Markdown side-by-side |
+| `<Plug>(md-render-split)` | Open a split showing source and rendered Markdown |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
 ## Commands
@@ -150,15 +150,13 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 |---|---|
 | `:MdRender` | Toggle a floating preview window |
 | `:MdRenderTab` | Toggle a tab preview |
-| `:MdRenderToggle` | **[experimental]** Toggle the current window between source and render mode in place |
+| `:MdRenderToggle` | Toggle the current window between source and render mode in place |
 | `:MdRenderAuto [on\|off]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
-| `:MdRenderSplit` | **[experimental]** Open a split with source and rendered Markdown side-by-side |
+| `:MdRenderSplit` | Open a split showing source and rendered Markdown |
 | `:MdRenderPager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRenderDemo` | Show a demo window with all supported Markdown notations |
 
-### In-place toggle (experimental)
-
-> **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
+### In-place toggle
 
 `:MdRenderToggle` swaps the current window between the source Markdown buffer and a rendered view of it — without opening a new tab or floating window. This is designed for split layouts where you want, for example, code in one split and the rendered README in the other.
 
@@ -187,11 +185,9 @@ autocmd FileType markdown silent! MdRenderAuto on
 
 See `:help :MdRenderAuto` for behavior details — the `i` / `I` / `a` / `A` / `o` / `O` remaps, `:w` forwarding, and the editing operations that are blocked on the read-only render buffer.
 
-### Side-by-side split (experimental)
+### Source/render split
 
-> **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
-
-`:MdRenderSplit` opens a split with the source buffer and the rendered view side-by-side. Direction follows standard Vim split modifiers:
+`:MdRenderSplit` opens a split showing the source buffer and the rendered view together. Direction follows standard Vim split modifiers:
 
 - `:MdRenderSplit` — horizontal split
 - `:vert MdRenderSplit` — vertical split (typical "README + code" layout)

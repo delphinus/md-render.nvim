@@ -115,10 +115,9 @@ Map them yourself: >lua
 
 						     *<Plug>(md-render-toggle)*
 <Plug>(md-render-toggle) ~
-	[EXPERIMENTAL] Toggle the current window between source and render
-	mode for the current Markdown buffer.  No new window or tab is
-	opened — the window's buffer is swapped in place.  See
-	|:MdRenderToggle|.
+	Toggle the current window between source and render mode for the
+	current Markdown buffer.  No new window or tab is opened — the
+	window's buffer is swapped in place.  See |:MdRenderToggle|.
 
 							       *<Plug>(md-render-auto)*
 <Plug>(md-render-auto) ~
@@ -128,9 +127,8 @@ Map them yourself: >lua
 
 							    *<Plug>(md-render-split)*
 <Plug>(md-render-split) ~
-	[EXPERIMENTAL] Open a split window showing the source and rendered
-	views of the current Markdown buffer side-by-side.  See
-	|:MdRenderSplit|.
+	Open a split window showing the source and rendered views of the
+	current Markdown buffer.  See |:MdRenderSplit|.
 
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
@@ -160,9 +158,6 @@ COMMANDS						    *md-render-commands*
 
 							     *:MdRenderToggle*
 :MdRenderToggle ~
-	[EXPERIMENTAL] This feature is new and the UX may change.  Please
-	report any issues or rough edges.
-
 	Toggle the current window between source and render mode in place
 	(no new window or tab).  Useful when working with splits — for
 	example, edit code in one split while showing the rendered README in
@@ -245,9 +240,6 @@ COMMANDS						    *md-render-commands*
 
 								   *:MdRenderSplit*
 :MdRenderSplit ~
-	[EXPERIMENTAL] This feature is new and the UX may change.  Please
-	report any issues or rough edges.
-
 	Open a split window so the source Markdown buffer and the rendered
 	view are visible at the same time.  Direction follows the standard
 	Vim split modifiers: >vim
@@ -263,7 +255,8 @@ COMMANDS						    *md-render-commands*
 	- From a render window (created by |:MdRenderToggle|), the new
 	  split shows the source.
 
-	Either entry point yields a source/render pair side-by-side.
+	Either entry point yields a source/render pair in adjacent
+	windows.
 
 	The render buffer is shared with the |:MdRenderToggle| session
 	cache, so a subsequent |:MdRenderToggle| reuses the same render
@@ -452,8 +445,8 @@ MdPreview.show_pager({opts}) ~
 
 							     *MdPreview.toggle()*
 MdPreview.toggle({opts}) ~
-	[EXPERIMENTAL] Toggle the current window between source and render
-	mode in place.  See |:MdRenderToggle|.
+	Toggle the current window between source and render mode in place.
+	See |:MdRenderToggle|.
 
 	Parameters: ~
 	  {opts}  (table|nil) Optional settings (used only when the render
@@ -489,8 +482,8 @@ MdPreview.auto_toggle({opts}) ~
 
 							      *MdPreview.split()*
 MdPreview.split({opts}) ~
-	[EXPERIMENTAL] Open a split showing the source and rendered views
-	of the current Markdown buffer side-by-side.  See |:MdRenderSplit|.
+	Open a split showing the source and rendered views of the current
+	Markdown buffer.  See |:MdRenderSplit|.
 
 	Parameters: ~
 	  {opts}  (table|nil) Optional settings:
