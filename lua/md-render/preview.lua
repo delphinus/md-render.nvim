@@ -1478,6 +1478,20 @@ local function install_render_buf_guards(session)
       if vim.api.nvim_win_get_buf(win) == session.buf then
         apply_render_win_opts(win)
       end
+
+      -- Mirror the stale-content check from get_or_create_toggle_session
+      -- so paths that swap to the render buf without going through
+      -- MdPreview.toggle (jumplist Ctrl-O / Ctrl-I, :buffer, :b#, etc.)
+      -- still see fresh content. While the render buf is hidden,
+      -- schedule_live_rebuild only flips `dirty` and skips the rebuild.
+      if vim.api.nvim_buf_is_valid(session.source_bufnr) then
+        local current = vim.api.nvim_buf_get_lines(session.source_bufnr, 0, -1, false)
+        if session.dirty or not vim.deep_equal(current, session.source_lines) then
+          session.source_lines = current
+          session:rebuild()
+          session:refresh_images()
+        end
+      end
     end,
   })
 

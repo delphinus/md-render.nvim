@@ -331,6 +331,42 @@ test("hidden render → edit sets dirty without scheduling a rebuild", function(
 end)
 
 -- ----------------------------------------------------------------------
+-- Test 10b: re-entering a dirty render buf without going through
+-- MdRenderToggle (jumplist Ctrl-O / Ctrl-I, :buffer, :b#) refreshes
+-- the stale content. Regression test for issue #5.
+-- ----------------------------------------------------------------------
+test("re-entering dirty render buf via :buffer rebuilds stale content", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local win = vim.api.nvim_get_current_win()
+
+  preview.toggle()  -- → render
+  local render_buf = vim.api.nvim_win_get_buf(win)
+  preview.toggle()  -- → source (render now hidden)
+
+  local session = preview._toggle_sessions[source]
+  assert_true(session ~= nil, "session should exist")
+
+  vim.api.nvim_buf_set_lines(source, -1, -1, false, { "", "fresh after hide" })
+  preview._schedule_live_rebuild(session)
+  assert_eq(session.dirty, true, "edit while hidden should mark dirty")
+
+  -- Swap to the render buf without using MdRenderToggle. This mirrors
+  -- jumplist navigation (Ctrl-O / Ctrl-I), :buffer, etc.
+  vim.api.nvim_win_set_buf(win, render_buf)
+
+  assert_eq(session.dirty, false, "BufEnter on dirty render buf should clear dirty")
+
+  local lines = vim.api.nvim_buf_get_lines(render_buf, 0, -1, false)
+  local found = false
+  for _, l in ipairs(lines) do
+    if l:find("fresh after hide", 1, true) then found = true; break end
+  end
+  assert_true(found, "edited content should appear after re-entering render buf")
+
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
 -- Test 11: rapid edits coalesce into a single rebuild via debounce
 -- ----------------------------------------------------------------------
 test("rapid edits coalesce into a single rebuild", function()
