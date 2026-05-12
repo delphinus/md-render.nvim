@@ -27,51 +27,46 @@ vim.keymap.set("n", "<Plug>(md-render-demo)", function()
   require("md-render").preview.show_demo()
 end, { desc = "Markdown render demo" })
 
-vim.api.nvim_create_user_command("MdRender", function()
-  require("md-render").preview.show()
-end, { desc = "Markdown preview in floating window (toggle)" })
+local cmd = require "md-render.command"
 
-vim.api.nvim_create_user_command("MdRenderTab", function()
-  require("md-render").preview.show_tab()
-end, { desc = "Markdown preview in tab (toggle)" })
-
-vim.api.nvim_create_user_command("MdRenderToggle", function()
-  require("md-render").preview.toggle()
-end, { desc = "Toggle between source and render mode (same window)" })
-
-vim.api.nvim_create_user_command("MdRenderAuto", function(args)
-  local arg = (args.args or ""):lower()
-  local p = require("md-render").preview
-  if arg == "" then
-    p.auto_toggle()
-  elseif arg == "on" then
-    p.auto_on()
-  elseif arg == "off" then
-    p.auto_off()
-  else
-    vim.notify(
-      "MdRenderAuto: unknown argument '" .. arg .. "' (expected on|off)",
-      vim.log.levels.WARN
-    )
-  end
-end, {
-  nargs = "?",
-  complete = function() return { "on", "off" } end,
-  desc = "Auto-toggle source/render based on insert mode",
-})
-
-vim.api.nvim_create_user_command("MdRenderSplit", function(args)
-  require("md-render").preview.split({ mods = args.smods })
-end, {
+vim.api.nvim_create_user_command("MdRender", cmd.dispatch, {
+  nargs = "*",
+  complete = cmd.complete,
   bar = true,
-  nargs = 0,
-  desc = "Open a split showing source and rendered markdown side-by-side",
+  desc = "Markdown render — :MdRender [float|tab|pager|toggle|split|auto on|off|toggle|demo]",
 })
 
-vim.api.nvim_create_user_command("MdRenderPager", function()
-  require("md-render").preview.show_pager()
-end, { desc = "Markdown pager mode (q to quit)" })
+--- Register a deprecated v3 shim that forwards to the new dispatcher.
+--- These will be removed in v4.0.0.
+local function shim(old, new_form, fargs, opts)
+  vim.api.nvim_create_user_command(
+    old,
+    cmd.deprecated(old, new_form, function(args)
+      cmd.dispatch(vim.tbl_extend("force", args, { fargs = fargs }))
+    end),
+    vim.tbl_extend("force", { desc = "[deprecated] use :" .. new_form }, opts or {})
+  )
+end
 
-vim.api.nvim_create_user_command("MdRenderDemo", function()
-  require("md-render").preview.show_demo()
-end, { desc = "Markdown render demo" })
+shim("MdRenderTab", "MdRender tab", { "tab" })
+shim("MdRenderToggle", "MdRender toggle", { "toggle" })
+shim("MdRenderSplit", "MdRender split", { "split" }, { bar = true })
+shim("MdRenderPager", "MdRender pager", { "pager" })
+shim("MdRenderDemo", "MdRender demo", { "demo" })
+
+vim.api.nvim_create_user_command(
+  "MdRenderAuto",
+  cmd.deprecated("MdRenderAuto", "MdRender auto [on|off|toggle]", function(args)
+    local a = (args.args or ""):lower()
+    cmd.dispatch(vim.tbl_extend("force", args, {
+      fargs = a == "" and { "auto" } or { "auto", a },
+    }))
+  end),
+  {
+    nargs = "?",
+    complete = function()
+      return { "on", "off", "toggle" }
+    end,
+    desc = "[deprecated] use :MdRender auto [on|off|toggle]",
+  }
+)
