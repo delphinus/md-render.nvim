@@ -60,23 +60,29 @@ end
 
 -- ============================================================================
 -- Test helper: capture escape sequences written by image module
+--
+-- image.lua now writes via vim.api.nvim_ui_send, so we monkey-patch that API
+-- to capture output (matches Neovim's own test/functional/ui/img_spec.lua).
 -- ============================================================================
 
 local captured = {}
+local _orig_ui_send = nil
 
 local function setup_capture()
   captured = {}
-  image._test_write = function(data)
+  _orig_ui_send = vim.api.nvim_ui_send
+  vim.api.nvim_ui_send = function(data)
     table.insert(captured, data)
   end
-  image._test_tty_path = "/dev/tty"
   image._set_kitty_supported(true)
   image._reset_image_id()
 end
 
 local function teardown()
-  image._test_write = nil
-  image._test_tty_path = nil
+  if _orig_ui_send then
+    vim.api.nvim_ui_send = _orig_ui_send
+    _orig_ui_send = nil
+  end
   image._set_kitty_supported(nil)
   image.reset_cache()
 end

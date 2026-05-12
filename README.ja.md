@@ -41,7 +41,7 @@ nvim +MdRenderPager assets/showcase.md
 
 ## 必要要件
 
-- Neovim >= 0.10
+- Neovim >= 0.12（端末への書き出しに `vim.api.nvim_ui_send` を使用）
 - 画像・動画のインライン表示には [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) 対応ターミナルが必要。
   動作確認は [WezTerm](https://wezfurlong.org/wezterm/) / [Kitty](https://sw.kovidgoyal.net/kitty/) / [Ghostty](https://ghostty.org/)（macOS/Linux）で実施。
 

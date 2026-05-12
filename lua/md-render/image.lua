@@ -6,6 +6,10 @@
 ---   1. transmit_image(): send image data to terminal with a=t (store, no display)
 ---   2. put_image(): display stored image at cursor with a=p (lightweight, repeatable)
 --- This allows re-displaying images after redraws without retransmitting data.
+---
+--- Terminal output goes through `vim.api.nvim_ui_send` (Neovim >= 0.12), which
+--- emits a "ui_send" event to the attached TUI. This avoids the /dev/tty open
+--- dance and survives `:restart`.
 
 local M = {}
 
@@ -22,12 +26,6 @@ local IS_WINDOWS = ffi.os == "Windows"
 local _batch_buffer = nil
 local _batch_stack = nil
 
---- @return string?
-local function get_tty_path()
-  if M._test_tty_path ~= nil then return M._test_tty_path end
-  return tty_mod.get_tty_path()
-end
-
 ---@param data string
 local function term_write(data)
   if data == "" then return end
@@ -35,31 +33,11 @@ local function term_write(data)
     table.insert(_batch_buffer, data)
     return
   end
-  if M._test_write then
-    M._test_write(data)
-    return
-  end
-  local tty = get_tty_path()
-  if tty then
-    local f = io.open(tty, "w")
-    if f then
-      f:write(data)
-      f:close()
-      return
-    end
-  end
-  local stdout = uv.new_tty(1, false)
-  if stdout then
-    stdout:write(data)
-    stdout:close()
-  end
+  vim.api.nvim_ui_send(data)
 end
 
 local function move_cursor(x, y)
   term_write("\x1b[" .. y .. ";" .. x .. "H")
-  if not _batch_buffer then
-    uv.sleep(1)
-  end
 end
 
 --- Start batching terminal writes. Subsequent term_write calls accumulate
@@ -138,7 +116,7 @@ function M.get_cell_size()
   -- Try stdout (fd 1) first; after :restart it may be /dev/null,
   -- so fall back to opening the discovered TTY device.
   if ffi.C.ioctl(1, TIOCGWINSZ, sz) ~= 0 then
-    local tty = get_tty_path()
+    local tty = tty_mod.get_tty_path()
     if not tty then return nil end
     local fd = ffi.C.open(tty, 0) -- O_RDONLY
     if fd < 0 then return nil end
@@ -531,6 +509,33 @@ local function is_ghostty()
   return _is_ghostty
 end
 
+--- Probe via APC query (Neovim 0.13+: vim.tty.query_apc).
+--- Returns true when the terminal answered with a Kitty APC response, nil
+--- otherwise (silent terminals are "unknown" — caller should fall back to
+--- env var heuristics rather than treat silence as a definitive "no").
+---@return true?
+local function probe_kitty_via_apc()
+  local ok, tty = pcall(require, "vim.tty")
+  if not ok or type(tty) ~= "table" or type(tty.query_apc) ~= "function" then
+    return nil
+  end
+  -- Some terminals (notably Apple Terminal) echo unknown APC payloads back
+  -- into the buffer; skip the probe outright there.
+  if vim.env.TERM_PROGRAM == "Apple_Terminal" then return nil end
+  local supported = nil
+  -- s=1, v=1 with no payload: the terminal replies "OK" or an error code
+  -- without actually drawing anything.
+  local query = "\x1b_Ga=q,s=1,v=1\x1b\\"
+  pcall(tty.query_apc, query, { timeout = 200 }, function(resp)
+    if type(resp) == "string" and resp:find("\x1b_G", 1, true) then
+      supported = true
+      return true
+    end
+  end)
+  vim.wait(250, function() return supported ~= nil end, 20)
+  return supported
+end
+
 function M.supports_kitty()
   if _kitty_supported ~= nil then return _kitty_supported end
   -- Windows lacks the POSIX TTY plumbing (isatty/ttyname/ioctl) this module
@@ -538,6 +543,13 @@ function M.supports_kitty()
   if IS_WINDOWS then
     _kitty_supported = false
     return false
+  end
+  -- Prefer a real APC probe when Neovim provides one (0.13+). A silent
+  -- terminal returns nil and we fall through to env var heuristics — only
+  -- a positive APC response short-circuits.
+  if probe_kitty_via_apc() then
+    _kitty_supported = true
+    return true
   end
   local term = vim.env.TERM_PROGRAM
   if term then
@@ -1159,7 +1171,6 @@ local _session_cleared = false
 ---@return integer? image_id
 function M.transmit_image(path)
   if not M.supports_kitty() then return nil end
-  if not get_tty_path() then return nil end
 
   local png_path, is_temp = M.ensure_png(path)
   if not png_path then return nil end
@@ -1259,7 +1270,6 @@ end
 ---@return integer? frame_h  actual height of transmitted frame PNGs
 function M.transmit_animated(path)
   if not M.supports_kitty() then return nil end
-  if not get_tty_path() then return nil end
 
   local anim_tool = find_anim_tool()
   if not anim_tool then return nil end
@@ -1324,7 +1334,7 @@ end
 ---@param path string absolute path to image file
 ---@param callback fun(image_id: integer?, tx_w: integer?, tx_h: integer?)
 function M.transmit_image_async(path, callback)
-  if not M.supports_kitty() or not get_tty_path() then
+  if not M.supports_kitty() then
     callback(nil)
     return
   end
@@ -1392,7 +1402,7 @@ end
 ---@param path string absolute path to animated GIF
 ---@param callback fun(frame_ids: integer[]?, tmp_dir: string?, frame_w: integer?, frame_h: integer?)
 function M.transmit_animated_async(path, callback)
-  if not M.supports_kitty() or not get_tty_path() then
+  if not M.supports_kitty() then
     callback(nil)
     return
   end

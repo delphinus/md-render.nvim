@@ -41,7 +41,7 @@ Or, once the plugin is installed, run `:MdRenderDemo` to see a built-in demo of 
 
 ## Requirements
 
-- Neovim >= 0.10
+- Neovim >= 0.12 (uses `vim.api.nvim_ui_send` for terminal writes)
 - For inline images and video: a terminal supporting the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/).
   Verified on [WezTerm](https://wezfurlong.org/wezterm/), [Kitty](https://sw.kovidgoyal.net/kitty/), and [Ghostty](https://ghostty.org/) (macOS/Linux).
 

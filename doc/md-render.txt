@@ -53,7 +53,7 @@ Features: ~
 ==============================================================================
 REQUIREMENTS						*md-render-requirements*
 
-- Neovim >= 0.10
+- Neovim >= 0.12 (uses |nvim_ui_send()| for terminal writes)
 - A terminal that supports the Kitty graphics protocol (required for
   inline images and video):
   - WezTerm (https://wezfurlong.org/wezterm/)

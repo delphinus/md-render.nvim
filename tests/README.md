@@ -5,8 +5,7 @@
 | Layer | What | Where | How |
 |-------|------|-------|-----|
 | 1. Unit tests | Escape sequence verification | CI (push/PR) | `nvim --headless -l tests/image_test.lua` |
-| 2. PTY integration | E2E protocol output via pty | CI (push/PR) | `nvim --headless -l tests/pty_image_test.lua` |
-| 3. Visual regression | Screenshot comparison across terminals | Local only | `./tests/run_visual_test.sh` |
+| 2. Visual regression | Screenshot comparison across terminals | Local only | `./tests/run_visual_test.sh` |
 
 ## Running all CI tests locally
 
@@ -27,19 +26,9 @@ Mock-based tests that verify Kitty Graphics Protocol escape sequences without re
 - `markdown_checkbox_test.lua` -- Checkbox rendering
 - `html_table_test.lua` -- HTML table parsing
 
-The image module exposes test hooks (`_test_write`, `_test_tty_path`, `_set_kitty_supported`, `_reset_image_id`) to allow escape sequence capture without terminal I/O.
+Tests monkey-patch `vim.api.nvim_ui_send` to capture the bytes the image module would emit (mirrors Neovim's own `test/functional/ui/img_spec.lua`). The image module also exposes `_set_kitty_supported` and `_reset_image_id` for state control.
 
-## Layer 2: PTY integration tests
-
-`pty_image_test.lua` launches Neovim inside a real pty (via `pty_capture.py`) with `TERM_PROGRAM=WezTerm`, captures raw terminal output, and parses Kitty Graphics Protocol APC sequences to verify:
-
-- Transmit (`a=t`) sequences are emitted with correct format
-- Delete (`a=d`) sequences use correct target specifiers
-- Image IDs are consistent between transmit and delete
-
-Requires Python 3 (uses the `pty` module).
-
-## Layer 3: Visual regression tests
+## Layer 2: Visual regression tests
 
 Screenshot-based tests that launch real terminal emulators and compare rendered output against reference images.
 
