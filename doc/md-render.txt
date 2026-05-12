@@ -29,7 +29,7 @@ INTRODUCTION						*md-render-introduction*
 md-render.nvim is a Markdown rendering engine for Neovim.  It transforms raw
 Markdown into richly highlighted, interactive content right inside your
 editor.  Supports floating windows, tab views, in-place toggle between
-source and render mode (|:MdRenderToggle|), and a pager mode for `less`-like
+source and render mode (|:MdRender-toggle|), and a pager mode for `less`-like
 usage from the command line.
 
 Features: ~
@@ -117,18 +117,18 @@ Map them yourself: >lua
 <Plug>(md-render-toggle) ~
 	Toggle the current window between source and render mode for the
 	current Markdown buffer.  No new window or tab is opened — the
-	window's buffer is swapped in place.  See |:MdRenderToggle|.
+	window's buffer is swapped in place.  See |:MdRender-toggle|.
 
 							       *<Plug>(md-render-auto)*
 <Plug>(md-render-auto) ~
 	[EXPERIMENTAL] Toggle Insert-aware auto mode for the current buffer:
 	render outside Insert mode, source while editing.  See
-	|:MdRenderAuto|.
+	|:MdRender-auto|.
 
 							    *<Plug>(md-render-split)*
 <Plug>(md-render-split) ~
 	Open a split window showing the source and rendered views of the
-	current Markdown buffer.  See |:MdRenderSplit|.
+	current Markdown buffer.  See |:MdRender-split|.
 
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
@@ -140,24 +140,52 @@ Inside the preview window, the following keys are available:
 	`<CR>`		Toggle callout fold / expand truncated region
 	`<LeftMouse>`	Click links, toggle folds, expand regions
 
-Inside a render-mode buffer opened with |:MdRenderToggle|, `q` / `<Esc>` /
-`<CR>` are NOT bound to close — call |:MdRenderToggle| again to return to
+Inside a render-mode buffer opened with |:MdRender-toggle|, `q` / `<Esc>` /
+`<CR>` are NOT bound to close — call |:MdRender-toggle| again to return to
 source mode.  `<LeftMouse>` still toggles folds, expands regions, and
 opens links.
 
 ==============================================================================
 COMMANDS						    *md-render-commands*
 
-								     *:MdRender*
-:MdRender ~
-	Toggle a floating preview window for the current Markdown buffer.
+The plugin exposes a single user command, |:MdRender|, with subcommands.
+The legacy top-level commands (`:MdRenderTab`, `:MdRenderToggle`, etc.) are
+still registered as deprecated aliases — see |md-render-deprecated-commands|.
 
-								  *:MdRenderTab*
-:MdRenderTab ~
+								     *:MdRender*
+:MdRender [{subcommand}] [{args}] ~
+
+	Render the current Markdown buffer.  The {subcommand} selects the
+	display mode:
+
+	  float       - floating preview window (default; same as bare
+	                |:MdRender|)
+	  tab         - toggle preview in a new tab
+	  pager       - pager mode (full-screen, `q` to quit Neovim)
+	  toggle      - in-place source ↔ render swap in the current window
+	  split       - split source + render side-by-side; honours
+	                `:vert`, `:tab`, `:topleft`, `:botright`
+	  auto        - [EXPERIMENTAL] auto-toggle around Insert mode;
+	                takes a second arg `on` / `off` / `toggle`
+	                (defaults to `toggle`)
+	  demo        - show a demo window with every supported notation
+
+	Tab completion lists the subcommands for the first arg, and
+	`on` / `off` / `toggle` after `auto`.
+
+	The per-subcommand sections below describe behaviour in detail.
+
+							     *:MdRender-float*
+:MdRender float ~
+	Toggle a floating preview window for the current Markdown buffer.
+	This is the default if no subcommand is given (bare |:MdRender|).
+
+							       *:MdRender-tab*
+:MdRender tab ~
 	Toggle a tab preview for the current Markdown buffer.
 
-							     *:MdRenderToggle*
-:MdRenderToggle ~
+							    *:MdRender-toggle*
+:MdRender toggle ~
 	Toggle the current window between source and render mode in place
 	(no new window or tab).  Useful when working with splits — for
 	example, edit code in one split while showing the rendered README in
@@ -177,8 +205,8 @@ COMMANDS						    *md-render-commands*
 	  render-mode windows.  The originals are stashed on the window and
 	  restored when toggling back to source.
 
-								  *:MdRenderAuto*
-:MdRenderAuto [on|off] ~
+							      *:MdRender-auto*
+:MdRender auto [on|off|toggle] ~
 	[EXPERIMENTAL] This feature is new and the UX may change.  Please
 	report any issues or rough edges.
 
@@ -186,17 +214,18 @@ COMMANDS						    *md-render-commands*
 	Insert mode.  The state is per buffer and recorded in
 	`b:md_render_auto`.
 
-	- `:MdRenderAuto on` flips the current buffer to render mode
+	- `:MdRender auto on` flips the current buffer to render mode
 	  immediately, and registers `InsertEnter` / `InsertLeave` autocmds
 	  that swap to source on entry and back to render on leave.
-	- `:MdRenderAuto off` removes the autocmds and the buffer marker.
+	- `:MdRender auto off` removes the autocmds and the buffer marker.
 	  The displayed mode is left unchanged.
-	- `:MdRenderAuto` (no argument) toggles between on and off.
+	- `:MdRender auto toggle`, or `:MdRender auto` with no second arg,
+	  toggles between on and off.
 
 	The plugin does not register a |FileType| autocmd of its own.  To
 	enable auto mode for every Markdown buffer, add one yourself: >vim
 
-	  autocmd FileType markdown silent! MdRenderAuto on
+	  autocmd FileType markdown silent! MdRender auto on
 <
 	Behavior:
 
@@ -208,7 +237,7 @@ COMMANDS						    *md-render-commands*
 	  autocmd then debounces a swap back to render after 50 ms.
 	- Rapid `i<Esc>i<Esc>` keystrokes coalesce into the final state.
 	- Only the current window is swapped.  Other windows showing the
-	  same source need a manual |:MdRenderToggle|.
+	  same source need a manual |:MdRender-toggle|.
 
 	What works on the render buffer: ~
 
@@ -219,7 +248,7 @@ COMMANDS						    *md-render-commands*
 	  `:w` and `:w!` are forwarded to the source buffer so you can
 	  save without leaving render mode.  Different filenames (e.g.
 	  `:w other.md`, `:saveas`) are not supported — switch to source
-	  with |:MdRenderToggle| first.
+	  with |:MdRender-toggle| first.
 
 	  The render buffer is named `<source-path> [render]` so it's
 	  identifiable in your statusline and pickers.
@@ -235,31 +264,32 @@ COMMANDS						    *md-render-commands*
 	  - Ex commands that mutate the buffer: :s, :!filter, gq
 	  - Macros that contain editing keys
 
-	  Run |:MdRenderToggle| (or, in auto mode, simply press `i` / `I`
+	  Run |:MdRender-toggle| (or, in auto mode, simply press `i` / `I`
 	  / `a` / `A` / `o` / `O`) to swap to source first.
 
-								   *:MdRenderSplit*
-:MdRenderSplit ~
+							     *:MdRender-split*
+:MdRender split ~
 	Open a split window so the source Markdown buffer and the rendered
 	view are visible at the same time.  Direction follows the standard
 	Vim split modifiers: >vim
 
-	  :MdRenderSplit          " horizontal split
-	  :vert MdRenderSplit     " vertical split
-	  :topleft MdRenderSplit  " place at the top
-	  :botright MdRenderSplit " place at the bottom
+	  :MdRender split          " horizontal split
+	  :vert MdRender split     " vertical split
+	  :tab MdRender split      " split inside a new tab
+	  :topleft MdRender split  " place at the top
+	  :botright MdRender split " place at the bottom
 <
 	Behavior is symmetric:
 
 	- From a source window, the new split shows the render.
-	- From a render window (created by |:MdRenderToggle|), the new
+	- From a render window (created by |:MdRender-toggle|), the new
 	  split shows the source.
 
 	Either entry point yields a source/render pair in adjacent
 	windows.
 
-	The render buffer is shared with the |:MdRenderToggle| session
-	cache, so a subsequent |:MdRenderToggle| reuses the same render
+	The render buffer is shared with the |:MdRender-toggle| session
+	cache, so a subsequent |:MdRender-toggle| reuses the same render
 	buffer and edits propagate via the same 150 ms debounced
 	live-update path used by toggle.
 
@@ -273,27 +303,60 @@ COMMANDS						    *md-render-commands*
 	toggles or splits.
 
 	Limitation: inline images can only be bound to one window at a
-	time.  Calling |:MdRenderSplit| twice yields two render windows,
+	time.  Calling |:MdRender-split| twice yields two render windows,
 	but only the most recent one displays inline images (the older
 	render window still receives text-content live updates).
 
-								*:MdRenderPager*
-:MdRenderPager ~
+							     *:MdRender-pager*
+:MdRender pager ~
 	Pager mode.  Renders the current Markdown buffer in full-screen with
 	no chrome.  Press `q` to quit Neovim.  Useful for browsing Markdown
 	files like `less`: >bash
 
-	  nvim +MdRenderPager README.md
+	  nvim +"MdRender pager" README.md
 <
 	Add a shell alias for convenience: >bash
 
-	  alias mdless='nvim +MdRenderPager'
+	  alias mdless='nvim +"MdRender pager"'
 	  mdless README.md
 <
 
-								 *:MdRenderDemo*
-:MdRenderDemo ~
+							      *:MdRender-demo*
+:MdRender demo ~
 	Show a demo window with all supported Markdown notations.
+
+------------------------------------------------------------------------------
+Deprecated commands				 *md-render-deprecated-commands*
+
+The following top-level commands are kept as aliases for backwards
+compatibility.  Each one prints a one-shot `vim.notify_once` warning the
+first time it is invoked in a Neovim session, and forwards to the new
+|:MdRender| dispatcher.  They will be removed in a future major version.
+
+								  *:MdRenderTab*
+:MdRenderTab ~
+	Deprecated alias for `:MdRender tab`.
+
+							     *:MdRenderToggle*
+:MdRenderToggle ~
+	Deprecated alias for `:MdRender toggle`.
+
+							       *:MdRenderAuto*
+:MdRenderAuto [on|off|toggle] ~
+	Deprecated alias for `:MdRender auto [on|off|toggle]`.
+
+							      *:MdRenderSplit*
+:MdRenderSplit ~
+	Deprecated alias for `:MdRender split`.  All Vim split modifiers
+	(`:vert`, `:tab`, `:topleft`, `:botright`) work the same way.
+
+							      *:MdRenderPager*
+:MdRenderPager ~
+	Deprecated alias for `:MdRender pager`.
+
+							       *:MdRenderDemo*
+:MdRenderDemo ~
+	Deprecated alias for `:MdRender demo`.
 
 ==============================================================================
 TELESCOPE INTEGRATION					   *md-render-telescope*
@@ -446,7 +509,7 @@ MdPreview.show_pager({opts}) ~
 							     *MdPreview.toggle()*
 MdPreview.toggle({opts}) ~
 	Toggle the current window between source and render mode in place.
-	See |:MdRenderToggle|.
+	See |:MdRender-toggle|.
 
 	Parameters: ~
 	  {opts}  (table|nil) Optional settings (used only when the render
@@ -460,7 +523,7 @@ MdPreview.toggle({opts}) ~
 							    *MdPreview.auto_on()*
 MdPreview.auto_on({opts}) ~
 	[EXPERIMENTAL] Enable Insert-aware auto-toggle for the current
-	buffer and immediately swap to render mode.  See |:MdRenderAuto|.
+	buffer and immediately swap to render mode.  See |:MdRender-auto|.
 
 	Parameters: ~
 	  {opts}  (table|nil) Forwarded to |MdPreview.toggle()| when the
@@ -469,12 +532,12 @@ MdPreview.auto_on({opts}) ~
 							   *MdPreview.auto_off()*
 MdPreview.auto_off() ~
 	[EXPERIMENTAL] Disable auto-toggle for the current buffer.  The
-	displayed mode is left as-is.  See |:MdRenderAuto|.
+	displayed mode is left as-is.  See |:MdRender-auto|.
 
 							*MdPreview.auto_toggle()*
 MdPreview.auto_toggle({opts}) ~
 	[EXPERIMENTAL] Toggle auto mode on or off for the current buffer.
-	See |:MdRenderAuto|.
+	See |:MdRender-auto|.
 
 	Parameters: ~
 	  {opts}  (table|nil) Forwarded to |MdPreview.auto_on()| when
@@ -483,7 +546,7 @@ MdPreview.auto_toggle({opts}) ~
 							      *MdPreview.split()*
 MdPreview.split({opts}) ~
 	Open a split showing the source and rendered views of the current
-	Markdown buffer.  See |:MdRenderSplit|.
+	Markdown buffer.  See |:MdRender-split|.
 
 	Parameters: ~
 	  {opts}  (table|nil) Optional settings:
@@ -781,7 +844,7 @@ SPLIT MODE ~
 
   *MdRenderShadowCursor*
                         Shadow cursor shown on the unfocused side of
-                        |:MdRenderSplit| to mark the line(s) corresponding
+                        |:MdRender-split| to mark the line(s) corresponding
                         to the focused side's cursor (links to `CursorLine`)
 
 ==============================================================================

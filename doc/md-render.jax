@@ -30,7 +30,7 @@ Snacks.nvim 連携					      |md-render-snacks|
 md-render.nvim は Neovim 用の Markdown レンダリングエンジンです。生の Markdown
 テキストをハイライト付きのインタラクティブなコンテンツに変換し、エディタ内で表
 示します。フローティングウィンドウ、タブ表示、ソース ↔ レンダーをその場で切り
-替えるトグル(|:MdRenderToggle|)、コマンドラインからの `less` ライクなページャー
+替えるトグル(|:MdRender-toggle|)、コマンドラインからの `less` ライクなページャー
 モードに対応しています。
 
 主な機能: ~
@@ -119,17 +119,17 @@ lazy.nvim の場合: >lua
 <Plug>(md-render-toggle) ~
 	[実験的] 現在のウィンドウをソースモードとレンダーモードの間で切り替え
 	ます。新しいウィンドウやタブは開かず、ウィンドウ内のバッファをその場で
-	入れ替えます。 |:MdRenderToggle| を参照。
+	入れ替えます。 |:MdRender-toggle| を参照。
 
 							       *<Plug>(md-render-auto)*
 <Plug>(md-render-auto) ~
 	[実験的] 現在のバッファで Insert モード連動の自動トグル(Insert 以外で
-	render、Insert 中は source)を on/off します。 |:MdRenderAuto| を参照。
+	render、Insert 中は source)を on/off します。 |:MdRender-auto| を参照。
 
 							    *<Plug>(md-render-split)*
 <Plug>(md-render-split) ~
 	[実験的] 現在の Markdown バッファのソースとレンダリング表示を横/縦に
-	並べたスプリットを開きます。 |:MdRenderSplit| を参照。
+	並べたスプリットを開きます。 |:MdRender-split| を参照。
 
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
@@ -141,24 +141,55 @@ lazy.nvim の場合: >lua
 	`<CR>`		コールアウトの折りたたみ / 省略領域の展開
 	`<LeftMouse>`	リンクのクリック、折りたたみ、領域展開
 
-|:MdRenderToggle| で開かれたレンダーモードのバッファでは `q` / `<Esc>` /
+|:MdRender-toggle| で開かれたレンダーモードのバッファでは `q` / `<Esc>` /
 `<CR>` は閉じる動作に**割り当てられません**。ソースに戻すには再度
-|:MdRenderToggle| を呼びます。`<LeftMouse>` は折りたたみ・展開・リンクを
+|:MdRender-toggle| を呼びます。`<LeftMouse>` は折りたたみ・展開・リンクを
 引き続き処理します。
 
 ==============================================================================
 コマンド						    *md-render-commands*
 
-								     *:MdRender*
-:MdRender ~
-	現在の Markdown バッファのフローティングプレビューをトグルします。
+このプラグインが公開するユーザコマンドは |:MdRender| ひとつで、サブコマン
+ドで動作モードを切り替えます。従来のトップレベルコマンド (`:MdRenderTab`、
+`:MdRenderToggle` など) はエイリアスとして残してありますが非推奨です。
+|md-render-deprecated-commands| を参照してください。
 
-								  *:MdRenderTab*
-:MdRenderTab ~
+								     *:MdRender*
+:MdRender [{subcommand}] [{args}] ~
+
+	現在の Markdown バッファをレンダリングします。{subcommand} で表示モ
+	ードを選択します:
+
+	  float       - フローティングプレビュー(既定。引数なしの
+	                |:MdRender| と同じ)
+	  tab         - 新しいタブでプレビューをトグル
+	  pager       - ページャーモード(フルスクリーン、`q` で Neovim 終
+	                了)
+	  toggle      - カレントウィンドウのバッファをソース ↔ レンダーで
+	                その場切り替え
+	  split       - ソースとレンダーを並べてスプリット表示。`:vert` /
+	                `:tab` / `:topleft` / `:botright` を尊重
+	  auto        - [実験的] Insert モードに連動して自動切替。第2引数
+	                として `on` / `off` / `toggle` を取る(既定は
+	                `toggle`)
+	  demo        - 対応している全記法のデモウィンドウを表示
+
+	タブ補完では第1引数としてサブコマンド一覧、`auto` の後では
+	`on` / `off` / `toggle` が候補になります。
+
+	各サブコマンドの詳細は以下のセクションを参照してください。
+
+							     *:MdRender-float*
+:MdRender float ~
+	現在の Markdown バッファのフローティングプレビューをトグルします。
+	引数なしの |:MdRender| もこれと同じ動作になります。
+
+							       *:MdRender-tab*
+:MdRender tab ~
 	現在の Markdown バッファのタブプレビューをトグルします。
 
-							     *:MdRenderToggle*
-:MdRenderToggle ~
+							    *:MdRender-toggle*
+:MdRender toggle ~
 	[実験的] 新しく追加された機能で、UX が変わる可能性があります。問題や
 	違和感があればぜひお知らせください。
 
@@ -181,25 +212,26 @@ lazy.nvim の場合: >lua
 	  'list' が無効化されます。元の値はウィンドウに保存され、ソースに
 	  戻したときに復元されます。
 
-								  *:MdRenderAuto*
-:MdRenderAuto [on|off] ~
+							      *:MdRender-auto*
+:MdRender auto [on|off|toggle] ~
 	[実験的] 新しく追加された機能で、UX が変わる可能性があります。問題や
 	違和感があればぜひお知らせください。
 
 	現在のバッファについて、Insert モードに連動して source/render を自動的
 	に切り替えます。状態はバッファ単位で `b:md_render_auto` に保持されます。
 
-	- `:MdRenderAuto on` は現在のバッファを即座に render モードへ切り替え、
-	  `InsertEnter` で source、`InsertLeave` で render に戻る autocmd を登
-	  録します。
-	- `:MdRenderAuto off` は autocmd を解除しバッファのマーカーをクリアし
-	  ます。表示モードは変更しません。
-	- `:MdRenderAuto` (引数なし)は on / off をトグルします。
+	- `:MdRender auto on` は現在のバッファを即座に render モードへ切り替
+	  え、`InsertEnter` で source、`InsertLeave` で render に戻る autocmd
+	  を登録します。
+	- `:MdRender auto off` は autocmd を解除しバッファのマーカーをクリア
+	  します。表示モードは変更しません。
+	- `:MdRender auto toggle`、または第2引数なしの `:MdRender auto` は
+	  on / off をトグルします。
 
 	プラグイン側で |FileType| autocmd は登録しません。全 Markdown バッファ
 	で自動有効化したい場合は自分で書いてください: >vim
 
-	  autocmd FileType markdown silent! MdRenderAuto on
+	  autocmd FileType markdown silent! MdRender auto on
 <
 	挙動:
 
@@ -211,7 +243,7 @@ lazy.nvim の場合: >lua
 	  が 50ms デバウンスで render へ戻します。
 	- `i<Esc>i<Esc>` のような連射でも最後の状態だけが反映されます。
 	- 切替はカレントウィンドウのみが対象です。同じソースを表示している他
-	  ウィンドウは手動で |:MdRenderToggle| してください。
+	  ウィンドウは手動で |:MdRender-toggle| してください。
 
 	レンダーバッファ上で効くもの: ~
 
@@ -221,7 +253,7 @@ lazy.nvim の場合: >lua
 
 	  `:w` / `:w!` は source バッファへ転送されるため、render モード
 	  を抜けずに保存できます。`:w other.md` や `:saveas` のような別名
-	  保存は対応外です。 |:MdRenderToggle| で source に戻ってから操作
+	  保存は対応外です。 |:MdRender-toggle| で source に戻ってから操作
 	  してください。
 
 	  レンダーバッファには `<source-path> [render]` という名前が付くた
@@ -238,12 +270,12 @@ lazy.nvim の場合: >lua
 	  - バッファを書き換える Ex コマンド: :s, :!filter, gq
 	  - 編集キーを含むマクロ
 
-	  これらを使いたい場合は |:MdRenderToggle| (auto モード中なら `i` /
-	  `I` / `a` / `A` / `o` / `O` を押すだけでも可)で source に戻ってか
-	  ら操作してください。
+	  これらを使いたい場合は |:MdRender-toggle| (auto モード中なら `i`
+	  / `I` / `a` / `A` / `o` / `O` を押すだけでも可)で source に戻っ
+	  てから操作してください。
 
-								   *:MdRenderSplit*
-:MdRenderSplit ~
+							     *:MdRender-split*
+:MdRender split ~
 	[実験的] 新しく追加された機能で、UX が変わる可能性があります。問題や
 	違和感があればぜひお知らせください。
 
@@ -251,22 +283,23 @@ lazy.nvim の場合: >lua
 	のスプリットを開きます。スプリット方向は標準の Vim モディファイアに
 	従います: >vim
 
-	  :MdRenderSplit          " 水平スプリット
-	  :vert MdRenderSplit     " 垂直スプリット
-	  :topleft MdRenderSplit  " 一番上に配置
-	  :botright MdRenderSplit " 一番下に配置
+	  :MdRender split          " 水平スプリット
+	  :vert MdRender split     " 垂直スプリット
+	  :tab MdRender split      " 新しいタブ内でスプリット
+	  :topleft MdRender split  " 一番上に配置
+	  :botright MdRender split " 一番下に配置
 <
 	挙動は対称です:
 
 	- ソースウィンドウから呼ぶと、新しいスプリットには render が表示
 	  されます。
-	- render ウィンドウ( |:MdRenderToggle| で作られたもの)から呼ぶ
+	- render ウィンドウ( |:MdRender-toggle| で作られたもの)から呼ぶ
 	  と、新しいスプリットには source が表示されます。
 
 	どちらから呼んでも結果は source/render の横並びになります。
 
-	レンダーバッファは |:MdRenderToggle| のセッションキャッシュと共
-	有されます。後から |:MdRenderToggle| を呼んでも同じレンダーバッ
+	レンダーバッファは |:MdRender-toggle| のセッションキャッシュと共
+	有されます。後から |:MdRender-toggle| を呼んでも同じレンダーバッ
 	ファが再利用され、編集は toggle と同じ 150ms デバウンス付きライ
 	ブ更新パスを通じて反映されます。
 
@@ -279,27 +312,61 @@ lazy.nvim の場合: >lua
 	やスプリットに備えます。
 
 	制限事項: インライン画像はウィンドウに対して 1 つしかバインドで
-	きません。 |:MdRenderSplit| を 2 回呼ぶと render ウィンドウは 2
+	きません。 |:MdRender-split| を 2 回呼ぶと render ウィンドウは 2
 	枚できますが、画像が出るのは最後に開いた方だけです(古い render
 	ウィンドウもテキスト内容のライブ更新は受けます)。
 
-								*:MdRenderPager*
-:MdRenderPager ~
+							     *:MdRender-pager*
+:MdRender pager ~
 	ページャーモード。現在の Markdown バッファをフルスクリーンで装飾なしに
 	表示します。 `q` で Neovim を終了します。Markdown ファイルを `less` のよう
 	に閲覧するのに便利です: >bash
 
-	  nvim +MdRenderPager README.md
+	  nvim +"MdRender pager" README.md
 <
 	シェルエイリアスを設定すると便利です: >bash
 
-	  alias mdless='nvim +MdRenderPager'
+	  alias mdless='nvim +"MdRender pager"'
 	  mdless README.md
 <
 
-								 *:MdRenderDemo*
-:MdRenderDemo ~
+							      *:MdRender-demo*
+:MdRender demo ~
 	対応する全 Markdown 記法のデモウィンドウを表示します。
+
+------------------------------------------------------------------------------
+非推奨コマンド					 *md-render-deprecated-commands*
+
+以下のトップレベルコマンドは後方互換のためのエイリアスとして残しています。
+Neovim セッションごとに最初の呼び出しで `vim.notify_once` による警告を1度
+だけ表示し、新しい |:MdRender| ディスパッチャへ転送されます。将来のメ
+ジャーバージョンで削除されます。
+
+								  *:MdRenderTab*
+:MdRenderTab ~
+	`:MdRender tab` の非推奨エイリアスです。
+
+							     *:MdRenderToggle*
+:MdRenderToggle ~
+	`:MdRender toggle` の非推奨エイリアスです。
+
+							       *:MdRenderAuto*
+:MdRenderAuto [on|off|toggle] ~
+	`:MdRender auto [on|off|toggle]` の非推奨エイリアスです。
+
+							      *:MdRenderSplit*
+:MdRenderSplit ~
+	`:MdRender split` の非推奨エイリアスです。Vim のスプリットモディフ
+	ァイア (`:vert` / `:tab` / `:topleft` / `:botright`) も同様に効きま
+	す。
+
+							      *:MdRenderPager*
+:MdRenderPager ~
+	`:MdRender pager` の非推奨エイリアスです。
+
+							       *:MdRenderDemo*
+:MdRenderDemo ~
+	`:MdRender demo` の非推奨エイリアスです。
 
 ==============================================================================
 TELESCOPE 連携						   *md-render-telescope*
@@ -438,7 +505,7 @@ MdPreview.show_tab({opts}) ~
 							     *MdPreview.toggle()*
 MdPreview.toggle({opts}) ~
 	[実験的] 現在のウィンドウをソースモードとレンダーモードの間でその場
-	で切り替えます。詳細は |:MdRenderToggle| を参照してください。
+	で切り替えます。詳細は |:MdRender-toggle| を参照してください。
 
 	パラメータ: ~
 	  {opts}  (table|nil) オプション設定(レンダーバッファの初回生成時の
@@ -452,7 +519,7 @@ MdPreview.toggle({opts}) ~
 							    *MdPreview.auto_on()*
 MdPreview.auto_on({opts}) ~
 	[実験的] 現在のバッファで Insert モード連動の自動トグルを有効化し、
-	即座に render モードへ切り替えます。詳細は |:MdRenderAuto| を参照。
+	即座に render モードへ切り替えます。詳細は |:MdRender-auto| を参照。
 
 	パラメータ: ~
 	  {opts}  (table|nil) レンダーバッファ初回生成時に |MdPreview.toggle()|
@@ -461,12 +528,12 @@ MdPreview.auto_on({opts}) ~
 							   *MdPreview.auto_off()*
 MdPreview.auto_off() ~
 	[実験的] 現在のバッファの自動トグルを解除します。表示モードはそのまま
-	です。詳細は |:MdRenderAuto| を参照。
+	です。詳細は |:MdRender-auto| を参照。
 
 							*MdPreview.auto_toggle()*
 MdPreview.auto_toggle({opts}) ~
 	[実験的] 現在のバッファの自動トグル状態を on/off で反転します。詳細は
-	|:MdRenderAuto| を参照。
+	|:MdRender-auto| を参照。
 
 	パラメータ: ~
 	  {opts}  (table|nil) on にする際 |MdPreview.auto_on()| へ転送されます。
@@ -474,7 +541,7 @@ MdPreview.auto_toggle({opts}) ~
 							      *MdPreview.split()*
 MdPreview.split({opts}) ~
 	[実験的] 現在の Markdown バッファのソースとレンダリング表示を横/縦に
-	並べたスプリットを開きます。詳細は |:MdRenderSplit| を参照。
+	並べたスプリットを開きます。詳細は |:MdRender-split| を参照。
 
 	パラメータ: ~
 	  {opts}  (table|nil) オプション:
@@ -785,7 +852,7 @@ Details ~
 分割モード ~
 
   *MdRenderShadowCursor*
-                        |:MdRenderSplit| でフォーカスしていない側のウィ
+                        |:MdRender-split| でフォーカスしていない側のウィ
                         ンドウに表示される shadow cursor。フォーカス側
                         のカーソルに対応する行をハイライトする
                         （ `CursorLine` にリンク）

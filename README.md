@@ -34,10 +34,10 @@ The repo bundles a showcase Markdown file demonstrating every feature. After clo
 ```bash
 git clone https://github.com/delphinus/md-render.nvim
 cd md-render.nvim
-nvim +MdRenderPager assets/showcase.md
+nvim +"MdRender pager" assets/showcase.md
 ```
 
-Or, once the plugin is installed, run `:MdRenderDemo` to see a built-in demo of every supported notation.
+Or, once the plugin is installed, run `:MdRender demo` to see a built-in demo of every supported notation.
 
 ## Requirements
 
@@ -146,23 +146,30 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 
 ## Commands
 
+The plugin exposes a single `:MdRender` command with subcommands:
+
 | Command | Description |
 |---|---|
-| `:MdRender` | Toggle a floating preview window |
-| `:MdRenderTab` | Toggle a tab preview |
-| `:MdRenderToggle` | Toggle the current window between source and render mode in place |
-| `:MdRenderAuto [on\|off]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
-| `:MdRenderSplit` | Open a split showing source and rendered Markdown |
-| `:MdRenderPager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
-| `:MdRenderDemo` | Show a demo window with all supported Markdown notations |
+| `:MdRender` | Floating preview window (alias of `:MdRender float`) |
+| `:MdRender float` | Toggle a floating preview window |
+| `:MdRender tab` | Toggle a tab preview |
+| `:MdRender toggle` | Toggle the current window between source and render mode in place |
+| `:MdRender split` | Open a split showing source and rendered Markdown (honours `:vert`, `:tab`, `:topleft`, `:botright`) |
+| `:MdRender auto [on\|off\|toggle]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
+| `:MdRender pager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
+| `:MdRender demo` | Show a demo window with all supported Markdown notations |
+
+Tab completion lists the subcommands for the first arg, and `on` / `off` / `toggle` after `auto`.
+
+> **Backwards compatibility.** The legacy top-level commands (`:MdRenderTab`, `:MdRenderToggle`, `:MdRenderSplit`, `:MdRenderAuto`, `:MdRenderPager`, `:MdRenderDemo`) still work and forward to the new dispatcher. They print a one-shot deprecation warning per Neovim session and will be removed in a future major version.
 
 ### In-place toggle
 
-`:MdRenderToggle` swaps the current window between the source Markdown buffer and a rendered view of it — without opening a new tab or floating window. This is designed for split layouts where you want, for example, code in one split and the rendered README in the other.
+`:MdRender toggle` swaps the current window between the source Markdown buffer and a rendered view of it — without opening a new tab or floating window. This is designed for split layouts where you want, for example, code in one split and the rendered README in the other.
 
 ```vim
 :vsplit README.md
-:MdRenderToggle
+:MdRender toggle
 ```
 
 Behavior:
@@ -171,19 +178,19 @@ Behavior:
 - When the same source is shown in multiple windows, only the invoking window swaps; edits from other windows are reflected on the next toggle into render mode.
 - Cursor position round-trips between source and render via the source-line mapping.
 - `number`, `relativenumber`, and `list` are turned off on render-mode windows. The originals are stashed on the window and restored when toggling back to source.
-- Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRenderToggle` again to return to source mode. `<LeftMouse>` still toggles folds, expands regions, and opens links.
+- Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRender toggle` again to return to source mode. `<LeftMouse>` still toggles folds, expands regions, and opens links.
 
 ### Auto-toggle on Insert mode (experimental)
 
 > **Experimental.** This feature is new and the UX may change. Please report issues or rough edges.
 
-`:MdRenderAuto on` keeps the current buffer in render mode while in Normal mode and swaps back to source automatically when you start editing. Pass `off` to disable, or call without arguments to toggle. To opt every Markdown buffer in:
+`:MdRender auto on` keeps the current buffer in render mode while in Normal mode and swaps back to source automatically when you start editing. Pass `off` to disable, or call `:MdRender auto` (or `:MdRender auto toggle`) to toggle. To opt every Markdown buffer in:
 
 ```vim
-autocmd FileType markdown silent! MdRenderAuto on
+autocmd FileType markdown silent! MdRender auto on
 ```
 
-See `:help :MdRenderAuto` for behavior details — the `i` / `I` / `a` / `A` / `o` / `O` remaps, `:w` forwarding, and the editing operations that are blocked on the read-only render buffer.
+See `:help :MdRender-auto` for behavior details — the `i` / `I` / `a` / `A` / `o` / `O` remaps, `:w` forwarding, and the editing operations that are blocked on the read-only render buffer.
 
 ### Source/render split
 
@@ -192,14 +199,15 @@ See `:help :MdRenderAuto` for behavior details — the `i` / `I` / `a` / `A` / `
   <figcaption><em>Source/render split — edits propagate live, including inline images</em></figcaption>
 </figure>
 
-`:MdRenderSplit` opens a split showing the source buffer and the rendered view together. Direction follows standard Vim split modifiers:
+`:MdRender split` opens a split showing the source buffer and the rendered view together. Direction follows standard Vim split modifiers:
 
-- `:MdRenderSplit` — horizontal split
-- `:vert MdRenderSplit` — vertical split (typical "README + code" layout)
-- `:topleft MdRenderSplit` — place at the top
-- `:botright MdRenderSplit` — place at the bottom
+- `:MdRender split` — horizontal split
+- `:vert MdRender split` — vertical split (typical "README + code" layout)
+- `:tab MdRender split` — split inside a new tab
+- `:topleft MdRender split` — place at the top
+- `:botright MdRender split` — place at the bottom
 
-Edits to the source propagate live, and cursor/scroll position is synchronized in both directions. See `:help :MdRenderSplit` for full behavior and the inline-image limitation.
+Edits to the source propagate live, and cursor/scroll position is synchronized in both directions. See `:help :MdRender-split` for full behavior and the inline-image limitation.
 
 ### Pager mode
 
@@ -208,16 +216,16 @@ Edits to the source propagate live, and cursor/scroll position is synchronized i
   <figcaption><em>Pager mode — browse Markdown like <code>less</code></em></figcaption>
 </figure>
 
-Use `MdRenderPager` to view Markdown files like `less`:
+Use `:MdRender pager` to view Markdown files like `less`:
 
 ```bash
-nvim +MdRenderPager README.md
+nvim +"MdRender pager" README.md
 ```
 
 Add a shell alias for convenience:
 
 ```bash
-alias mdless='nvim +MdRenderPager'
+alias mdless='nvim +"MdRender pager"'
 mdless README.md
 ```
 
