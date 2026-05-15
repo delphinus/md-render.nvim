@@ -2291,6 +2291,17 @@ function ContentBuilder:render_document(lines, opts)
               end
             end
           end
+          -- CommonMark autolink to GitHub user-attachments CDN: <https://github.com/user-attachments/assets/...>
+          -- These URLs have no extension; GitHub's web UI inlines them as <video>/<img>
+          -- based on Content-Type. Restrict to this CDN so non-media URLs do not get
+          -- stuck on a "Loading..." placeholder.
+          if not img_path then
+            local autolink_url = line:match "^%s*<(https?://github%.com/user%-attachments/[%w%-/%.]+)>%s*$"
+            if autolink_url then
+              img_path = autolink_url
+              img_alt = autolink_url:match "([^/]+)$" or autolink_url
+            end
+          end
           -- Obsidian embed: ![[file]] or ![[file|caption]]
           if not img_path then
             local embed = line:match "^%s*!%[%[(.-)%]%]%s*$"
