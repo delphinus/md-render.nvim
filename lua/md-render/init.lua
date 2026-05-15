@@ -31,14 +31,21 @@ local function blend_color(fg, bg, alpha)
   return bit.lshift(r, 16) + bit.lshift(g, 8) + b
 end
 
---- Set up heading highlight groups (MdRenderH1..MdRenderH6)
+--- Set up heading highlight groups (MdRenderH1..MdRenderH6).
+--- All attributes from `@markup.heading.<level>.markdown` are carried over
+--- (including `bg`, `italic`, `underline`, etc.) so colorschemes that paint
+--- a heading background (e.g. tokyonight) render the same way in the
+--- preview buffer as in the source buffer. `bold` is forced as a fallback
+--- for colorschemes that omit it.
 function M.setup_heading_highlights()
   for level = 1, 6 do
     local hl_name = "MdRenderH" .. level
     local ts_name = "@markup.heading." .. level .. ".markdown"
     local ts_hl = vim.api.nvim_get_hl(0, { name = ts_name, link = false })
-    if ts_hl.fg then
-      vim.api.nvim_set_hl(0, hl_name, { fg = ts_hl.fg, bold = true, default = true })
+    if ts_hl.fg or ts_hl.bg then
+      ts_hl.bold = true
+      ts_hl.default = true
+      vim.api.nvim_set_hl(0, hl_name, ts_hl)
     else
       vim.api.nvim_set_hl(0, hl_name, { link = "Title", default = true })
     end
