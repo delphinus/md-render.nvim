@@ -125,7 +125,7 @@ function M.setup_inline_code_highlight()
   local normal_bg = normal_hl.bg or 0x1e1e2e
   local comment_hl = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
   local tint = comment_hl.fg or 0x888888
-  local bg = blend_color(tint, normal_bg, 0.18)
+  local bg = blend_color(tint, normal_bg, 0.3)
   local string_hl = vim.api.nvim_get_hl(0, { name = "String", link = false })
   if string_hl.fg then
     vim.api.nvim_set_hl(0, "MdRenderInlineCode", { fg = string_hl.fg, bg = bg, default = true })
