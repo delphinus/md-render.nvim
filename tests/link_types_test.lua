@@ -113,6 +113,67 @@ test("standard link [text](https://...) has external URL", function()
   assert_match(links[1].url, "^https://", "external link: URL is https")
 end)
 
+-- CommonMark autolink: <https://...>
+-- Angle brackets are delimiters and must not appear in rendered output.
+
+test("autolink <URL> strips angle brackets and registers link", function()
+  local rendered, _, links = Markdown.render("<https://example.com>")
+  assert_eq(rendered, "https://example.com", "autolink: brackets stripped")
+  assert_eq(#links, 1, "autolink: one link")
+  assert_eq(links[1].url, "https://example.com", "autolink: URL preserved")
+  assert_eq(links[1].col_start, 0, "autolink: link starts at col 0")
+  assert_eq(links[1].col_end, #"https://example.com", "autolink: link ends at URL end")
+end)
+
+test("autolink coexists with surrounding text", function()
+  local rendered, _, links = Markdown.render("See <https://example.com> for more")
+  assert_eq(rendered, "See https://example.com for more", "inline autolink: brackets stripped")
+  assert_eq(#links, 1, "inline autolink: one link")
+  assert_eq(links[1].col_start, 4, "inline autolink: starts after 'See '")
+  assert_eq(links[1].url, "https://example.com", "inline autolink: URL preserved")
+end)
+
+test("autolink long URL is truncated for display but full URL kept in metadata", function()
+  local long = "https://github.com/user-attachments/assets/4c042f5c-fb7f-4a1e-a3d9-e2ab43ae215a-very-long-url"
+  local rendered, _, links = Markdown.render("<" .. long .. ">")
+  assert_eq(rendered:sub(-3), "…", "autolink: truncated display ends with ellipsis")
+  assert_eq(#links, 1, "autolink: one link")
+  assert_eq(links[1].url, long, "autolink: full URL preserved in metadata")
+end)
+
+-- Standalone <URL> on a line that points at GitHub's user-attachments CDN
+-- routes through image_placements so the existing download + magic-byte
+-- detection can render it as image/video (mirrors github.com behavior).
+
+test("standalone autolink to user-attachments registers image placement", function()
+  local ContentBuilder = require("md-render.content_builder").ContentBuilder
+  local b = ContentBuilder.new()
+  local url = "https://github.com/user-attachments/assets/4c042f5c-fb7f-4a1e-a3d9-e2ab43ae215a"
+  b:render_document({ "<" .. url .. ">" }, { max_width = 80, indent = "  " })
+  local result = b:result()
+  local found
+  for _, p in ipairs(result.image_placements or {}) do
+    if p.src_url == url then found = p; break end
+  end
+  assert_eq(found ~= nil, true, "user-attachments autolink: image placement registered")
+  assert_eq(found and found.src_url, url, "user-attachments autolink: src_url preserved")
+end)
+
+test("standalone autolink to non-attachments URL does NOT become a placement", function()
+  local ContentBuilder = require("md-render.content_builder").ContentBuilder
+  local b = ContentBuilder.new()
+  b:render_document({ "<https://example.com/page>" }, { max_width = 80, indent = "  " })
+  local result = b:result()
+  for _, p in ipairs(result.image_placements or {}) do
+    if p.src_url == "https://example.com/page" then
+      fail_count = fail_count + 1
+      print("FAIL: non-attachments autolink should not become an image placement")
+      return
+    end
+  end
+  pass_count = pass_count + 1
+end)
+
 -- Highlight tests for wikilinks
 
 test("wikilink [[#heading]] uses MdRenderLinkAnchor highlight", function()

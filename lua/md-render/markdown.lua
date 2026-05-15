@@ -823,6 +823,48 @@ local function process_bare_urls(text, max_url_width, highlights, links)
       processed = processed .. "`"
       i = i + 1
     elseif not in_backtick then
+      -- CommonMark autolink: <https://example.com>. The angle brackets are
+      -- delimiters only and must not appear in the rendered output.
+      local handled_autolink = false
+      if text:sub(i, i) == "<" then
+        local _, lt_e, captured = text:find("^<(https?://[^>%s]+)>", i)
+        if captured then
+          handled_autolink = true
+          local start_col = #processed
+          local display_url
+          if vim.api.nvim_strwidth(captured) > max_url_width then
+            local target = max_url_width - vim.api.nvim_strwidth("…")
+            local current_width = 0
+            local byte_pos = 0
+            for char in captured:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
+              local char_width = vim.api.nvim_strwidth(char)
+              if current_width + char_width > target then
+                break
+              end
+              current_width = current_width + char_width
+              byte_pos = byte_pos + #char
+            end
+            display_url = captured:sub(1, byte_pos) .. "…"
+            -- Removed: leading '<' (1 byte at input pos i), truncated tail of URL
+            -- replaced by "…", and trailing '>' (1 byte at end).
+            table.insert(adjustments, { input_pos = i, delta = 1 })
+            table.insert(adjustments, {
+              input_pos = i + byte_pos,
+              delta = #captured - byte_pos - #"…",
+            })
+            table.insert(adjustments, { input_pos = i + 1 + #captured, delta = 1 })
+          else
+            display_url = captured
+            table.insert(adjustments, { input_pos = i, delta = 1 })
+            table.insert(adjustments, { input_pos = i + 1 + #captured, delta = 1 })
+          end
+          processed = processed .. display_url
+          table.insert(highlights, { col = start_col, end_col = start_col + #display_url, hl = "Underlined" })
+          table.insert(links, { col_start = start_col, col_end = start_col + #display_url, url = captured })
+          i = lt_e + 1
+        end
+      end
+      if not handled_autolink then
       local s, e = text:find("https?://[^%s%)<>\"]+", i)
       if s == i then
         local url_match = text:sub(s, e)
@@ -870,6 +912,7 @@ local function process_bare_urls(text, max_url_width, highlights, links)
         processed = processed .. text:sub(i, i)
         i = i + 1
       end
+      end -- if not handled_autolink
     else
       processed = processed .. text:sub(i, i)
       i = i + 1
