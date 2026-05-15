@@ -144,34 +144,50 @@ end)
 -- Standalone <URL> on a line that points at GitHub's user-attachments CDN
 -- routes through image_placements so the existing download + magic-byte
 -- detection can render it as image/video (mirrors github.com behavior).
+--
+-- image_placements are only added when the terminal supports the Kitty
+-- graphics protocol; CI runners do not, so stub `supports_kitty` for the
+-- duration of these tests. The stub is restored even if the test errors.
+local function with_kitty_stubbed(fn)
+  local image = require "md-render.image"
+  local original = image.supports_kitty
+  image.supports_kitty = function() return true end
+  local ok, err = pcall(fn)
+  image.supports_kitty = original
+  if not ok then error(err) end
+end
 
 test("standalone autolink to user-attachments registers image placement", function()
-  local ContentBuilder = require("md-render.content_builder").ContentBuilder
-  local b = ContentBuilder.new()
-  local url = "https://github.com/user-attachments/assets/4c042f5c-fb7f-4a1e-a3d9-e2ab43ae215a"
-  b:render_document({ "<" .. url .. ">" }, { max_width = 80, indent = "  " })
-  local result = b:result()
-  local found
-  for _, p in ipairs(result.image_placements or {}) do
-    if p.src_url == url then found = p; break end
-  end
-  assert_eq(found ~= nil, true, "user-attachments autolink: image placement registered")
-  assert_eq(found and found.src_url, url, "user-attachments autolink: src_url preserved")
+  with_kitty_stubbed(function()
+    local ContentBuilder = require("md-render.content_builder").ContentBuilder
+    local b = ContentBuilder.new()
+    local url = "https://github.com/user-attachments/assets/4c042f5c-fb7f-4a1e-a3d9-e2ab43ae215a"
+    b:render_document({ "<" .. url .. ">" }, { max_width = 80, indent = "  " })
+    local result = b:result()
+    local found
+    for _, p in ipairs(result.image_placements or {}) do
+      if p.src_url == url then found = p; break end
+    end
+    assert_eq(found ~= nil, true, "user-attachments autolink: image placement registered")
+    assert_eq(found and found.src_url, url, "user-attachments autolink: src_url preserved")
+  end)
 end)
 
 test("standalone autolink to non-attachments URL does NOT become a placement", function()
-  local ContentBuilder = require("md-render.content_builder").ContentBuilder
-  local b = ContentBuilder.new()
-  b:render_document({ "<https://example.com/page>" }, { max_width = 80, indent = "  " })
-  local result = b:result()
-  for _, p in ipairs(result.image_placements or {}) do
-    if p.src_url == "https://example.com/page" then
-      fail_count = fail_count + 1
-      print("FAIL: non-attachments autolink should not become an image placement")
-      return
+  with_kitty_stubbed(function()
+    local ContentBuilder = require("md-render.content_builder").ContentBuilder
+    local b = ContentBuilder.new()
+    b:render_document({ "<https://example.com/page>" }, { max_width = 80, indent = "  " })
+    local result = b:result()
+    for _, p in ipairs(result.image_placements or {}) do
+      if p.src_url == "https://example.com/page" then
+        fail_count = fail_count + 1
+        print("FAIL: non-attachments autolink should not become an image placement")
+        return
+      end
     end
-  end
-  pass_count = pass_count + 1
+    pass_count = pass_count + 1
+  end)
 end)
 
 -- Highlight tests for wikilinks
