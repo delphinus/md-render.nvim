@@ -802,6 +802,10 @@ INLINE FORMATTING ~
 
   *Bold*                Bold text (fallback; `bold = true`)
   *Italic*              Italic text (fallback; `italic = true`)
+  *MdRenderInlineCode*  Inline code spans (`` `code` `` and `<code>`).
+                        fg follows `String`; bg is a subtle neutral tint
+                        (Comment fg blended with Normal bg) so code is
+                        visibly distinct from headings.
   *MdRenderHighlight*   Obsidian `==highlight==` markers
   *MdRenderTag*         Obsidian `#tag` syntax (links to `Label`)
   *MdRenderMath*        Inline/block math (links to `Special`)

@@ -97,6 +97,7 @@ function M.setup_highlights()
   M.setup_alert_highlights()
   M.setup_details_highlights()
   M.setup_image_placeholder_highlight()
+  M.setup_inline_code_highlight()
 end
 
 --- Set up image placeholder highlight group (MdRenderImagePlaceholder)
@@ -110,6 +111,27 @@ function M.setup_image_placeholder_highlight()
   local fg = comment_hl.fg or 0x888888
   local bg = blend_color(fg, normal_bg, 0.12)
   vim.api.nvim_set_hl(0, "MdRenderImagePlaceholder", { fg = fg, bg = bg, default = true })
+end
+
+--- Set up inline code highlight group (MdRenderInlineCode).
+--- fg follows String so the existing color cue is preserved; bg is a subtle
+--- neutral tint (Comment fg blended with Normal bg) so backtick spans stay
+--- visually distinct from headings even when the colorscheme paints both green.
+function M.setup_inline_code_highlight()
+  local normal_hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
+  if not normal_hl.bg then
+    normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+  end
+  local normal_bg = normal_hl.bg or 0x1e1e2e
+  local comment_hl = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
+  local tint = comment_hl.fg or 0x888888
+  local bg = blend_color(tint, normal_bg, 0.18)
+  local string_hl = vim.api.nvim_get_hl(0, { name = "String", link = false })
+  if string_hl.fg then
+    vim.api.nvim_set_hl(0, "MdRenderInlineCode", { fg = string_hl.fg, bg = bg, default = true })
+  else
+    vim.api.nvim_set_hl(0, "MdRenderInlineCode", { bg = bg, default = true })
+  end
 end
 
 -- Re-export submodules (preview is lazy-loaded to avoid circular dependency)

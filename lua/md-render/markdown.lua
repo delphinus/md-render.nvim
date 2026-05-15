@@ -1057,7 +1057,7 @@ local HTML_TAG_HIGHLIGHTS = {
   strong = "Bold",
   i = "Italic",
   em = "Italic",
-  code = "String",
+  code = "MdRenderInlineCode",
   s = "DiagnosticDeprecated",
   del = "DiagnosticDeprecated",
   strike = "DiagnosticDeprecated",
@@ -1562,8 +1562,8 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   rendered_text = process_paired_markers(rendered_text, "==([^=]+)==", "MdRenderHighlight", 2, highlights, links)
   rendered_text = process_inline_math(rendered_text, "MdRenderMath", highlights, links)
 
-  -- Restore code spans (adds String highlight for each span)
-  rendered_text = restore_code_spans(rendered_text, code_spans, "String", highlights, links)
+  -- Restore code spans (adds MdRenderInlineCode highlight for each span)
+  rendered_text = restore_code_spans(rendered_text, code_spans, "MdRenderInlineCode", highlights, links)
 
   -- Restore backslash-escaped characters (adjusts highlight/link positions)
   rendered_text = restore_backslashes(rendered_text, backslash_escapes, highlights, links)

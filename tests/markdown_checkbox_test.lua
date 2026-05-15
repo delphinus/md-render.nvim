@@ -451,10 +451,10 @@ test("html: <em> renders as Italic", function()
   assert_eq(highlights[1].hl, "Italic", "html em: should be Italic")
 end)
 
-test("html: <code> renders as String", function()
+test("html: <code> renders as MdRenderInlineCode", function()
   local text, highlights = render("<code>code</code>")
   assert_eq(text, "code", "html code: tags should be stripped")
-  assert_eq(highlights[1].hl, "String", "html code: should be String")
+  assert_eq(highlights[1].hl, "MdRenderInlineCode", "html code: should be MdRenderInlineCode")
 end)
 
 test("html: <s> renders as strikethrough", function()
