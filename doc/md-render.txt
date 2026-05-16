@@ -218,9 +218,12 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	  immediately, and registers `InsertEnter` / `InsertLeave` autocmds
 	  that swap to source on entry and back to render on leave.
 	- `:MdRender auto off` removes the autocmds and the buffer marker.
-	  The displayed mode is left unchanged.
+	  If the current window is showing the render view of this buffer,
+	  it also swaps back to source so the buffer ends up in the same
+	  state it had before `:MdRender auto on`.
 	- `:MdRender auto toggle`, or `:MdRender auto` with no second arg,
-	  toggles between on and off.
+	  toggles between on and off.  Calling it twice returns the buffer
+	  to its original (auto-off, source displayed) state.
 
 	The plugin does not register a |FileType| autocmd of its own.  To
 	enable auto mode for every Markdown buffer, add one yourself: >vim
@@ -531,8 +534,10 @@ MdPreview.auto_on({opts}) ~
 
 							   *MdPreview.auto_off()*
 MdPreview.auto_off() ~
-	[EXPERIMENTAL] Disable auto-toggle for the current buffer.  The
-	displayed mode is left as-is.  See |:MdRender-auto|.
+	[EXPERIMENTAL] Disable auto-toggle for the current buffer.  If the
+	current window is showing this buffer's render view, it also swaps
+	back to source so the post-`auto_off` state matches what existed
+	before |MdPreview.auto_on()|.  See |:MdRender-auto|.
 
 							*MdPreview.auto_toggle()*
 MdPreview.auto_toggle({opts}) ~
