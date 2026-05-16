@@ -1954,7 +1954,9 @@ function MdPreview.auto_on(opts)
   end
 end
 
---- Disable auto-toggle for the current buffer; leave the displayed mode untouched.
+--- Disable auto-toggle for the current buffer and, if the current window is
+--- showing this buffer's render view, swap back to source so a single
+--- `auto_off` (or a second `auto_toggle`) returns to the pre-`auto_on` state.
 function MdPreview.auto_off()
   local bufnr = get_auto_target_buf()
   if not vim.b[bufnr].md_render_auto then return end
@@ -1970,6 +1972,12 @@ function MdPreview.auto_off()
 
   local session = _toggle_sessions[bufnr]
   if session then uninstall_auto_insert_keymaps(session.buf) end
+
+  local win = vim.api.nvim_get_current_win()
+  local win_state = get_win_state(win)
+  if win_state and win_state.mode == "render" and win_state.source_buf == bufnr then
+    MdPreview.toggle()
+  end
 end
 
 --- Flip auto-toggle state for the current buffer.

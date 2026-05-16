@@ -607,14 +607,14 @@ test("auto-transition to render swaps source → render after 50ms", function()
 end)
 
 -- ----------------------------------------------------------------------
--- Test 18: auto_off clears autocmds and leaves displayed mode untouched
+-- Test 18: auto_off clears autocmds and restores source display
 -- ----------------------------------------------------------------------
-test("auto_off clears autocmds and preserves displayed mode", function()
+test("auto_off clears autocmds and swaps render back to source", function()
   local source = setup_md_buffer({ "# Hello" })
   local win = vim.api.nvim_get_current_win()
 
   preview.auto_on()
-  local before_buf = vim.api.nvim_win_get_buf(win)
+  assert_false(vim.api.nvim_win_get_buf(win) == source, "precondition: render after auto_on")
 
   preview.auto_off()
 
@@ -629,7 +629,48 @@ test("auto_off clears autocmds and preserves displayed mode", function()
   })
   assert_true(not ok or #autocmds == 0, "no auto autocmds should remain")
 
-  assert_eq(vim.api.nvim_win_get_buf(win), before_buf, "displayed mode should be unchanged")
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "should be back on source after auto_off")
+
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 18b: auto_toggle twice returns to the original (source, auto-off) state
+-- ----------------------------------------------------------------------
+test("auto_toggle twice returns to original source/auto-off state", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local win = vim.api.nvim_get_current_win()
+
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "precondition: source")
+  assert_eq(vim.b[source].md_render_auto, nil, "precondition: auto off")
+
+  preview.auto_toggle()
+  assert_eq(vim.b[source].md_render_auto, true, "after 1st toggle: auto on")
+  assert_false(vim.api.nvim_win_get_buf(win) == source, "after 1st toggle: render displayed")
+
+  preview.auto_toggle()
+  assert_eq(vim.b[source].md_render_auto, nil, "after 2nd toggle: auto off")
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "after 2nd toggle: source displayed")
+
+  cleanup_buffer(source)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 18c: auto_off leaves displayed mode unchanged when not showing render
+-- ----------------------------------------------------------------------
+test("auto_off does not swap when current window is not showing render", function()
+  local source = setup_md_buffer({ "# Hello" })
+  local win = vim.api.nvim_get_current_win()
+
+  preview.auto_on()
+  -- Manually swap back to source so auto_off has nothing to swap.
+  preview.toggle()
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "precondition: source displayed")
+
+  preview.auto_off()
+
+  assert_eq(vim.b[source].md_render_auto, nil, "b:md_render_auto should be cleared")
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "should still be on source after auto_off")
 
   cleanup_buffer(source)
 end)
