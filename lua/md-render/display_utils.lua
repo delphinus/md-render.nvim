@@ -1,4 +1,5 @@
 local FloatWin = require "md-render.float_win"
+local UrlHover = require "md-render.url_hover"
 
 local M = {}
 
@@ -283,6 +284,8 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
   for _, key in ipairs(close_keys) do
     vim.api.nvim_buf_set_keymap(buf, "n", key, ":close<CR>", { noremap = true, silent = true })
   end
+
+  UrlHover.attach(buf, ns, win)
 
   vim.keymap.set("n", "<LeftRelease>", function()
     local mouse = vim.fn.getmousepos()

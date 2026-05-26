@@ -18,7 +18,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **Video** — local and web video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
 - **Mermaid diagrams** — rendered as images inline
 - **CJK-aware word wrapping** — JIS X 4051 kinsoku shori + optional [BudouX](https://github.com/google/budoux) phrase segmentation via [budoux.lua](https://github.com/delphinus/budoux.lua)
-- **Clickable links** — mouse click to open URLs; OSC 8 hyperlink support for compatible terminals
+- **Clickable links** — mouse click to open URLs; hover the mouse over a link to peek the full URL in a subtle floating window; OSC 8 hyperlink support for compatible terminals
 - **`<details>` support** — collapsible sections with click-to-toggle, respecting the `open` attribute
 - **Library API** — use the rendering engine programmatically from your own plugins
 
