@@ -46,7 +46,8 @@ Features: ~
 - Mermaid diagrams rendered as images inline
 - CJK-aware word wrapping (JIS X 4051 kinsoku shori + optional BudouX phrase
   segmentation)
-- Clickable links (mouse click to open URLs; OSC 8 hyperlink support)
+- Clickable links (mouse click to open URLs; mouse hover peeks the full URL
+  in a subtle floating window; OSC 8 hyperlink support)
 - `<details>` support (collapsible sections with click-to-toggle)
 - Library API for programmatic use from other plugins
 
@@ -139,11 +140,15 @@ Inside the preview window, the following keys are available:
 	`q` / `<Esc>`	Close the preview window
 	`<CR>`		Toggle callout fold / expand truncated region
 	`<LeftMouse>`	Click links, toggle folds, expand regions
+	`<MouseMove>`	Hover a link to peek its full URL in a small floating
+			window at the bottom of the editor.  Requires
+			'mousemoveevent' (md-render enables it automatically
+			whenever a preview window is open).
 
 Inside a render-mode buffer opened with |:MdRender-toggle|, `q` / `<Esc>` /
 `<CR>` are NOT bound to close — call |:MdRender-toggle| again to return to
 source mode.  `<LeftMouse>` still toggles folds, expands regions, and
-opens links.
+opens links; `<MouseMove>` hover-peek also stays active.
 
 ==============================================================================
 COMMANDS						    *md-render-commands*
