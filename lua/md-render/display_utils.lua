@@ -62,6 +62,40 @@ function M.reset_osc8_cache()
   _osc8_supported = nil
 end
 
+-- Common info-string aliases that don't match a treesitter parser name directly.
+-- nvim-treesitter "main" branch and bare Neovim register no defaults, so without
+-- this table fenced blocks tagged ```sh / ```js / ... silently lose highlighting.
+-- Users can add more via vim.treesitter.language.register() — that path is tried
+-- first via vim.treesitter.language.get_lang().
+local LANG_ALIASES = {
+  sh = "bash",
+  shell = "bash",
+  shellscript = "bash",
+  zsh = "bash",
+  js = "javascript",
+  jsx = "javascript",
+  ts = "typescript",
+  py = "python",
+  rb = "ruby",
+  rs = "rust",
+  yml = "yaml",
+  md = "markdown",
+  ps1 = "powershell",
+}
+
+--- Resolve a fenced-block info string to a treesitter parser name.
+---@param name string
+---@return string
+local function resolve_lang(name)
+  local lower = name:lower()
+  local registered = vim.treesitter.language.get_lang(lower)
+  if registered and registered ~= lower then return registered end
+  return LANG_ALIASES[lower] or lower
+end
+
+M._resolve_lang = resolve_lang
+M._LANG_ALIASES = LANG_ALIASES
+
 --- Apply treesitter syntax highlighting to code blocks
 ---@param buf integer
 ---@param ns integer
@@ -82,13 +116,15 @@ function M.apply_treesitter_highlights(buf, ns, content)
     end
     local code_text = table.concat(code_lines, "\n")
 
-    local ok, parser = pcall(vim.treesitter.get_string_parser, code_text, block.language)
+    local lang = resolve_lang(block.language)
+
+    local ok, parser = pcall(vim.treesitter.get_string_parser, code_text, lang)
     if not ok or not parser then goto continue end
 
     local trees = parser:parse()
     if not trees or #trees == 0 then goto continue end
 
-    local query = vim.treesitter.query.get(block.language, "highlights")
+    local query = vim.treesitter.query.get(lang, "highlights")
     if not query then goto continue end
 
     for id, node in query:iter_captures(trees[1]:root(), code_text) do
@@ -117,7 +153,7 @@ function M.apply_treesitter_highlights(buf, ns, content)
       pcall(vim.api.nvim_buf_set_extmark, buf, ns, buf_sr, buf_sc, {
         end_row = buf_er,
         end_col = buf_ec,
-        hl_group = "@" .. name .. "." .. block.language,
+        hl_group = "@" .. name .. "." .. lang,
         priority = 4200,
       })
       ::skip_capture::
