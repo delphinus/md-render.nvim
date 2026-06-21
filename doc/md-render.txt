@@ -138,11 +138,11 @@ Map them yourself: >lua
 
 Inside the preview window, the following keys are available:
 
-	`q` / `<Esc>`	Close the preview window
+	`q` / `<Esc>` / `<C-c>`	Close the preview window
 	`za`		Toggle the callout fold / expandable region under the
 			cursor (no-op when the cursor is not on one)
 	`<CR>`		Toggle the callout fold / expandable region under the
-			cursor; otherwise close the preview window
+			cursor (no-op when the cursor is not on one)
 	`<LeftMouse>`	Click links, toggle folds, expand regions
 	`<MouseMove>`	Hover a link to peek its full URL in a small floating
 			window at the bottom of the editor.  Requires
@@ -150,7 +150,7 @@ Inside the preview window, the following keys are available:
 			whenever a preview window is open).
 
 Inside a render-mode buffer opened with |:MdRender-toggle|, `q` / `<Esc>` /
-`<CR>` are NOT bound to close — call |:MdRender-toggle| again to return to
+`<C-c>` are NOT bound to close — call |:MdRender-toggle| again to return to
 source mode.  `<LeftMouse>`, `za`, and `<CR>` still toggle folds and expand
 regions (and `<LeftMouse>` opens links); `<MouseMove>` hover-peek also stays
 active.

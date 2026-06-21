@@ -151,9 +151,9 @@ Inside a rendered preview (floating, tab, or in-place toggle), these buffer-loca
 | Key | Action |
 |---|---|
 | `za` | Toggle the fold / expandable region under the cursor (no-op elsewhere) |
-| `<CR>` | Toggle the fold / expandable region under the cursor; otherwise close the window (in floating / tab mode) |
+| `<CR>` | Toggle the fold / expandable region under the cursor (no-op elsewhere) |
 | `<LeftMouse>` | Toggle folds, expand regions, and open links by clicking |
-| `q` / `<Esc>` | Close the window (floating / tab mode only) |
+| `q` / `<Esc>` / `<C-c>` | Close the window (floating / tab mode only) |
 
 ## Commands
 
@@ -189,7 +189,7 @@ Behavior:
 - When the same source is shown in multiple windows, only the invoking window swaps; edits from other windows are reflected on the next toggle into render mode.
 - Cursor position round-trips between source and render via the source-line mapping.
 - `number`, `relativenumber`, and `list` are turned off on render-mode windows. The originals are stashed on the window and restored when toggling back to source.
-- Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRender toggle` again to return to source mode. `<LeftMouse>`, `za`, and `<CR>` still toggle folds and expand regions (and `<LeftMouse>` opens links).
+- Inside render mode, `q` / `<Esc>` / `<C-c>` are **not** bound to close — call `:MdRender toggle` again to return to source mode. `<LeftMouse>`, `za`, and `<CR>` still toggle folds and expand regions (and `<LeftMouse>` opens links).
 
 ### Auto-toggle on Insert mode (experimental)
 

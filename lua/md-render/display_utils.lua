@@ -316,7 +316,7 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
     return content
   end
 
-  local close_keys = opts.close_keys or { "q", "<Esc>", "<CR>" }
+  local close_keys = opts.close_keys or { "q", "<Esc>", "<C-c>" }
   local cr_is_close = vim.tbl_contains(close_keys, "<CR>")
   for _, key in ipairs(close_keys) do
     -- <CR> is bound below so it can toggle a block under the cursor first and
@@ -374,8 +374,10 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
   -- it buffer-locally also suppresses Vim's default "E490: No fold found".
   vim.keymap.set("n", "za", toggle_at_cursor, { buffer = buf, noremap = true, silent = true })
 
-  -- `<CR>` toggles the block under the cursor; otherwise it closes the window
-  -- when it is a close key (float/tab mode), and is a no-op in toggle mode.
+  -- `<CR>` toggles the block under the cursor and is otherwise a no-op: it is
+  -- not a close key by default (closing on Enter is unintuitive — use q / <Esc>
+  -- / <C-c>). It still falls back to closing when a caller opts <CR> into
+  -- close_keys explicitly (cr_is_close).
   vim.keymap.set("n", "<CR>", function()
     if toggle_at_cursor() then return end
     if cr_is_close then vim.cmd.close() end
