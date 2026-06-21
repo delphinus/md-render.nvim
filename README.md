@@ -12,14 +12,14 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 
 - **Rich inline formatting** — bold, strikethrough, inline code, links, Obsidian `==highlight==`, all rendered in-place
 - **Tables** — box-drawing borders, column alignment, proportional sizing, and inline formatting within cells
-- **Callouts & folds** — GitHub and Obsidian alert types with colored borders, icons, and click-to-toggle folding
-- **Code blocks** — fenced blocks with treesitter syntax highlighting; expandable when truncated
+- **Callouts & folds** — GitHub and Obsidian alert types with colored borders, icons, and folding you can toggle by clicking or with `za` / `<CR>`
+- **Code blocks** — fenced blocks with treesitter syntax highlighting; expandable when truncated (click or `za` / `<CR>`)
 - **Images** — local and web images (PNG, JPEG, WebP, GIF, animated GIF) displayed inline via terminal graphics protocol
 - **Video** — local and web video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
 - **Mermaid diagrams** — rendered as images inline
 - **CJK-aware word wrapping** — JIS X 4051 kinsoku shori + optional [BudouX](https://github.com/google/budoux) phrase segmentation via [budoux.lua](https://github.com/delphinus/budoux.lua)
 - **Clickable links** — mouse click to open URLs; hover the mouse over a link to peek the full URL in a subtle floating window; OSC 8 hyperlink support for compatible terminals
-- **`<details>` support** — collapsible sections with click-to-toggle, respecting the `open` attribute
+- **`<details>` support** — collapsible sections you can toggle by clicking or with `za` / `<CR>`, respecting the `open` attribute
 - **Library API** — use the rendering engine programmatically from your own plugins
 
 <figure align="center">
@@ -144,6 +144,17 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `<Plug>(md-render-split)` | Open a split showing source and rendered Markdown |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
+### In-preview keys
+
+Inside a rendered preview (floating, tab, or in-place toggle), these buffer-local keys are set automatically:
+
+| Key | Action |
+|---|---|
+| `za` | Toggle the fold / expandable region under the cursor (no-op elsewhere) |
+| `<CR>` | Toggle the fold / expandable region under the cursor; otherwise close the window (in floating / tab mode) |
+| `<LeftMouse>` | Toggle folds, expand regions, and open links by clicking |
+| `q` / `<Esc>` | Close the window (floating / tab mode only) |
+
 ## Commands
 
 The plugin exposes a single `:MdRender` command with subcommands:
@@ -178,7 +189,7 @@ Behavior:
 - When the same source is shown in multiple windows, only the invoking window swaps; edits from other windows are reflected on the next toggle into render mode.
 - Cursor position round-trips between source and render via the source-line mapping.
 - `number`, `relativenumber`, and `list` are turned off on render-mode windows. The originals are stashed on the window and restored when toggling back to source.
-- Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRender toggle` again to return to source mode. `<LeftMouse>` still toggles folds, expands regions, and opens links.
+- Inside render mode, `q` / `<Esc>` / `<CR>` are **not** bound to close — call `:MdRender toggle` again to return to source mode. `<LeftMouse>`, `za`, and `<CR>` still toggle folds and expand regions (and `<LeftMouse>` opens links).
 
 ### Auto-toggle on Insert mode (experimental)
 

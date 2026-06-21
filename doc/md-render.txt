@@ -38,8 +38,9 @@ Features: ~
   Obsidian`==highlight==`)
 - Tables with box-drawing borders, column alignment, and proportional sizing
 - Callouts and folds (GitHub / Obsidian alert types with colored borders,
-  icons, and click-to-toggle folding)
+  icons, and folding you can toggle by click or `za` / `<CR>`)
 - Code blocks with treesitter syntax highlighting; expandable when truncated
+  (click or `za` / `<CR>`)
 - Images (PNG, JPEG, WebP, GIF, animated GIF) displayed inline via terminal
   graphics protocol
 - Video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
@@ -48,7 +49,7 @@ Features: ~
   segmentation)
 - Clickable links (mouse click to open URLs; mouse hover peeks the full URL
   in a subtle floating window; OSC 8 hyperlink support)
-- `<details>` support (collapsible sections with click-to-toggle)
+- `<details>` support (collapsible sections; toggle by click or `za` / `<CR>`)
 - Library API for programmatic use from other plugins
 
 ==============================================================================
@@ -138,7 +139,10 @@ Map them yourself: >lua
 Inside the preview window, the following keys are available:
 
 	`q` / `<Esc>`	Close the preview window
-	`<CR>`		Toggle callout fold / expand truncated region
+	`za`		Toggle the callout fold / expandable region under the
+			cursor (no-op when the cursor is not on one)
+	`<CR>`		Toggle the callout fold / expandable region under the
+			cursor; otherwise close the preview window
 	`<LeftMouse>`	Click links, toggle folds, expand regions
 	`<MouseMove>`	Hover a link to peek its full URL in a small floating
 			window at the bottom of the editor.  Requires
@@ -147,8 +151,9 @@ Inside the preview window, the following keys are available:
 
 Inside a render-mode buffer opened with |:MdRender-toggle|, `q` / `<Esc>` /
 `<CR>` are NOT bound to close — call |:MdRender-toggle| again to return to
-source mode.  `<LeftMouse>` still toggles folds, expands regions, and
-opens links; `<MouseMove>` hover-peek also stays active.
+source mode.  `<LeftMouse>`, `za`, and `<CR>` still toggle folds and expand
+regions (and `<LeftMouse>` opens links); `<MouseMove>` hover-peek also stays
+active.
 
 ==============================================================================
 COMMANDS						    *md-render-commands*
@@ -250,8 +255,8 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	What works on the render buffer: ~
 
 	  Read-only operations: motion (hjkl, gg, G, ...), search (/, ?),
-	  yank (y), visual selection, marks, and <LeftMouse> (folds,
-	  expand, link open).
+	  yank (y), visual selection, marks, `za` / `<CR>` (toggle folds
+	  and expand regions), and <LeftMouse> (folds, expand, link open).
 
 	  `:w` and `:w!` are forwarded to the source buffer so you can
 	  save without leaving render mode.  Different filenames (e.g.

@@ -317,11 +317,69 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
   end
 
   local close_keys = opts.close_keys or { "q", "<Esc>", "<CR>" }
+  local cr_is_close = vim.tbl_contains(close_keys, "<CR>")
   for _, key in ipairs(close_keys) do
-    vim.api.nvim_buf_set_keymap(buf, "n", key, ":close<CR>", { noremap = true, silent = true })
+    -- <CR> is bound below so it can toggle a block under the cursor first and
+    -- fall back to closing only when the cursor is not on a foldable region.
+    if key ~= "<CR>" then
+      vim.api.nvim_buf_set_keymap(buf, "n", key, ":close<CR>", { noremap = true, silent = true })
+    end
   end
 
   UrlHover.attach(buf, ns, win)
+
+  -- Return the foldable callout header at the given 0-indexed rendered line, or nil.
+  ---@param line integer
+  ---@return MdRender.CalloutFold?
+  local function fold_at(line)
+    local cur_content = get_content()
+    if on_fold_toggle and cur_content.callout_folds then
+      for _, fold in ipairs(cur_content.callout_folds) do
+        if fold.header_line == line then return fold end
+      end
+    end
+  end
+
+  -- Return the expandable region containing the given 0-indexed rendered line, or nil.
+  ---@param line integer
+  ---@return MdRender.ExpandableRegion?
+  local function region_at(line)
+    local cur_content = get_content()
+    if on_expand_toggle and cur_content.expandable_regions then
+      for _, region in ipairs(cur_content.expandable_regions) do
+        if line >= region.start_line and line <= region.end_line then return region end
+      end
+    end
+  end
+
+  -- Toggle the foldable callout or expandable region under the cursor.
+  -- Returns true if something was toggled.
+  ---@return boolean
+  local function toggle_at_cursor()
+    local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local fold = fold_at(line)
+    if fold then
+      on_fold_toggle(fold.source_line, not fold.collapsed)
+      return true
+    end
+    local region = region_at(line)
+    if region then
+      on_expand_toggle(region.block_id, not region.expanded)
+      return true
+    end
+    return false
+  end
+
+  -- `za` toggles the block under the cursor (no-op when not on one). Overriding
+  -- it buffer-locally also suppresses Vim's default "E490: No fold found".
+  vim.keymap.set("n", "za", toggle_at_cursor, { buffer = buf, noremap = true, silent = true })
+
+  -- `<CR>` toggles the block under the cursor; otherwise it closes the window
+  -- when it is a close key (float/tab mode), and is a no-op in toggle mode.
+  vim.keymap.set("n", "<CR>", function()
+    if toggle_at_cursor() then return end
+    if cr_is_close then vim.cmd.close() end
+  end, { buffer = buf, noremap = true, silent = true })
 
   vim.keymap.set("n", "<LeftRelease>", function()
     local mouse = vim.fn.getmousepos()
@@ -383,25 +441,19 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
       end
 
       -- Check for foldable callout header click
-      if on_fold_toggle and cur_content.callout_folds then
-        for _, fold in ipairs(cur_content.callout_folds) do
-          if fold.header_line == click_line then
-            on_fold_toggle(fold.source_line, not fold.collapsed)
-            return
-          end
-        end
+      local fold = fold_at(click_line)
+      if fold then
+        on_fold_toggle(fold.source_line, not fold.collapsed)
+        return
       end
 
       -- Check for expandable region click (code blocks / tables)
-      if on_expand_toggle and cur_content.expandable_regions then
-        for _, region in ipairs(cur_content.expandable_regions) do
-          if click_line >= region.start_line and click_line <= region.end_line then
-            -- If click is on a URL, open it instead of toggling expansion
-            if try_open_url() then return end
-            on_expand_toggle(region.block_id, not region.expanded)
-            return
-          end
-        end
+      local region = region_at(click_line)
+      if region then
+        -- If click is on a URL, open it instead of toggling expansion
+        if try_open_url() then return end
+        on_expand_toggle(region.block_id, not region.expanded)
+        return
       end
 
       -- In OSC 8 terminals, the terminal handles link clicks natively.
