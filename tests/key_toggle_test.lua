@@ -145,20 +145,43 @@ test("za on plain line is a no-op", function()
 end)
 
 -- ----------------------------------------------------------------------
--- Test 5: `<CR>` on a plain line (with <CR> as a close key) closes the window
+-- Test 5: `<CR>` on a plain line does NOT close the window by default
+-- (Enter is no longer a close key — closing on Enter is unintuitive).
 -- ----------------------------------------------------------------------
-test("<CR> on plain line closes the window when <CR> is a close key", function()
-  local buf, win, calls = setup(make_content()) -- default close_keys include <CR>
+test("<CR> on plain line does not close the window by default", function()
+  local buf, win, calls = setup(make_content()) -- default close_keys: q / <Esc> / <C-c>
   vim.api.nvim_win_set_cursor(win, { 4, 0 })
   feed "<CR>"
-  assert_false(vim.api.nvim_win_is_valid(win), "<CR> on plain line: window closed")
+  assert_true(vim.api.nvim_win_is_valid(win), "<CR> on plain line: window stays open")
   assert_eq(#calls.fold, 0, "<CR> on plain line: fold not fired")
   assert_eq(#calls.expand, 0, "<CR> on plain line: expand not fired")
   cleanup(win, buf)
 end)
 
 -- ----------------------------------------------------------------------
--- Test 6: in toggle mode (no close keys), <CR> on a plain line is a no-op
+-- Test 6: `<C-c>` on a plain line closes the window (default close key)
+-- ----------------------------------------------------------------------
+test("<C-c> on plain line closes the window", function()
+  local buf, win, _ = setup(make_content()) -- default close_keys include <C-c>
+  vim.api.nvim_win_set_cursor(win, { 4, 0 })
+  feed "<C-c>"
+  assert_false(vim.api.nvim_win_is_valid(win), "<C-c> on plain line: window closed")
+  cleanup(win, buf)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 7: `q` on a plain line closes the window (default close key)
+-- ----------------------------------------------------------------------
+test("q on plain line closes the window", function()
+  local buf, win, _ = setup(make_content())
+  vim.api.nvim_win_set_cursor(win, { 4, 0 })
+  feed "q"
+  assert_false(vim.api.nvim_win_is_valid(win), "q on plain line: window closed")
+  cleanup(win, buf)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 8: in toggle mode (no close keys), <CR> on a plain line is a no-op
 -- ----------------------------------------------------------------------
 test("<CR> on plain line is a no-op in toggle mode", function()
   local buf, win, calls = setup(make_content(), {})
@@ -166,6 +189,18 @@ test("<CR> on plain line is a no-op in toggle mode", function()
   feed "<CR>"
   assert_true(vim.api.nvim_win_is_valid(win), "<CR> toggle mode: window stays open")
   assert_eq(#calls.fold, 0, "<CR> toggle mode: fold not fired")
+  cleanup(win, buf)
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 9: when a caller opts <CR> into close_keys, <CR> still closes
+-- on a plain line (cr_is_close fallback path remains supported).
+-- ----------------------------------------------------------------------
+test("<CR> still closes when explicitly a close key", function()
+  local buf, win, _ = setup(make_content(), { "<CR>" })
+  vim.api.nvim_win_set_cursor(win, { 4, 0 })
+  feed "<CR>"
+  assert_false(vim.api.nvim_win_is_valid(win), "<CR> as close key: window closed")
   cleanup(win, buf)
 end)
 
