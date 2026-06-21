@@ -11,15 +11,11 @@ end
 function FloatWin:setup(win, opts)
   self.win = win
   opts = opts or {}
-  if opts.auto_close == false then
-    return
-  end
+  if opts.auto_close == false then return end
   vim.api.nvim_create_autocmd({ "WinEnter", "CursorMoved" }, {
     group = vim.api.nvim_create_augroup(self.augroup, { clear = false }),
     callback = function()
-      if self.win ~= vim.api.nvim_get_current_win() then
-        self:close_if_valid()
-      end
+      if self.win ~= vim.api.nvim_get_current_win() then self:close_if_valid() end
     end,
   })
   vim.api.nvim_create_autocmd("WinClosed", {

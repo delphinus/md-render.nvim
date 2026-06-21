@@ -41,60 +41,64 @@ end
 -- heading_slug tests
 
 test("heading_slug: simple text", function()
-  assert_eq(Markdown.heading_slug("Hello World"), "hello-world", "simple heading slug")
+  assert_eq(Markdown.heading_slug "Hello World", "hello-world", "simple heading slug")
 end)
 
 test("heading_slug: strips bold markers", function()
-  assert_eq(Markdown.heading_slug("My **Bold** Heading"), "my-bold-heading", "bold markers stripped")
+  assert_eq(Markdown.heading_slug "My **Bold** Heading", "my-bold-heading", "bold markers stripped")
 end)
 
 test("heading_slug: strips inline code", function()
-  assert_eq(Markdown.heading_slug("Using `code` here"), "using-code-here", "code markers stripped")
+  assert_eq(Markdown.heading_slug "Using `code` here", "using-code-here", "code markers stripped")
 end)
 
 test("heading_slug: strips link syntax", function()
-  assert_eq(Markdown.heading_slug("See [docs](https://example.com)"), "see-docs", "link syntax stripped")
+  assert_eq(Markdown.heading_slug "See [docs](https://example.com)", "see-docs", "link syntax stripped")
 end)
 
 test("heading_slug: strips wikilink syntax", function()
-  assert_eq(Markdown.heading_slug("About [[Page|display]]"), "about-display", "wikilink syntax stripped")
+  assert_eq(Markdown.heading_slug "About [[Page|display]]", "about-display", "wikilink syntax stripped")
 end)
 
 test("heading_slug: collapses hyphens", function()
-  assert_eq(Markdown.heading_slug("A - B - C"), "a-b-c", "hyphens collapsed")
+  assert_eq(Markdown.heading_slug "A - B - C", "a-b-c", "hyphens collapsed")
 end)
 
 test("heading_slug: removes special characters", function()
-  assert_eq(Markdown.heading_slug("What's New?"), "whats-new", "special chars removed")
+  assert_eq(Markdown.heading_slug "What's New?", "whats-new", "special chars removed")
 end)
 
 test("heading_slug: Japanese text preserved", function()
-  local slug = Markdown.heading_slug("日本語テスト")
+  local slug = Markdown.heading_slug "日本語テスト"
   assert_eq(slug, "日本語テスト", "Japanese text preserved in slug")
 end)
 
 -- Wikilink URL generation tests
 
 test("wikilink [[#heading]] generates anchor URL", function()
-  local _, _, links = Markdown.render("[[#My Heading]]")
+  local _, _, links = Markdown.render "[[#My Heading]]"
   assert_eq(#links, 1, "wikilink anchor: one link")
   assert_eq(links[1].url, "#my-heading", "wikilink anchor: URL is #slug")
 end)
 
 test("wikilink [[page]] generates advanced-uri URL", function()
-  local _, _, links = Markdown.render("[[SomePage]]")
+  local _, _, links = Markdown.render "[[SomePage]]"
   assert_eq(#links, 1, "wikilink page: one link")
   assert_eq(links[1].url, "obsidian://advanced-uri?filepath=SomePage", "wikilink page: advanced-uri URL")
 end)
 
 test("wikilink [[page#heading]] generates advanced-uri URL with heading", function()
-  local _, _, links = Markdown.render("[[SomePage#Section]]")
+  local _, _, links = Markdown.render "[[SomePage#Section]]"
   assert_eq(#links, 1, "wikilink page#heading: one link")
-  assert_eq(links[1].url, "obsidian://advanced-uri?filepath=SomePage&heading=Section", "wikilink page#heading: advanced-uri with heading")
+  assert_eq(
+    links[1].url,
+    "obsidian://advanced-uri?filepath=SomePage&heading=Section",
+    "wikilink page#heading: advanced-uri with heading"
+  )
 end)
 
 test("wikilink [[#heading|alias]] generates anchor URL", function()
-  local _, _, links = Markdown.render("[[#My Section|go here]]")
+  local _, _, links = Markdown.render "[[#My Section|go here]]"
   assert_eq(#links, 1, "wikilink anchor alias: one link")
   assert_eq(links[1].url, "#my-section", "wikilink anchor alias: URL is #slug")
 end)
@@ -102,13 +106,13 @@ end)
 -- Standard link anchor detection
 
 test("standard link [text](#anchor) has anchor URL", function()
-  local _, _, links = Markdown.render("[click here](#some-heading)")
+  local _, _, links = Markdown.render "[click here](#some-heading)"
   assert_eq(#links, 1, "standard anchor: one link")
   assert_eq(links[1].url, "#some-heading", "standard anchor: URL preserved")
 end)
 
 test("standard link [text](https://...) has external URL", function()
-  local _, _, links = Markdown.render("[click](https://example.com)")
+  local _, _, links = Markdown.render "[click](https://example.com)"
   assert_eq(#links, 1, "external link: one link")
   assert_match(links[1].url, "^https://", "external link: URL is https")
 end)
@@ -117,7 +121,7 @@ end)
 -- Angle brackets are delimiters and must not appear in rendered output.
 
 test("autolink <URL> strips angle brackets and registers link", function()
-  local rendered, _, links = Markdown.render("<https://example.com>")
+  local rendered, _, links = Markdown.render "<https://example.com>"
   assert_eq(rendered, "https://example.com", "autolink: brackets stripped")
   assert_eq(#links, 1, "autolink: one link")
   assert_eq(links[1].url, "https://example.com", "autolink: URL preserved")
@@ -126,7 +130,7 @@ test("autolink <URL> strips angle brackets and registers link", function()
 end)
 
 test("autolink coexists with surrounding text", function()
-  local rendered, _, links = Markdown.render("See <https://example.com> for more")
+  local rendered, _, links = Markdown.render "See <https://example.com> for more"
   assert_eq(rendered, "See https://example.com for more", "inline autolink: brackets stripped")
   assert_eq(#links, 1, "inline autolink: one link")
   assert_eq(links[1].col_start, 4, "inline autolink: starts after 'See '")
@@ -151,7 +155,9 @@ end)
 local function with_kitty_stubbed(fn)
   local image = require "md-render.image"
   local original = image.supports_kitty
-  image.supports_kitty = function() return true end
+  image.supports_kitty = function()
+    return true
+  end
   local ok, err = pcall(fn)
   image.supports_kitty = original
   if not ok then error(err) end
@@ -166,7 +172,10 @@ test("standalone autolink to user-attachments registers image placement", functi
     local result = b:result()
     local found
     for _, p in ipairs(result.image_placements or {}) do
-      if p.src_url == url then found = p; break end
+      if p.src_url == url then
+        found = p
+        break
+      end
     end
     assert_eq(found ~= nil, true, "user-attachments autolink: image placement registered")
     assert_eq(found and found.src_url, url, "user-attachments autolink: src_url preserved")
@@ -182,7 +191,7 @@ test("standalone autolink to non-attachments URL does NOT become a placement", f
     for _, p in ipairs(result.image_placements or {}) do
       if p.src_url == "https://example.com/page" then
         fail_count = fail_count + 1
-        print("FAIL: non-attachments autolink should not become an image placement")
+        print "FAIL: non-attachments autolink should not become an image placement"
         return
       end
     end
@@ -193,7 +202,7 @@ end)
 -- Highlight tests for wikilinks
 
 test("wikilink [[#heading]] uses MdRenderLinkAnchor highlight", function()
-  local _, highlights = Markdown.render("[[#Heading]]")
+  local _, highlights = Markdown.render "[[#Heading]]"
   local found = false
   for _, hl in ipairs(highlights) do
     if hl.hl == "MdRenderLinkAnchor" then found = true end
@@ -202,7 +211,7 @@ test("wikilink [[#heading]] uses MdRenderLinkAnchor highlight", function()
 end)
 
 test("wikilink [[page]] uses MdRenderLinkObsidian highlight", function()
-  local _, highlights = Markdown.render("[[SomePage]]")
+  local _, highlights = Markdown.render "[[SomePage]]"
   local found = false
   for _, hl in ipairs(highlights) do
     if hl.hl == "MdRenderLinkObsidian" then found = true end
@@ -226,7 +235,7 @@ test("content_builder heading anchor line is correct", function()
   local ContentBuilder = require("md-render.content_builder").ContentBuilder
   local b = ContentBuilder.new()
   b:set_source_line(1)
-  b:add_line("first line")
+  b:add_line "first line"
   b:set_source_line(2)
   b:add_markdown_line("## Second Heading", "", 80)
   local result = b:result()
@@ -235,6 +244,4 @@ end)
 
 -- Summary
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
-if fail_count > 0 then
-  os.exit(1)
-end
+if fail_count > 0 then os.exit(1) end

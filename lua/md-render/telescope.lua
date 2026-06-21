@@ -27,9 +27,7 @@ local function build_image_content(filepath, winid)
 
   local filename = filepath:match "([^/]+)$" or filepath
   local header = "  " .. filename
-  if img_w and img_h then
-    header = header .. "  (" .. img_w .. "×" .. img_h .. ")"
-  end
+  if img_w and img_h then header = header .. "  (" .. img_w .. "×" .. img_h .. ")" end
 
   local lines = { header }
   for _ = 1, rows do
@@ -40,16 +38,18 @@ local function build_image_content(filepath, winid)
     lines = lines,
     highlights = { { line = 0, groups = { { col = 0, end_col = #header, hl = "Comment" } } } },
     link_metadata = {},
-    image_placements = { {
-      path = filepath,
-      line = 1,
-      col = math.max(0, math.floor((win_width - cols) / 2)),
-      rows = rows,
-      cols = cols,
-      img_w = img_w,
-      img_h = img_h,
-      video = is_video,
-    } },
+    image_placements = {
+      {
+        path = filepath,
+        line = 1,
+        col = math.max(0, math.floor((win_width - cols) / 2)),
+        rows = rows,
+        cols = cols,
+        img_w = img_w,
+        img_h = img_h,
+        video = is_video,
+      },
+    },
   }
 end
 

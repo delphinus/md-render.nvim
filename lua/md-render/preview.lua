@@ -103,14 +103,12 @@ MdPreview.build_content = function(lines, opts)
           local full_line = label .. ": " .. entry.value
           local display_width = vim.api.nvim_strwidth(full_line)
           if display_width > max_width then
-            local target = max_width - vim.api.nvim_strwidth("…")
+            local target = max_width - vim.api.nvim_strwidth "…"
             local current_width = 0
             local byte_pos = 0
             for char in full_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
               local char_width = vim.api.nvim_strwidth(char)
-              if current_width + char_width > target then
-                break
-              end
+              if current_width + char_width > target then break end
               current_width = current_width + char_width
               byte_pos = byte_pos + #char
             end
@@ -255,7 +253,9 @@ function Session:rebuild()
   local saved_views = {}
   for _, w in ipairs(wins) do
     if vim.api.nvim_win_is_valid(w) then
-      saved_views[w] = vim.api.nvim_win_call(w, function() return vim.fn.winsaveview() end)
+      saved_views[w] = vim.api.nvim_win_call(w, function()
+        return vim.fn.winsaveview()
+      end)
     end
   end
 
@@ -268,15 +268,18 @@ function Session:rebuild()
   vim.bo[self.buf].modified = false
 
   for w, view in pairs(saved_views) do
-    if vim.api.nvim_win_is_valid(w) then
-      vim.api.nvim_win_call(w, function() vim.fn.winrestview(view) end)
-    end
+    if vim.api.nvim_win_is_valid(w) then vim.api.nvim_win_call(w, function()
+      vim.fn.winrestview(view)
+    end) end
   end
 
   if self.win and vim.api.nvim_win_is_valid(self.win) then
     local any_expanded = false
     for _, v in pairs(self.expand_state) do
-      if v then any_expanded = true; break end
+      if v then
+        any_expanded = true
+        break
+      end
     end
     vim.api.nvim_set_option_value("wrap", not any_expanded, { win = self.win })
   end
@@ -325,7 +328,11 @@ local function bracket_index(pts, key, value)
   if value >= pts[hi][key] then return hi end
   while lo + 1 < hi do
     local mid = math.floor((lo + hi) / 2)
-    if pts[mid][key] <= value then lo = mid else hi = mid end
+    if pts[mid][key] <= value then
+      lo = mid
+    else
+      hi = mid
+    end
   end
   return lo
 end
@@ -453,7 +460,9 @@ function Session:install_float_keymaps(close_handle, keymap_opts)
   display_utils.setup_float_keymaps(self.buf, self.ns, self.win, self.content, close_handle, {
     close_keys = keymap_opts.close_keys,
     close_line_idx = keymap_opts.close_line_idx,
-    get_content = function() return self.content end,
+    get_content = function()
+      return self.content
+    end,
     on_fold_toggle = function(source_line, collapsed)
       self.fold_state[source_line] = collapsed
       self:rebuild()
@@ -478,13 +487,11 @@ function Session:install_cursor_sync()
   vim.api.nvim_create_autocmd("CursorMoved", {
     buffer = self.buf,
     callback = function()
-      if vim.api.nvim_win_is_valid(win) then
-        last_preview_line = vim.api.nvim_win_get_cursor(win)[1]
-      end
+      if vim.api.nvim_win_is_valid(win) then last_preview_line = vim.api.nvim_win_get_cursor(win)[1] end
     end,
   })
 
-  local content_ref = self.content  -- captured at install time; updated by rebuild via self.content
+  local content_ref = self.content -- captured at install time; updated by rebuild via self.content
   vim.api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win),
     once = true,
@@ -492,13 +499,11 @@ function Session:install_cursor_sync()
       local source_line_map = self.content.source_line_map or content_ref.source_line_map
       if source_line_map and last_preview_line <= #source_line_map then
         local target_source_line = source_line_map[last_preview_line]
-        if target_source_line and target_source_line > 0
-          and vim.api.nvim_buf_is_valid(source_bufnr) then
+        if target_source_line and target_source_line > 0 and vim.api.nvim_buf_is_valid(source_bufnr) then
           local total_lines = vim.api.nvim_buf_line_count(source_bufnr)
           target_source_line = math.min(target_source_line, total_lines)
           for _, w in ipairs(vim.api.nvim_list_wins()) do
-            if vim.api.nvim_win_is_valid(w)
-              and vim.api.nvim_win_get_buf(w) == source_bufnr then
+            if vim.api.nvim_win_is_valid(w) and vim.api.nvim_win_get_buf(w) == source_bufnr then
               vim.api.nvim_win_set_cursor(w, { target_source_line, 0 })
               vim.api.nvim_win_call(w, function()
                 vim.cmd "normal! zz"
@@ -522,9 +527,7 @@ end
 local function check_markdown_buffer(bufnr)
   local ft = vim.bo[bufnr].filetype
   local name = vim.api.nvim_buf_get_name(bufnr)
-  if ft == "markdown" or name:match "%.md$" or name:match "%.markdown$" then
-    return true
-  end
+  if ft == "markdown" or name:match "%.md$" or name:match "%.markdown$" then return true end
   return false, "md-render: current buffer is not a Markdown file"
 end
 
@@ -535,9 +538,7 @@ end
 --- Show a floating window previewing the current buffer's markdown content
 ---@param opts? { max_width?: integer }
 MdPreview.show = function(opts)
-  if float_win:close_if_valid() then
-    return
-  end
+  if float_win:close_if_valid() then return end
 
   local bufnr = vim.api.nvim_get_current_buf()
   local ok, warn = check_markdown_buffer(bufnr)
@@ -568,9 +569,7 @@ end
 --- Show a tab previewing the current buffer's markdown content
 ---@param opts? { max_width?: integer }
 MdPreview.show_tab = function(opts)
-  if tab_win:close_if_valid() then
-    return
-  end
+  if tab_win:close_if_valid() then return end
 
   local bufnr = vim.api.nvim_get_current_buf()
   local ok, warn = check_markdown_buffer(bufnr)
@@ -666,8 +665,13 @@ MdPreview.show_pager = function(opts)
     local click_col = mouse.column - 1
 
     local function try_open_url()
-      local extmarks =
-        vim.api.nvim_buf_get_extmarks(session.buf, session.ns, { click_line, 0 }, { click_line + 1, 0 }, { details = true })
+      local extmarks = vim.api.nvim_buf_get_extmarks(
+        session.buf,
+        session.ns,
+        { click_line, 0 },
+        { click_line + 1, 0 },
+        { details = true }
+      )
       for _, mark in ipairs(extmarks) do
         local _, _, start_col, details = unpack(mark)
         if details.url then
@@ -773,9 +777,7 @@ end
 local function restore_render_win_opts(win, saved)
   if not saved then return end
   for _, entry in ipairs(RENDER_WIN_OPTS) do
-    if saved[entry[1]] ~= nil then
-      vim.api.nvim_set_option_value(entry[1], saved[entry[1]], { win = win })
-    end
+    if saved[entry[1]] ~= nil then vim.api.nvim_set_option_value(entry[1], saved[entry[1]], { win = win }) end
   end
 end
 
@@ -832,9 +834,7 @@ local function schedule_live_rebuild(session)
     return
   end
 
-  if session._debounce_timer then
-    session._debounce_timer:stop()
-  end
+  if session._debounce_timer then session._debounce_timer:stop() end
   session._debounce_timer = vim.defer_fn(function()
     session._debounce_timer = nil
     if not vim.api.nvim_buf_is_valid(session.source_bufnr) then return end
@@ -852,19 +852,20 @@ end
 --- Listen for source buffer changes and trigger debounced live rebuilds.
 ---@param session MdRender.Session
 local function install_live_update(session)
-  local augroup = vim.api.nvim_create_augroup(
-    live_update_augroup(session.source_bufnr), { clear = true })
+  local augroup = vim.api.nvim_create_augroup(live_update_augroup(session.source_bufnr), { clear = true })
 
   vim.api.nvim_create_autocmd({
     "TextChanged",
     "TextChangedI",
     "BufWritePost",
-    "BufReadPost",          -- :e reload
+    "BufReadPost", -- :e reload
     "FileChangedShellPost", -- external change detected via :checktime / autoread
   }, {
     group = augroup,
     buffer = session.source_bufnr,
-    callback = function() schedule_live_rebuild(session) end,
+    callback = function()
+      schedule_live_rebuild(session)
+    end,
   })
 end
 
@@ -910,17 +911,14 @@ end
 --- whole cascade without the brittleness of trying to count events.
 ---@param session MdRender.Session
 local function install_scroll_sync(session)
-  local augroup = vim.api.nvim_create_augroup(
-    scroll_sync_augroup(session.source_bufnr), { clear = true })
+  local augroup = vim.api.nvim_create_augroup(scroll_sync_augroup(session.source_bufnr), { clear = true })
 
   local SYNC_UNLOCK_MS = 30
 
   local function with_sync_lock(fn)
     session._syncing = true
     local ok, err = pcall(fn)
-    if session._sync_unlock_timer then
-      session._sync_unlock_timer:stop()
-    end
+    if session._sync_unlock_timer then session._sync_unlock_timer:stop() end
     session._sync_unlock_timer = vim.defer_fn(function()
       session._syncing = false
       session._sync_unlock_timer = nil
@@ -1000,7 +998,16 @@ local function install_scroll_sync(session)
   --- (1 source line ~ many render rows because of images / tables)
   --- can leave the mapped cursor pinned to the bottom edge so a
   --- single `j` flicks it off-screen.
-  local function pick_action(dest_height, dest_lines, mapped_top, mapped_center, mapped_bot_end, src_top_at_edge, src_bot_at_edge, target_cursor)
+  local function pick_action(
+    dest_height,
+    dest_lines,
+    mapped_top,
+    mapped_center,
+    mapped_bot_end,
+    src_top_at_edge,
+    src_bot_at_edge,
+    target_cursor
+  )
     -- Edge snap only when the mapped cursor still fits in the window
     -- from that edge. Otherwise the snap pins topline=1 / botline=last
     -- but the cursor (and shadow) sit beyond the visible rows — common
@@ -1047,7 +1054,7 @@ local function install_scroll_sync(session)
   ---@return integer[] # `{ topline, botline, cursor_line }`
   local function visible_range(win)
     return vim.api.nvim_win_call(win, function()
-      return { vim.fn.line("w0"), vim.fn.line("w$"), vim.fn.line(".") }
+      return { vim.fn.line "w0", vim.fn.line "w$", vim.fn.line "." }
     end)
   end
 
@@ -1067,7 +1074,9 @@ local function install_scroll_sync(session)
     local src_bot_at_edge = source_botline >= source_lines
 
     local render_lines = vim.api.nvim_buf_line_count(session.buf)
-    local function clamp(v) return math.min(math.max(v, 1), render_lines) end
+    local function clamp(v)
+      return math.min(math.max(v, 1), render_lines)
+    end
     local mapped_top = clamp(session:source_to_rendered_f(source_topline))
     local mapped_center = clamp(session:source_to_rendered_f(source_center))
     -- Use the *next* source line's mapped start, then step back one render
@@ -1079,8 +1088,16 @@ local function install_scroll_sync(session)
 
     fan_out(render_wins, source_win, function(w)
       local dest_height = vim.api.nvim_win_get_height(w)
-      return pick_action(dest_height, render_lines, mapped_top, mapped_center, mapped_bot_end,
-        src_top_at_edge, src_bot_at_edge, target_cursor)
+      return pick_action(
+        dest_height,
+        render_lines,
+        mapped_top,
+        mapped_center,
+        mapped_bot_end,
+        src_top_at_edge,
+        src_bot_at_edge,
+        target_cursor
+      )
     end, target_cursor)
   end
 
@@ -1101,7 +1118,9 @@ local function install_scroll_sync(session)
     local src_bot_at_edge = render_botline >= render_lines
 
     local source_lines = vim.api.nvim_buf_line_count(session.source_bufnr)
-    local function clamp(v) return math.min(math.max(v, 1), source_lines) end
+    local function clamp(v)
+      return math.min(math.max(v, 1), source_lines)
+    end
     local mapped_top = clamp(session:rendered_to_source_f(render_topline))
     local mapped_center = clamp(session:rendered_to_source_f(render_center))
     local mapped_bot_end = clamp(session:rendered_to_source_f(render_botline + 1) - 1)
@@ -1110,8 +1129,16 @@ local function install_scroll_sync(session)
 
     fan_out(source_wins, render_win, function(w)
       local dest_height = vim.api.nvim_win_get_height(w)
-      return pick_action(dest_height, source_lines, mapped_top, mapped_center, mapped_bot_end,
-        src_top_at_edge, src_bot_at_edge, target_cursor)
+      return pick_action(
+        dest_height,
+        source_lines,
+        mapped_top,
+        mapped_center,
+        mapped_bot_end,
+        src_top_at_edge,
+        src_bot_at_edge,
+        target_cursor
+      )
     end, target_cursor)
   end
 
@@ -1182,8 +1209,7 @@ end
 --- two sides converge on a fixpoint within one tick.
 ---@param session MdRender.Session
 local function install_shadow_cursor(session)
-  local augroup = vim.api.nvim_create_augroup(
-    shadow_augroup(session.source_bufnr), { clear = true })
+  local augroup = vim.api.nvim_create_augroup(shadow_augroup(session.source_bufnr), { clear = true })
 
   -- Map source line -> [start, end] render line range (inclusive).
   --
@@ -1278,7 +1304,9 @@ local function install_shadow_cursor(session)
     if not vim.api.nvim_buf_is_valid(buf) then return {} end
     local marks = vim.api.nvim_buf_get_extmarks(buf, SHADOW_NS, 0, -1, {})
     local lines = {}
-    for _, m in ipairs(marks) do table.insert(lines, m[2] + 1) end
+    for _, m in ipairs(marks) do
+      table.insert(lines, m[2] + 1)
+    end
     table.sort(lines)
     return lines
   end
@@ -1389,9 +1417,7 @@ local function install_shadow_cursor(session)
       local win = vim.api.nvim_get_current_win()
       if not vim.api.nvim_win_is_valid(win) then return end
       local buf = vim.api.nvim_win_get_buf(win)
-      if buf == session.source_bufnr or buf == session.buf then
-        recompute()
-      end
+      if buf == session.source_bufnr or buf == session.buf then recompute() end
     end,
   })
 
@@ -1422,8 +1448,7 @@ end
 --- new window dimensions.
 ---@param session MdRender.Session
 local function install_win_resize_handler(session)
-  local augroup = vim.api.nvim_create_augroup(
-    win_resize_augroup(session.source_bufnr), { clear = true })
+  local augroup = vim.api.nvim_create_augroup(win_resize_augroup(session.source_bufnr), { clear = true })
 
   vim.api.nvim_create_autocmd("WinResized", {
     group = augroup,
@@ -1475,9 +1500,7 @@ local function install_render_buf_guards(session)
         -- firing BufWriteCmd, so doing so would break our :w forwarding.
       end
       local win = vim.api.nvim_get_current_win()
-      if vim.api.nvim_win_get_buf(win) == session.buf then
-        apply_render_win_opts(win)
-      end
+      if vim.api.nvim_win_get_buf(win) == session.buf then apply_render_win_opts(win) end
 
       -- Mirror the stale-content check from get_or_create_toggle_session
       -- so paths that swap to the render buf without going through
@@ -1507,9 +1530,7 @@ local function install_render_buf_guards(session)
     group = augroup,
     buffer = session.buf,
     callback = function()
-      if vim.api.nvim_buf_is_valid(session.buf) then
-        vim.bo[session.buf].modified = false
-      end
+      if vim.api.nvim_buf_is_valid(session.buf) then vim.bo[session.buf].modified = false end
     end,
   })
 
@@ -1555,9 +1576,7 @@ local function install_render_buf_guards(session)
       vim.o.eventignore = saved_ei
       -- The render buffer's 'modified' flag was set by Vim when :w was
       -- invoked; clear it so the user doesn't see [+] linger.
-      if vim.api.nvim_buf_is_valid(session.buf) then
-        vim.bo[session.buf].modified = false
-      end
+      if vim.api.nvim_buf_is_valid(session.buf) then vim.bo[session.buf].modified = false end
       if not ok then error(err) end
     end,
   })
@@ -1585,9 +1604,7 @@ local function install_source_watcher(session)
         _auto_state[source_bufnr] = nil
       end
       session:cleanup_images()
-      if vim.api.nvim_buf_is_valid(session.buf) then
-        pcall(vim.api.nvim_buf_delete, session.buf, { force = true })
-      end
+      if vim.api.nvim_buf_is_valid(session.buf) then pcall(vim.api.nvim_buf_delete, session.buf, { force = true }) end
       _toggle_sessions[source_bufnr] = nil
       pcall(vim.api.nvim_del_augroup_by_name, toggle_buf_augroup(session.buf))
       pcall(vim.api.nvim_del_augroup_by_name, toggle_src_augroup(source_bufnr))
@@ -1643,9 +1660,7 @@ end
 local function get_win_state(win)
   local ok, state = pcall(vim.api.nvim_win_get_var, win, "md_render_state")
   if not ok or type(state) ~= "table" then return nil end
-  if not state.source_buf or not vim.api.nvim_buf_is_valid(state.source_buf) then
-    return nil
-  end
+  if not state.source_buf or not vim.api.nvim_buf_is_valid(state.source_buf) then return nil end
   return state
 end
 
@@ -1879,8 +1894,7 @@ end
 local function get_auto_target_buf()
   local win = vim.api.nvim_get_current_win()
   local win_state = get_win_state(win)
-  if win_state and win_state.mode == "render"
-    and vim.api.nvim_buf_is_valid(win_state.source_buf) then
+  if win_state and win_state.mode == "render" and vim.api.nvim_buf_is_valid(win_state.source_buf) then
     return win_state.source_buf
   end
   return vim.api.nvim_get_current_buf()
@@ -1906,13 +1920,9 @@ local function schedule_auto_transition(bufnr, target_mode)
     local win_state = get_win_state(win)
 
     if target_mode == "source" then
-      if win_state and win_state.mode == "render" and win_state.source_buf == bufnr then
-        MdPreview.toggle()
-      end
-    else  -- "render"
-      if cur_buf == bufnr and (not win_state or win_state.mode ~= "render") then
-        MdPreview.toggle()
-      end
+      if win_state and win_state.mode == "render" and win_state.source_buf == bufnr then MdPreview.toggle() end
+    else -- "render"
+      if cur_buf == bufnr and (not win_state or win_state.mode ~= "render") then MdPreview.toggle() end
     end
   end, 50)
 end
@@ -1938,20 +1948,18 @@ function MdPreview.auto_on(opts)
   vim.api.nvim_create_autocmd("InsertLeave", {
     group = augroup,
     buffer = bufnr,
-    callback = function() schedule_auto_transition(bufnr, "render") end,
+    callback = function()
+      schedule_auto_transition(bufnr, "render")
+    end,
   })
 
   local win = vim.api.nvim_get_current_win()
   local win_state = get_win_state(win)
-  if not win_state or win_state.mode ~= "render" then
-    MdPreview.toggle(opts)
-  end
+  if not win_state or win_state.mode ~= "render" then MdPreview.toggle(opts) end
 
   -- Install Insert-entry keymaps on the render buffer (now created by toggle).
   local session = _toggle_sessions[bufnr]
-  if session and vim.api.nvim_buf_is_valid(session.buf) then
-    install_auto_insert_keymaps(session.buf)
-  end
+  if session and vim.api.nvim_buf_is_valid(session.buf) then install_auto_insert_keymaps(session.buf) end
 end
 
 --- Disable auto-toggle for the current buffer and, if the current window is
@@ -1975,9 +1983,7 @@ function MdPreview.auto_off()
 
   local win = vim.api.nvim_get_current_win()
   local win_state = get_win_state(win)
-  if win_state and win_state.mode == "render" and win_state.source_buf == bufnr then
-    MdPreview.toggle()
-  end
+  if win_state and win_state.mode == "render" and win_state.source_buf == bufnr then MdPreview.toggle() end
 end
 
 --- Flip auto-toggle state for the current buffer.
@@ -2009,148 +2015,159 @@ MdPreview.show_demo = function()
   local plugin_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h:h")
   local demo_img_dir = plugin_root .. "/assets/demo"
 
-  local demo_lines = vim.split(table.concat({
-    "## Markdown Rendering Features",
-    "",
-    "**Bold**, ~~strikethrough~~, `inline code`, and [links](https://neovim.io) — all rendered inline. Bare URLs like https://neovim.io stay clickable. Long ones like https://github.com/neovim/neovim/blob/master/src/nvim/api/buffer.c#L123-L456 are truncated. Obsidian ==highlight== and `%%comments%%` also work.",
-    "",
-    "### Code & Tables",
-    "",
-    "```lua",
-    'local function greet(name) return "Hello, " .. name end',
-    "-- This line is intentionally long to demonstrate that code lines exceeding the max width are truncated with an ellipsis indicator",
-    "```",
-    "",
-    "| Feature | Description | Syntax |",
-    "|---------|-------------|--------|",
-    "| **Bold** / ~~strike~~ | Inline formatting is rendered inside table cells | `**text**` / `~~text~~` |",
-    "| Truncation | Cells that exceed the available width are automatically truncated with an ellipsis | Long content is gracefully handled |",
-    "",
-    "### Lists",
-    "",
-    "- First item",
-    "- Second item with **bold** and `code`",
-    "  - Nested item",
-    "  - Another nested",
-    "    - Deeply nested",
-    "      - Back to level 0 style",
-    "- Back to top level",
-    "",
-    "1. Ordered first",
-    "2. Ordered second",
-    "  1. Nested ordered",
-    "  2. Nested second",
-    "3. Back to top",
-    "",
-    "- [ ] Unchecked task",
-    "- [x] Completed task",
-    "- [-] In-progress task",
-    "",
-    "### Callouts & Folds",
-    "",
-    "> [!NOTE]",
-    "> Standard callout. Five types: `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`.",
-    "",
-    "> [!TIP]- Foldable (collapsed)",
-    "> Hidden until you click the header. Supports **multiple lines**.",
-    "> Click the fold indicator to toggle.",
-    "",
-    "> [!WARNING]+ Foldable (expanded)",
-    "> Visible by default, click to collapse.",
-    "> ```lua",
-    "> local msg = 'Code blocks inside callouts get treesitter highlighting!'",
-    "> ```",
-    "",
-    "> [!custom] Custom types work too",
-    "> Any `[!type]` is rendered as a callout.",
-    "> - Lists inside callouts",
-    "> - Also get bullet symbols",
-    ">   - Including nested ones",
-    "> 1. Ordered lists too",
-    "> 2. Work just fine",
-    "",
-    "### Expandable Content",
-    "",
-    "```bash",
-    "# This line is intentionally very long to demonstrate the expandable code block feature — click the underlined … to see the full content and scroll horizontally",
-    "echo 'Click the … on truncated lines to expand, click again to collapse'",
-    "```",
-    "",
-    "### Collapsible Details",
-    "",
-    "<details>",
-    "<summary>Click to expand this section</summary>",
-    "",
-    "This content is hidden by default. It supports **bold**, `code`, and [links](https://neovim.io).",
-    "",
-    "</details>",
-    "",
-    "<details open>",
-    "<summary>Open by default</summary>",
-    "",
-    "The `open` attribute makes it expanded initially. Click to collapse.",
-    "",
-    "</details>",
-    "",
-    "### 日本語テキストの折り返し",
-    "",
-    "budoux.luaがインストールされていれば、BudouXによる自然な分節処理で日本語テキストを文節の区切りで改行します。未インストールの場合は1文字ずつ分割して折り返します。",
-    "",
-    "句読点「、」や閉じ括弧「)」が行頭に来ないよう禁則処理(JIS X 4051)を適用。開き括弧「(」は行末に残さず次の行へ送ります。",
-    "",
-    "> [!NOTE] 日本語コールアウト",
-    "> コールアウト内でも禁則処理は有効。budoux.luaがあればBudouXの分節処理も適用され、長い文章を自然な位置で折り返します。",
-    "",
-    "### Qiita Extensions",
-    "",
-    "```ruby:app/models/user.rb",
-    "class User < ApplicationRecord",
-    "  validates :name, presence: true",
-    "end",
-    "```",
-    "",
-    ":::note info",
-    "Qiitaのノート記法(info)です。`:::note info` で始まり `:::` で閉じます。",
-    ":::",
-    "",
-    ":::note warn",
-    "警告メッセージを表示できます。",
-    ":::",
-    "",
-    ":::note alert",
-    "重要な注意事項を強調できます。",
-    ":::",
-    "",
-    "### Images",
-    "",
-    "| PNG | JPEG | WebP | GIF | Animated GIF |",
-    "|-----|------|------|-----|--------------|",
-    "| ![PNG](" .. demo_img_dir .. "/test.png) | ![JPEG](" .. demo_img_dir .. "/test.jpg) | ![WebP](" .. demo_img_dir .. "/test.webp) | ![GIF](" .. demo_img_dir .. "/test.gif) | ![Animated GIF](" .. demo_img_dir .. "/test_animated.gif) |",
-    "",
-    "### Web Images",
-    "",
-    "| Static (http.cat) | Animated GIF (Nyan Cat) |",
-    "|--------------------|-----------------------|",
-    "| ![HTTP 200](https://http.cat/200.jpg) | ![Nyan Cat](https://media.giphy.com/media/sIIhZliB2McAo/giphy.gif) |",
-    "",
-    "### Video",
-    "",
-    '<video src="' .. demo_img_dir .. '/test.mp4" controls></video>',
-    "",
-    "### Mermaid Diagram",
-    "",
-    "```mermaid",
-    "graph LR",
-    "    A[Markdown] --> B[Parser]",
-    "    B --> C[ContentBuilder]",
-    "    C --> D[FloatWin]",
-    "    D --> E[Display]",
-    "```",
-  }, "\n"), "\n")
+  local demo_lines = vim.split(
+    table.concat({
+      "## Markdown Rendering Features",
+      "",
+      "**Bold**, ~~strikethrough~~, `inline code`, and [links](https://neovim.io) — all rendered inline. Bare URLs like https://neovim.io stay clickable. Long ones like https://github.com/neovim/neovim/blob/master/src/nvim/api/buffer.c#L123-L456 are truncated. Obsidian ==highlight== and `%%comments%%` also work.",
+      "",
+      "### Code & Tables",
+      "",
+      "```lua",
+      'local function greet(name) return "Hello, " .. name end',
+      "-- This line is intentionally long to demonstrate that code lines exceeding the max width are truncated with an ellipsis indicator",
+      "```",
+      "",
+      "| Feature | Description | Syntax |",
+      "|---------|-------------|--------|",
+      "| **Bold** / ~~strike~~ | Inline formatting is rendered inside table cells | `**text**` / `~~text~~` |",
+      "| Truncation | Cells that exceed the available width are automatically truncated with an ellipsis | Long content is gracefully handled |",
+      "",
+      "### Lists",
+      "",
+      "- First item",
+      "- Second item with **bold** and `code`",
+      "  - Nested item",
+      "  - Another nested",
+      "    - Deeply nested",
+      "      - Back to level 0 style",
+      "- Back to top level",
+      "",
+      "1. Ordered first",
+      "2. Ordered second",
+      "  1. Nested ordered",
+      "  2. Nested second",
+      "3. Back to top",
+      "",
+      "- [ ] Unchecked task",
+      "- [x] Completed task",
+      "- [-] In-progress task",
+      "",
+      "### Callouts & Folds",
+      "",
+      "> [!NOTE]",
+      "> Standard callout. Five types: `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`.",
+      "",
+      "> [!TIP]- Foldable (collapsed)",
+      "> Hidden until you click the header. Supports **multiple lines**.",
+      "> Click the fold indicator to toggle.",
+      "",
+      "> [!WARNING]+ Foldable (expanded)",
+      "> Visible by default, click to collapse.",
+      "> ```lua",
+      "> local msg = 'Code blocks inside callouts get treesitter highlighting!'",
+      "> ```",
+      "",
+      "> [!custom] Custom types work too",
+      "> Any `[!type]` is rendered as a callout.",
+      "> - Lists inside callouts",
+      "> - Also get bullet symbols",
+      ">   - Including nested ones",
+      "> 1. Ordered lists too",
+      "> 2. Work just fine",
+      "",
+      "### Expandable Content",
+      "",
+      "```bash",
+      "# This line is intentionally very long to demonstrate the expandable code block feature — click the underlined … to see the full content and scroll horizontally",
+      "echo 'Click the … on truncated lines to expand, click again to collapse'",
+      "```",
+      "",
+      "### Collapsible Details",
+      "",
+      "<details>",
+      "<summary>Click to expand this section</summary>",
+      "",
+      "This content is hidden by default. It supports **bold**, `code`, and [links](https://neovim.io).",
+      "",
+      "</details>",
+      "",
+      "<details open>",
+      "<summary>Open by default</summary>",
+      "",
+      "The `open` attribute makes it expanded initially. Click to collapse.",
+      "",
+      "</details>",
+      "",
+      "### 日本語テキストの折り返し",
+      "",
+      "budoux.luaがインストールされていれば、BudouXによる自然な分節処理で日本語テキストを文節の区切りで改行します。未インストールの場合は1文字ずつ分割して折り返します。",
+      "",
+      "句読点「、」や閉じ括弧「)」が行頭に来ないよう禁則処理(JIS X 4051)を適用。開き括弧「(」は行末に残さず次の行へ送ります。",
+      "",
+      "> [!NOTE] 日本語コールアウト",
+      "> コールアウト内でも禁則処理は有効。budoux.luaがあればBudouXの分節処理も適用され、長い文章を自然な位置で折り返します。",
+      "",
+      "### Qiita Extensions",
+      "",
+      "```ruby:app/models/user.rb",
+      "class User < ApplicationRecord",
+      "  validates :name, presence: true",
+      "end",
+      "```",
+      "",
+      ":::note info",
+      "Qiitaのノート記法(info)です。`:::note info` で始まり `:::` で閉じます。",
+      ":::",
+      "",
+      ":::note warn",
+      "警告メッセージを表示できます。",
+      ":::",
+      "",
+      ":::note alert",
+      "重要な注意事項を強調できます。",
+      ":::",
+      "",
+      "### Images",
+      "",
+      "| PNG | JPEG | WebP | GIF | Animated GIF |",
+      "|-----|------|------|-----|--------------|",
+      "| ![PNG]("
+        .. demo_img_dir
+        .. "/test.png) | ![JPEG]("
+        .. demo_img_dir
+        .. "/test.jpg) | ![WebP]("
+        .. demo_img_dir
+        .. "/test.webp) | ![GIF]("
+        .. demo_img_dir
+        .. "/test.gif) | ![Animated GIF]("
+        .. demo_img_dir
+        .. "/test_animated.gif) |",
+      "",
+      "### Web Images",
+      "",
+      "| Static (http.cat) | Animated GIF (Nyan Cat) |",
+      "|--------------------|-----------------------|",
+      "| ![HTTP 200](https://http.cat/200.jpg) | ![Nyan Cat](https://media.giphy.com/media/sIIhZliB2McAo/giphy.gif) |",
+      "",
+      "### Video",
+      "",
+      '<video src="' .. demo_img_dir .. '/test.mp4" controls></video>',
+      "",
+      "### Mermaid Diagram",
+      "",
+      "```mermaid",
+      "graph LR",
+      "    A[Markdown] --> B[Parser]",
+      "    B --> C[ContentBuilder]",
+      "    C --> D[FloatWin]",
+      "    D --> E[Display]",
+      "```",
+    }, "\n"),
+    "\n"
+  )
 
-  if demo_float_win:close_if_valid() then
-    return
-  end
+  if demo_float_win:close_if_valid() then return end
 
   local fold_state = {}
   local expand_state = {}
@@ -2178,7 +2195,10 @@ MdPreview.show_demo = function()
     vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
     local any_expanded = false
     for _, v in pairs(expand_state) do
-      if v then any_expanded = true; break end
+      if v then
+        any_expanded = true
+        break
+      end
     end
     vim.api.nvim_set_option_value("wrap", not any_expanded, { win = win })
     content = new_content

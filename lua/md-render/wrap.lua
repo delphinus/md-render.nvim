@@ -9,29 +9,113 @@ local M = {}
 local NO_BREAK_START = {}
 for _, ch in ipairs {
   -- Cl.02 終わり括弧類
-  "）", "〕", "］", "｝", "〉", "》", "」", "』", "】", "｠", "〙", "〗", "»",
+  "）",
+  "〕",
+  "］",
+  "｝",
+  "〉",
+  "》",
+  "」",
+  "』",
+  "】",
+  "｠",
+  "〙",
+  "〗",
+  "»",
   -- Cl.03 ハイフン類
-  "‐", "〜",
+  "‐",
+  "〜",
   -- Cl.04 区切り約物
-  "！", "？", "‼", "⁇", "⁈", "⁉",
+  "！",
+  "？",
+  "‼",
+  "⁇",
+  "⁈",
+  "⁉",
   -- Cl.05 中点類
-  "・", "：", "；",
+  "・",
+  "：",
+  "；",
   -- Cl.06 句点類
-  "。", "．",
+  "。",
+  "．",
   -- Cl.07 読点類
-  "、", "，",
+  "、",
+  "，",
   -- Cl.08 繰返し記号
-  "ゝ", "ゞ", "ヽ", "ヾ", "々", "〻",
+  "ゝ",
+  "ゞ",
+  "ヽ",
+  "ヾ",
+  "々",
+  "〻",
   -- Cl.09 長音記号
   "ー",
   -- Cl.10 小書きの仮名
-  "ぁ", "ぃ", "ぅ", "ぇ", "ぉ", "っ", "ゃ", "ゅ", "ょ", "ゎ", "ゕ", "ゖ",
-  "ァ", "ィ", "ゥ", "ェ", "ォ", "ッ", "ャ", "ュ", "ョ", "ヮ", "ヵ", "ヶ",
-  "ㇰ", "ㇱ", "ㇲ", "ㇳ", "ㇴ", "ㇵ", "ㇶ", "ㇷ", "ㇸ", "ㇹ", "ㇺ", "ㇻ", "ㇼ", "ㇽ", "ㇾ", "ㇿ",
+  "ぁ",
+  "ぃ",
+  "ぅ",
+  "ぇ",
+  "ぉ",
+  "っ",
+  "ゃ",
+  "ゅ",
+  "ょ",
+  "ゎ",
+  "ゕ",
+  "ゖ",
+  "ァ",
+  "ィ",
+  "ゥ",
+  "ェ",
+  "ォ",
+  "ッ",
+  "ャ",
+  "ュ",
+  "ョ",
+  "ヮ",
+  "ヵ",
+  "ヶ",
+  "ㇰ",
+  "ㇱ",
+  "ㇲ",
+  "ㇳ",
+  "ㇴ",
+  "ㇵ",
+  "ㇶ",
+  "ㇷ",
+  "ㇸ",
+  "ㇹ",
+  "ㇺ",
+  "ㇻ",
+  "ㇼ",
+  "ㇽ",
+  "ㇾ",
+  "ㇿ",
   -- 半角カタカナ
-  "｡", "､", "｣", "ｧ", "ｨ", "ｩ", "ｪ", "ｫ", "ｯ", "ｬ", "ｭ", "ｮ", "ｰ",
+  "｡",
+  "､",
+  "｣",
+  "ｧ",
+  "ｨ",
+  "ｩ",
+  "ｪ",
+  "ｫ",
+  "ｯ",
+  "ｬ",
+  "ｭ",
+  "ｮ",
+  "ｰ",
   -- ASCII (half-width) punctuation
-  ")", "]", "}", "!", "?", ",", ".", ";", ":",
+  ")",
+  "]",
+  "}",
+  "!",
+  "?",
+  ",",
+  ".",
+  ";",
+  ":",
 } do
   NO_BREAK_START[ch] = true
 end
@@ -41,11 +125,25 @@ end
 local NO_BREAK_END = {}
 for _, ch in ipairs {
   -- Cl.01 始め括弧類
-  "（", "〔", "［", "｛", "〈", "《", "「", "『", "【", "｟", "〘", "〖", "«",
+  "（",
+  "〔",
+  "［",
+  "｛",
+  "〈",
+  "《",
+  "「",
+  "『",
+  "【",
+  "｟",
+  "〘",
+  "〖",
+  "«",
   -- 半角カタカナ
   "｢",
   -- ASCII (half-width) punctuation
-  "(", "[", "{",
+  "(",
+  "[",
+  "{",
 } do
   NO_BREAK_END[ch] = true
 end
@@ -118,9 +216,7 @@ local budoux_model = budoux_parser and budoux_parser.model or nil
 ---@param min_chars? integer Minimum characters per segment (default 4)
 ---@return string[] chunks
 local function split_katakana_compound(text, min_chars)
-  if not budoux_model then
-    return { text }
-  end
+  if not budoux_model then return { text } end
   min_chars = min_chars or 4
 
   local INVALID = "\xef\xbf\xbd"
@@ -128,9 +224,7 @@ local function split_katakana_compound(text, min_chars)
   for c in text:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
     chars[#chars + 1] = c
   end
-  if #chars <= min_chars * 2 then
-    return { text }
-  end
+  if #chars <= min_chars * 2 then return { text } end
 
   -- Score bonus for boundaries after "ン" (moraic nasal).
   -- "ン" almost always ends a morpheme in katakana loanwords, making it
@@ -141,10 +235,26 @@ local function split_katakana_compound(text, min_chars)
   local moraic_n_bonus = math.floor(budoux_model.base_score * 0.4)
   local dakuten = {}
   for _, ch in ipairs {
-    "ガ", "ギ", "グ", "ゲ", "ゴ",
-    "ザ", "ジ", "ズ", "ゼ", "ゾ",
-    "ダ", "ヂ", "ヅ", "デ", "ド",
-    "バ", "ビ", "ブ", "ベ", "ボ",
+    "ガ",
+    "ギ",
+    "グ",
+    "ゲ",
+    "ゴ",
+    "ザ",
+    "ジ",
+    "ズ",
+    "ゼ",
+    "ゾ",
+    "ダ",
+    "ヂ",
+    "ヅ",
+    "デ",
+    "ド",
+    "バ",
+    "ビ",
+    "ブ",
+    "ベ",
+    "ボ",
   } do
     dakuten[ch] = true
   end
@@ -175,18 +285,14 @@ local function split_katakana_compound(text, min_chars)
     if budoux_model.TW4 then score = score + (budoux_model.TW4[w1 .. w2 .. w3] or 0) end
 
     -- Boost score for boundaries after "ン", unless followed by voiced consonant
-    if p3 == "ン" and not dakuten[w1] then
-      score = score + moraic_n_bonus
-    end
+    if p3 == "ン" and not dakuten[w1] then score = score + moraic_n_bonus end
 
     -- Penalty for splitting right after ッ + consonant kana.
     -- "ッ" (geminate) bonds tightly with the following kana, and the next
     -- character often continues the same morpheme (e.g. シンタック|ス is wrong;
     -- シンタックス|ハイライト is correct).  Strong boundaries like
     -- コードブロック|ヘッダ still pass because their base score is high enough.
-    if i >= 3 and chars[i - 2] == "ッ" then
-      score = score - math.floor(budoux_model.base_score * 0.35)
-    end
+    if i >= 3 and chars[i - 2] == "ッ" then score = score - math.floor(budoux_model.base_score * 0.35) end
 
     boundary_scores[i] = score
   end
@@ -206,12 +312,19 @@ local function split_katakana_compound(text, min_chars)
   for i = 2, #chars do
     local w1 = chars[i]
     -- Don't split before small kana, ー, ッ, ン (these attach to preceding char)
-    if not NO_BREAK_START[w1] and w1 ~= "ッ" and w1 ~= "ン" and w1 ~= "ー"
-        and boundary_scores[i] > score_threshold then
+    if
+      not NO_BREAK_START[w1]
+      and w1 ~= "ッ"
+      and w1 ~= "ン"
+      and w1 ~= "ー"
+      and boundary_scores[i] > score_threshold
+    then
       candidates[#candidates + 1] = { pos = i, score = boundary_scores[i] }
     end
   end
-  table.sort(candidates, function(a, b) return a.score > b.score end)
+  table.sort(candidates, function(a, b)
+    return a.score > b.score
+  end)
 
   -- Greedily select split positions (highest score first) that maintain min_chars
   local selected = {}
@@ -235,9 +348,7 @@ local function split_katakana_compound(text, min_chars)
         break
       end
     end
-    if ok then
-      selected[#selected + 1] = cand.pos
-    end
+    if ok then selected[#selected + 1] = cand.pos end
   end
   table.sort(selected)
 
@@ -323,9 +434,7 @@ local function split_by_script(chunk)
   for i = 2, #chars do
     local cls = script_class(chars[i])
     local should_split = false
-    if chars[i - 1] == "・" and current ~= "・" then
-      should_split = true
-    end
+    if chars[i - 1] == "・" and current ~= "・" then should_split = true end
     if cls ~= "O" and cls ~= prev_cls then
       if prev_cls == "K" then
         should_split = true
@@ -356,9 +465,7 @@ end
 ---@return boolean
 local function is_katakana_only(s)
   for c in s:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-    if script_class(c) ~= "K" then
-      return false
-    end
+    if script_class(c) ~= "K" then return false end
   end
   return true
 end
@@ -409,10 +516,16 @@ end
 
 --- Vowel lookup for English syllable-like word splitting.
 local ascii_vowels = {
-  [string.byte "a"] = true, [string.byte "e"] = true, [string.byte "i"] = true,
-  [string.byte "o"] = true, [string.byte "u"] = true,
-  [string.byte "A"] = true, [string.byte "E"] = true, [string.byte "I"] = true,
-  [string.byte "O"] = true, [string.byte "U"] = true,
+  [string.byte "a"] = true,
+  [string.byte "e"] = true,
+  [string.byte "i"] = true,
+  [string.byte "o"] = true,
+  [string.byte "u"] = true,
+  [string.byte "A"] = true,
+  [string.byte "E"] = true,
+  [string.byte "I"] = true,
+  [string.byte "O"] = true,
+  [string.byte "U"] = true,
 }
 
 --- Split a long ASCII word into syllable-like segments at vowel→consonant
@@ -437,9 +550,14 @@ local function split_ascii_syllables(word, word_start, leading_space)
     local b_next = word:byte(i + 1)
     -- Break after a vowel when followed by an alphabetic consonant,
     -- ensuring at least 2 chars remain on each side
-    if ascii_vowels[b] and b_next and not ascii_vowels[b_next]
-        and ((b_next >= 65 and b_next <= 90) or (b_next >= 97 and b_next <= 122))
-        and i - seg_start >= 1 and #word - i >= 2 then
+    if
+      ascii_vowels[b]
+      and b_next
+      and not ascii_vowels[b_next]
+      and ((b_next >= 65 and b_next <= 90) or (b_next >= 97 and b_next <= 122))
+      and i - seg_start >= 1
+      and #word - i >= 2
+    then
       table.insert(result, {
         text = word:sub(seg_start, i),
         byte_pos = word_start + seg_start - 1,
@@ -477,7 +595,10 @@ local function split_segments(text)
 
   local function flush_ascii()
     if current_word ~= "" then
-      table.insert(segments, { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space })
+      table.insert(
+        segments,
+        { text = current_word, byte_pos = current_word_start, has_leading_space = has_leading_space }
+      )
       current_word = ""
       has_leading_space = false
     end
@@ -554,9 +675,7 @@ local function split_segments(text)
     else
       -- ASCII/narrow character: accumulate into word
       flush_cjk()
-      if current_word == "" then
-        current_word_start = byte_pos
-      end
+      if current_word == "" then current_word_start = byte_pos end
       current_word = current_word .. char
       -- Allow line breaking after hyphens in compound words (e.g. "mission-code-job")
       -- and after path/query separators in URLs and paths
@@ -564,8 +683,11 @@ local function split_segments(text)
       -- word (including the separator) as a segment. Without this, long URLs in
       -- inline code spans become a single unbreakable token and force the float
       -- window to widen.
-      if (char == "-" or char == "/" or char == "?" or char == "&")
-          and #current_word > 1 and current_word:sub(-2, -2):match "[%w]" then
+      if
+        (char == "-" or char == "/" or char == "?" or char == "&")
+        and #current_word > 1
+        and current_word:sub(-2, -2):match "[%w]"
+      then
         flush_ascii()
       end
     end
@@ -608,9 +730,7 @@ function M.wrap_words(text, max_width)
     if s == "" then return false end
     local lc = last_char(s)
     if NO_BREAK_END[lc] then return true end
-    if AMBIGUOUS_QUOTE[lc] and quote_roles[byte_start + #s - #lc] == "open" then
-      return true
-    end
+    if AMBIGUOUS_QUOTE[lc] and quote_roles[byte_start + #s - #lc] == "open" then return true end
     return false
   end
 

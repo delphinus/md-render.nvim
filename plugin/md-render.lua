@@ -1,6 +1,4 @@
-if vim.g.loaded_md_render then
-  return
-end
+if vim.g.loaded_md_render then return end
 vim.g.loaded_md_render = true
 
 vim.keymap.set("n", "<Plug>(md-render-preview)", function()

@@ -102,7 +102,7 @@ local function parse_kitty_sequences(data)
   while pos <= #data do
     local s, e, content = data:find("\x1b_G(.-)\x1b\\", pos)
     if not s then break end
-    local params, payload = content:match("^([^;]*);(.*)$")
+    local params, payload = content:match "^([^;]*);(.*)$"
     if not params then
       params = content
       payload = ""
@@ -116,7 +116,7 @@ end
 --- Parse params string "a=t,f=100,..." into a table { a="t", f="100", ... }
 local function parse_params(params_str)
   local t = {}
-  for k, v in params_str:gmatch("([%w_]+)=([^,]*)") do
+  for k, v in params_str:gmatch "([%w_]+)=([^,]*)" do
     t[k] = v
   end
   return t
@@ -268,7 +268,9 @@ test("put_image: generates correct placement sequence", function()
   local buf = vim.api.nvim_create_buf(false, true)
   -- Fill buffer with enough lines for the image
   local lines = {}
-  for i = 1, 20 do lines[i] = string.rep(" ", 40) end
+  for i = 1, 20 do
+    lines[i] = string.rep(" ", 40)
+  end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   local win = vim.api.nvim_open_win(buf, false, {
     relative = "editor",
@@ -310,7 +312,9 @@ test("put_image: skips image outside visible area (below)", function()
 
   local buf = vim.api.nvim_create_buf(false, true)
   local lines = {}
-  for i = 1, 5 do lines[i] = string.rep(" ", 40) end
+  for i = 1, 5 do
+    lines[i] = string.rep(" ", 40)
+  end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   local win = vim.api.nvim_open_win(buf, false, {
     relative = "editor",
@@ -351,7 +355,9 @@ test("put_image: bottom crop emits full source rectangle", function()
 
   local buf = vim.api.nvim_create_buf(false, true)
   local lines = {}
-  for i = 1, 30 do lines[i] = string.rep(" ", 80) end
+  for i = 1, 30 do
+    lines[i] = string.rep(" ", 80)
+  end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   local win = vim.api.nvim_open_win(buf, false, {
     relative = "editor",
@@ -391,7 +397,9 @@ test("put_image: top crop generates y= and h= parameters", function()
 
   local buf = vim.api.nvim_create_buf(false, true)
   local lines = {}
-  for i = 1, 10 do lines[i] = string.rep(" ", 40) end
+  for i = 1, 10 do
+    lines[i] = string.rep(" ", 40)
+  end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   local win = vim.api.nvim_open_win(buf, false, {
     relative = "editor",
@@ -471,7 +479,7 @@ end)
 
 test("delete_images: generates multiple delete sequences", function()
   setup_capture()
-  image.delete_images({ 10, 20, 30 })
+  image.delete_images { 10, 20, 30 }
 
   local output = captured_output()
   local seqs = parse_kitty_sequences(output)
@@ -496,7 +504,7 @@ end)
 
 test("delete_images: does nothing for empty list", function()
   setup_capture()
-  image.delete_images({})
+  image.delete_images {}
   assert_eq(#captured, 0, "should not write anything for empty list")
   teardown()
 end)
@@ -525,7 +533,7 @@ test("image_dimensions: reads PNG dimensions correctly", function()
 end)
 
 test("image_dimensions: returns nil for non-existent file", function()
-  local w, h = image.image_dimensions("/nonexistent/path.png")
+  local w, h = image.image_dimensions "/nonexistent/path.png"
   assert_nil(w, "width should be nil for missing file")
   assert_nil(h, "height should be nil for missing file")
 end)
@@ -604,11 +612,11 @@ end)
 -- ============================================================================
 
 test("is_badge_url: detects shields.io", function()
-  assert_true(image.is_badge_url("https://img.shields.io/badge/foo-bar"), "shields.io should be badge")
+  assert_true(image.is_badge_url "https://img.shields.io/badge/foo-bar", "shields.io should be badge")
 end)
 
 test("is_badge_url: normal URL is not badge", function()
-  assert_true(not image.is_badge_url("https://example.com/photo.png"), "normal URL should not be badge")
+  assert_true(not image.is_badge_url "https://example.com/photo.png", "normal URL should not be badge")
 end)
 
 -- ============================================================================
@@ -616,15 +624,15 @@ end)
 -- ============================================================================
 
 test("is_url: detects http URL", function()
-  assert_true(image.is_url("http://example.com/img.png"), "http should be URL")
+  assert_true(image.is_url "http://example.com/img.png", "http should be URL")
 end)
 
 test("is_url: detects https URL", function()
-  assert_true(image.is_url("https://example.com/img.png"), "https should be URL")
+  assert_true(image.is_url "https://example.com/img.png", "https should be URL")
 end)
 
 test("is_url: rejects file path", function()
-  assert_true(not image.is_url("/path/to/file.png"), "file path should not be URL")
+  assert_true(not image.is_url "/path/to/file.png", "file path should not be URL")
 end)
 
 -- ============================================================================
@@ -684,12 +692,14 @@ test("get_cell_size: returns nil or table without crashing (no override)", funct
   -- In headless nvim stdout is not a TTY and there's no controlling terminal,
   -- so result is normally nil. In a real terminal it returns a {cell_w,cell_h}
   -- table. Both are valid; the contract is "must not crash".
-  assert_true(result == nil or (type(result) == "table" and result.cell_w and result.cell_h),
-    "get_cell_size should return nil or {cell_w, cell_h}")
+  assert_true(
+    result == nil or (type(result) == "table" and result.cell_w and result.cell_h),
+    "get_cell_size should return nil or {cell_w, cell_h}"
+  )
 end)
 
 test("supports_kitty: returns boolean without crashing", function()
-  image._set_kitty_supported(nil)  -- clear cache so detection runs
+  image._set_kitty_supported(nil) -- clear cache so detection runs
   local result = image.supports_kitty()
   assert_true(result == true or result == false, "supports_kitty should return a boolean")
   image._set_kitty_supported(nil)
@@ -709,15 +719,14 @@ if ffi.os == "Linux" then
   pcall(ffi.cdef, "int open(const char *path, int flags); int close(int fd);")
 
   test("Linux: winsize struct size is 8 bytes", function()
-    assert_eq(ffi.sizeof("winsize"), 8,
-      "winsize should be 8 bytes (4 unsigned shorts)")
+    assert_eq(ffi.sizeof "winsize", 8, "winsize should be 8 bytes (4 unsigned shorts)")
   end)
 
   test("Linux: ioctl(TIOCGWINSZ) on non-TTY fd fails cleanly", function()
     local TIOCGWINSZ_LINUX = 0x5413
     local fd = ffi.C.open("/dev/null", 0) -- O_RDONLY
     assert_true(fd >= 0, "open /dev/null should succeed")
-    local sz = ffi.new("winsize")
+    local sz = ffi.new "winsize"
     local rc = ffi.C.ioctl(fd, TIOCGWINSZ_LINUX, sz)
     -- /dev/null is not a TTY, so ioctl must fail (rc != 0). The contract is
     -- "must not segfault"; a clean failure is the success case.
@@ -731,20 +740,18 @@ end
 -- ============================================================================
 
 local function has_convert_tool()
-  return vim.fn.executable("sips") == 1
-    or vim.fn.executable("ffmpeg") == 1
-    or vim.fn.executable("magick") == 1
+  return vim.fn.executable "sips" == 1 or vim.fn.executable "ffmpeg" == 1 or vim.fn.executable "magick" == 1
 end
 
 --- Convert the PNG fixture to a temporary JPEG so we have a non-native source.
 --- Returns nil if no conversion tool is available.
 local function make_test_jpeg()
   local out = vim.fn.tempname() .. ".jpg"
-  if vim.fn.executable("sips") == 1 then
+  if vim.fn.executable "sips" == 1 then
     vim.system({ "sips", "-s", "format", "jpeg", test_png, "--out", out }, { text = true }):wait()
-  elseif vim.fn.executable("ffmpeg") == 1 then
+  elseif vim.fn.executable "ffmpeg" == 1 then
     vim.system({ "ffmpeg", "-y", "-i", test_png, out }, { text = true }):wait()
-  elseif vim.fn.executable("magick") == 1 then
+  elseif vim.fn.executable "magick" == 1 then
     vim.system({ "magick", test_png, out }, { text = true }):wait()
   else
     return nil
@@ -757,7 +764,7 @@ if has_convert_tool() then
   test("ensure_png: caches converted JPEG to disk", function()
     local jpeg = make_test_jpeg()
     if not jpeg then return end
-    local cache_dir = vim.fn.stdpath("cache") .. "/md-render/converted"
+    local cache_dir = vim.fn.stdpath "cache" .. "/md-render/converted"
     -- Clean cache for this hash so the count is meaningful
     vim.fn.mkdir(cache_dir, "p")
     local hash = vim.fn.sha256(jpeg):sub(1, 16)
@@ -808,7 +815,7 @@ if has_convert_tool() then
   test("ensure_png: mtime change invalidates cache", function()
     local jpeg = make_test_jpeg()
     if not jpeg then return end
-    local cache_dir = vim.fn.stdpath("cache") .. "/md-render/converted"
+    local cache_dir = vim.fn.stdpath "cache" .. "/md-render/converted"
     vim.fn.mkdir(cache_dir, "p")
     local hash = vim.fn.sha256(jpeg):sub(1, 16)
     for _, p in ipairs(vim.fn.glob(cache_dir .. "/" .. hash .. "_*", false, true)) do
@@ -837,6 +844,4 @@ end
 -- ============================================================================
 
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
-if fail_count > 0 then
-  os.exit(1)
-end
+if fail_count > 0 then os.exit(1) end

@@ -60,7 +60,7 @@ end)
 
 local function make_buf_with_url(line_text, url, start_col, end_col)
   local buf = vim.api.nvim_create_buf(false, true)
-  local ns = vim.api.nvim_create_namespace("url_hover_test")
+  local ns = vim.api.nvim_create_namespace "url_hover_test"
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { line_text })
   vim.api.nvim_buf_set_extmark(buf, ns, 0, start_col, {
     end_col = end_col,
@@ -97,7 +97,7 @@ end)
 
 test("url_at_mouse: returns nil when extmark has no URL", function()
   local buf = vim.api.nvim_create_buf(false, true)
-  local ns = vim.api.nvim_create_namespace("url_hover_test2")
+  local ns = vim.api.nvim_create_namespace "url_hover_test2"
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Some text" })
   vim.api.nvim_buf_set_extmark(buf, ns, 0, 0, { end_col = 4, hl_group = "Comment" })
   assert_eq(internal.url_at_mouse({ winid = 1, line = 1, column = 2 }, buf, ns), nil, "non-URL extmark ignored")
@@ -159,9 +159,14 @@ end)
 test("attach: registers window for hover", function()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "x" })
-  local ns = vim.api.nvim_create_namespace("attach_test")
+  local ns = vim.api.nvim_create_namespace "attach_test"
   local win = vim.api.nvim_open_win(buf, false, {
-    relative = "editor", width = 5, height = 1, row = 0, col = 0, style = "minimal",
+    relative = "editor",
+    width = 5,
+    height = 1,
+    row = 0,
+    col = 0,
+    style = "minimal",
   })
   UrlHover.attach(buf, ns, win)
   assert_eq(internal.registered[win] ~= nil, true, "window registered")
@@ -170,12 +175,12 @@ test("attach: registers window for hover", function()
 
   vim.api.nvim_win_close(win, true)
   -- WinClosed autocmd should clear registration
-  vim.wait(50, function() return internal.registered[win] == nil end)
+  vim.wait(50, function()
+    return internal.registered[win] == nil
+  end)
   assert_eq(internal.registered[win], nil, "WinClosed cleared registration")
 end)
 
 -- Summary
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
-if fail_count > 0 then
-  os.exit(1)
-end
+if fail_count > 0 then os.exit(1) end

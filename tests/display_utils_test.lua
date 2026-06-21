@@ -65,11 +65,7 @@ end)
 test("resolve_lang honors vim.treesitter.language.register", function()
   -- Simulate a user-registered alias and confirm it wins over the literal name.
   vim.treesitter.language.register("markdown", "custom_md_lang")
-  assert_eq(
-    display_utils._resolve_lang "custom_md_lang",
-    "markdown",
-    "registered alias custom_md_lang -> markdown"
-  )
+  assert_eq(display_utils._resolve_lang "custom_md_lang", "markdown", "registered alias custom_md_lang -> markdown")
 end)
 
 print(string.format("display_utils_test: %d passed, %d failed", pass_count, fail_count))

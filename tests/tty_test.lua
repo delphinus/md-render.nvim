@@ -48,7 +48,7 @@ pcall(ffi.cdef, "int open(const char *path, int flags); int close(int fd);")
 test("isatty returns 0 for a regular file fd", function()
   local tmpfile = os.tmpname()
   local f = io.open(tmpfile, "w")
-  f:write("test")
+  f:write "test"
   f:close()
   local fd = ffi.C.open(tmpfile, 0) -- O_RDONLY
   assert_true(fd >= 0, "open regular file should succeed")
@@ -60,7 +60,7 @@ end)
 test("ttyname returns nil for a non-tty fd", function()
   local tmpfile = os.tmpname()
   local f = io.open(tmpfile, "w")
-  f:write("test")
+  f:write "test"
   f:close()
   local fd = ffi.C.open(tmpfile, 0)
   local name = ffi.C.ttyname(fd)
@@ -75,8 +75,10 @@ test("_detect_direct returns nil in headless mode", function()
   tty.reset()
   local result = tty._detect_direct()
   -- result can be nil (headless) or a string (real terminal) — both are valid
-  assert_true(result == nil or type(result) == "string",
-    "_detect_direct should return nil or string, got: " .. type(tostring(result)))
+  assert_true(
+    result == nil or type(result) == "string",
+    "_detect_direct should return nil or string, got: " .. type(tostring(result))
+  )
 end)
 
 test("get_tty_path caches result", function()
@@ -100,15 +102,14 @@ test("_detect_socket_peer returns nil when no connected sockets", function()
   -- Just verify it doesn't crash and returns nil or a string
   tty.reset()
   local result = tty._detect_socket_peer()
-  assert_true(result == nil or type(result) == "string",
-    "_detect_socket_peer should return nil or string")
+  assert_true(result == nil or type(result) == "string", "_detect_socket_peer should return nil or string")
 end)
 
 test("_get_socket_peer_pid returns nil for non-socket fd", function()
   pcall(ffi.cdef, "int open(const char *path, int flags); int close(int fd);")
   local tmpfile = os.tmpname()
   local f = io.open(tmpfile, "w")
-  f:write("test")
+  f:write "test"
   f:close()
   local fd = ffi.C.open(tmpfile, 0)
   local peer = tty._get_socket_peer_pid(fd)
@@ -123,12 +124,11 @@ end)
 
 if ffi.os == "OSX" then
   test("macOS: proc_bsdinfo struct size is 136 bytes", function()
-    assert_eq(ffi.sizeof("struct md_proc_bsdinfo"), 136,
-      "proc_bsdinfo should be 136 bytes (validates struct layout)")
+    assert_eq(ffi.sizeof "struct md_proc_bsdinfo", 136, "proc_bsdinfo should be 136 bytes (validates struct layout)")
   end)
 
   test("macOS: proc_pidinfo succeeds for own pid", function()
-    local info = ffi.new("struct md_proc_bsdinfo")
+    local info = ffi.new "struct md_proc_bsdinfo"
     local pid = vim.fn.getpid()
     local size = ffi.C.proc_pidinfo(pid, 3, 0, info, ffi.sizeof(info))
     assert_true(size > 0, "proc_pidinfo should return positive size for own pid")
@@ -137,8 +137,10 @@ if ffi.os == "OSX" then
 
   test("macOS: _get_pid_tty_darwin returns nil or string for own pid", function()
     local result = tty._get_pid_tty_darwin(vim.fn.getpid())
-    assert_true(result == nil or type(result) == "string",
-      "_get_pid_tty_darwin should return nil (headless) or string (terminal)")
+    assert_true(
+      result == nil or type(result) == "string",
+      "_get_pid_tty_darwin should return nil (headless) or string (terminal)"
+    )
   end)
 
   test("macOS: devname returns string for valid dev", function()
@@ -167,13 +169,11 @@ if ffi.os == "Linux" then
   test("Linux: _get_pid_tty_linux parses stat correctly", function()
     local result = tty._get_pid_tty_linux(vim.fn.getpid())
     -- In headless mode, tty_nr is likely 0, so result should be nil
-    assert_true(result == nil or type(result) == "string",
-      "_get_pid_tty_linux should return nil (no tty) or string")
+    assert_true(result == nil or type(result) == "string", "_get_pid_tty_linux should return nil (no tty) or string")
   end)
 
   test("Linux: ucred struct size is 12 bytes", function()
-    assert_eq(ffi.sizeof("struct md_ucred"), 12,
-      "ucred should be 12 bytes (pid + uid + gid)")
+    assert_eq(ffi.sizeof "struct md_ucred", 12, "ucred should be 12 bytes (pid + uid + gid)")
   end)
 end
 
@@ -182,6 +182,4 @@ end
 -- ============================================================================
 
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
-if fail_count > 0 then
-  os.exit(1)
-end
+if fail_count > 0 then os.exit(1) end

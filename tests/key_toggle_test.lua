@@ -205,6 +205,4 @@ test("<CR> still closes when explicitly a close key", function()
 end)
 
 print(string.format("key_toggle_test: %d passed, %d failed", pass_count, fail_count))
-if fail_count > 0 then
-  os.exit(1)
-end
+if fail_count > 0 then os.exit(1) end
