@@ -28,9 +28,7 @@ local state = {
 local augroup_initialized = false
 
 local function ensure_hover_buf()
-  if state.hover_buf and vim.api.nvim_buf_is_valid(state.hover_buf) then
-    return state.hover_buf
-  end
+  if state.hover_buf and vim.api.nvim_buf_is_valid(state.hover_buf) then return state.hover_buf end
   state.hover_buf = vim.api.nvim_create_buf(false, true)
   vim.bo[state.hover_buf].bufhidden = "hide"
   return state.hover_buf
@@ -89,9 +87,7 @@ end
 ---@param url string
 ---@param source_win integer
 local function show_hover(url, source_win)
-  if state.current_url == url and state.current_win == source_win then
-    return
-  end
+  if state.current_url == url and state.current_win == source_win then return end
 
   local max_width = math.max(1, math.floor(vim.o.columns / 2))
   local display = truncate_url(url, max_width)
@@ -145,19 +141,14 @@ local function url_at_mouse(mouse, buf, ns)
   local line_count = vim.api.nvim_buf_line_count(buf)
   if line >= line_count then return nil end
 
-  local ok, marks = pcall(
-    vim.api.nvim_buf_get_extmarks,
-    buf, ns, { line, 0 }, { line + 1, 0 }, { details = true }
-  )
+  local ok, marks = pcall(vim.api.nvim_buf_get_extmarks, buf, ns, { line, 0 }, { line + 1, 0 }, { details = true })
   if not ok then return nil end
 
   for _, mark in ipairs(marks) do
     local _, _, start_col, details = unpack(mark)
     if details and details.url then
       local end_col = details.end_col or (start_col + 1)
-      if col >= start_col and col < end_col then
-        return details.url
-      end
+      if col >= start_col and col < end_col then return details.url end
     end
   end
   return nil
@@ -228,9 +219,7 @@ function M.attach(buf, ns, win)
     callback = function()
       registered[win] = nil
       cancel_pending()
-      if state.current_win == win then
-        close_hover()
-      end
+      if state.current_win == win then close_hover() end
     end,
   })
 end

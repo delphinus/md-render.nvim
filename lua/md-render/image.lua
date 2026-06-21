@@ -14,8 +14,8 @@
 local M = {}
 
 local uv = vim.uv or vim.loop
-local ffi = require("ffi")
-local tty_mod = require("md-render.tty")
+local ffi = require "ffi"
+local tty_mod = require "md-render.tty"
 
 local IS_WINDOWS = ffi.os == "Windows"
 
@@ -60,14 +60,10 @@ function M.flush_batch()
   -- Pop parent batch if nested
   if _batch_stack and #_batch_stack > 0 then
     _batch_buffer = table.remove(_batch_stack)
-    if data ~= "" then
-      table.insert(_batch_buffer, data)
-    end
+    if data ~= "" then table.insert(_batch_buffer, data) end
   else
     _batch_buffer = nil
-    if data ~= "" then
-      term_write(data)
-    end
+    if data ~= "" then term_write(data) end
   end
 end
 
@@ -79,12 +75,12 @@ end
 --- and renders it atomically when end_sync_update() is called.
 --- Supported by WezTerm, Kitty, foot, and others.
 function M.begin_sync_update()
-  term_write("\x1b[?2026h")
+  term_write "\x1b[?2026h"
 end
 
 --- End synchronized update and flush buffered output to screen.
 function M.end_sync_update()
-  term_write("\x1b[?2026l")
+  term_write "\x1b[?2026l"
 end
 
 -- ============================================================================
@@ -97,22 +93,22 @@ local function ensure_ffi()
   _ffi_declared = true
   -- ioctl/winsize are POSIX-only; Windows has no equivalent in MSVCRT.
   if IS_WINDOWS then return end
-  ffi.cdef([[
+  ffi.cdef [[
     typedef struct { unsigned short row; unsigned short col; unsigned short xpixel; unsigned short ypixel; } winsize;
     int ioctl(int, unsigned long, ...);
     int open(const char *path, int flags);
     int close(int fd);
-  ]])
+  ]]
 end
 
-local TIOCGWINSZ = (vim.fn.has("mac") == 1 or vim.fn.has("bsd") == 1) and 0x40087468 or 0x5413
+local TIOCGWINSZ = (vim.fn.has "mac" == 1 or vim.fn.has "bsd" == 1) and 0x40087468 or 0x5413
 
 ---@return { cell_w: number, cell_h: number }?
 function M.get_cell_size()
   if M._test_cell_size then return M._test_cell_size end
   if IS_WINDOWS then return nil end
   ensure_ffi()
-  local sz = ffi.new("winsize")
+  local sz = ffi.new "winsize"
   -- Try stdout (fd 1) first; after :restart it may be /dev/null,
   -- so fall back to opening the discovered TTY device.
   if ffi.C.ioctl(1, TIOCGWINSZ, sz) ~= 0 then
@@ -144,13 +140,18 @@ local function read_header(path, n)
   return data
 end
 
-local function be16(s, o) return s:byte(o) * 256 + s:byte(o + 1) end
-local function be32(s, o)
-  return s:byte(o) * 16777216 + s:byte(o + 1) * 65536
-       + s:byte(o + 2) * 256 + s:byte(o + 3)
+local function be16(s, o)
+  return s:byte(o) * 256 + s:byte(o + 1)
 end
-local function le16(s, o) return s:byte(o) + s:byte(o + 1) * 256 end
-local function le24(s, o) return s:byte(o) + s:byte(o + 1) * 256 + s:byte(o + 2) * 65536 end
+local function be32(s, o)
+  return s:byte(o) * 16777216 + s:byte(o + 1) * 65536 + s:byte(o + 2) * 256 + s:byte(o + 3)
+end
+local function le16(s, o)
+  return s:byte(o) + s:byte(o + 1) * 256
+end
+local function le24(s, o)
+  return s:byte(o) + s:byte(o + 1) * 256 + s:byte(o + 2) * 65536
+end
 
 local function png_dimensions(path)
   local h = read_header(path, 24)
@@ -161,17 +162,18 @@ end
 local function jpeg_dimensions(path)
   local f = io.open(path, "rb")
   if not f then return nil end
-  local data = f:read("*a")
+  local data = f:read "*a"
   f:close()
   if not data or #data < 2 or data:byte(1) ~= 0xFF or data:byte(2) ~= 0xD8 then return nil end
   local pos = 3
   while pos < #data - 1 do
-    if data:byte(pos) ~= 0xFF then pos = pos + 1; goto continue end
+    if data:byte(pos) ~= 0xFF then
+      pos = pos + 1
+      goto continue
+    end
     local marker = data:byte(pos + 1)
     if marker >= 0xC0 and marker <= 0xCF and marker ~= 0xC4 and marker ~= 0xC8 then
-      if pos + 9 <= #data then
-        return be16(data, pos + 7), be16(data, pos + 5)
-      end
+      if pos + 9 <= #data then return be16(data, pos + 7), be16(data, pos + 5) end
     end
     if pos + 3 <= #data then
       pos = pos + 2 + be16(data, pos + 2)
@@ -234,14 +236,19 @@ end
 
 --- Video file extensions supported for frame extraction
 local VIDEO_EXTENSIONS = {
-  mp4 = true, webm = true, mov = true, avi = true, mkv = true, m4v = true,
+  mp4 = true,
+  webm = true,
+  mov = true,
+  avi = true,
+  mkv = true,
+  m4v = true,
 }
 
 --- Check if a file path points to a video file (by extension).
 ---@param path string
 ---@return boolean
 function M.is_video_file(path)
-  local ext = path:match("%.(%w+)$")
+  local ext = path:match "%.(%w+)$"
   if not ext then return false end
   return VIDEO_EXTENSIONS[ext:lower()] == true
 end
@@ -268,18 +275,23 @@ end
 ---@param path string absolute path to video file
 ---@return integer? width, integer? height
 function M.video_dimensions(path)
-  if vim.fn.executable("ffprobe") ~= 1 then return nil, nil end
-  local result = vim.system(
-    {
-      "ffprobe", "-v", "error",
-      "-select_streams", "v:0",
-      "-show_entries", "stream=width,height",
-      "-of", "csv=p=0:s=x", path,
-    },
-    { text = true, timeout = 5000 }
-  ):wait()
+  if vim.fn.executable "ffprobe" ~= 1 then return nil, nil end
+  local result = vim
+    .system({
+      "ffprobe",
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "csv=p=0:s=x",
+      path,
+    }, { text = true, timeout = 5000 })
+    :wait()
   if result.code == 0 and result.stdout then
-    local w, h = result.stdout:match("(%d+)x(%d+)")
+    local w, h = result.stdout:match "(%d+)x(%d+)"
     if w and h then return tonumber(w), tonumber(h) end
   end
   return nil, nil
@@ -291,27 +303,29 @@ end
 ---@param callback fun(width: integer?, height: integer?)
 function M.video_dimensions_async(path, callback)
   -- Use ffprobe to get original video dimensions
-  vim.system(
-    {
-      "ffprobe", "-v", "error",
-      "-select_streams", "v:0",
-      "-show_entries", "stream=width,height",
-      "-of", "csv=p=0:s=x", path,
-    },
-    { text = true, timeout = 10000 },
-    function(result)
-      vim.schedule(function()
-        if result.code == 0 and result.stdout then
-          local w, h = result.stdout:match("(%d+)x(%d+)")
-          if w and h then
-            callback(tonumber(w), tonumber(h))
-            return
-          end
+  vim.system({
+    "ffprobe",
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=width,height",
+    "-of",
+    "csv=p=0:s=x",
+    path,
+  }, { text = true, timeout = 10000 }, function(result)
+    vim.schedule(function()
+      if result.code == 0 and result.stdout then
+        local w, h = result.stdout:match "(%d+)x(%d+)"
+        if w and h then
+          callback(tonumber(w), tonumber(h))
+          return
         end
-        callback(nil, nil)
-      end)
-    end
-  )
+      end
+      callback(nil, nil)
+    end)
+  end)
 end
 
 ---@param path string
@@ -333,7 +347,7 @@ end
 --- Get cache directory for rendered mermaid diagrams
 ---@return string
 local function get_mermaid_cache_dir()
-  local dir = vim.fn.stdpath("cache") .. "/md-render/mermaid"
+  local dir = vim.fn.stdpath "cache" .. "/md-render/mermaid"
   vim.fn.mkdir(dir, "p")
   return dir
 end
@@ -347,9 +361,9 @@ local _mmdc_checked = false
 local function find_mmdc()
   if _mmdc_checked then return _mmdc_cmd end
   _mmdc_checked = true
-  if vim.fn.executable("mmdc") == 1 then
+  if vim.fn.executable "mmdc" == 1 then
     _mmdc_cmd = { "mmdc" }
-  elseif vim.fn.executable("npx") == 1 then
+  elseif vim.fn.executable "npx" == 1 then
     _mmdc_cmd = { "npx", "-y", "@mermaid-js/mermaid-cli" }
   end
   return _mmdc_cmd
@@ -365,11 +379,9 @@ end
 --- the appropriate mermaid theme name and background color hex string.
 ---@return string theme, string bg_hex
 local function mermaid_theme_args()
-  local bg = vim.o.background  -- "dark" or "light"
+  local bg = vim.o.background -- "dark" or "light"
   local hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
-  if not hl.bg then
-    hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
-  end
+  if not hl.bg then hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false }) end
   local bg_color = hl.bg
   if bg == "dark" then
     local hex = bg_color and string.format("#%06x", bg_color) or "#1e1e2e"
@@ -398,8 +410,16 @@ local function build_mmdc_cmd(cmd_prefix, input_path, output_path)
   local theme, bg_hex = mermaid_theme_args()
   local cmd = vim.list_extend({}, cmd_prefix)
   vim.list_extend(cmd, {
-    "-i", input_path, "-o", output_path,
-    "-t", theme, "-b", bg_hex, "-s", "2",
+    "-i",
+    input_path,
+    "-o",
+    output_path,
+    "-t",
+    theme,
+    "-b",
+    bg_hex,
+    "-s",
+    "2",
   })
   return cmd
 end
@@ -409,9 +429,7 @@ end
 ---@return string? cached_path
 function M.get_mermaid_cached(source)
   local cache_path = mermaid_cache_path(source)
-  if vim.fn.filereadable(cache_path) == 1 then
-    return cache_path
-  end
+  if vim.fn.filereadable(cache_path) == 1 then return cache_path end
   return nil
 end
 
@@ -423,9 +441,7 @@ function M.render_mermaid(source)
   if not cmd_prefix then return nil end
 
   local cache_path = mermaid_cache_path(source)
-  if vim.fn.filereadable(cache_path) == 1 then
-    return cache_path
-  end
+  if vim.fn.filereadable(cache_path) == 1 then return cache_path end
 
   local tmp_input = vim.fn.tempname() .. ".mmd"
   local f = io.open(tmp_input, "w")
@@ -437,9 +453,7 @@ function M.render_mermaid(source)
   local result = vim.system(cmd, { text = true, timeout = 30000 }):wait()
   os.remove(tmp_input)
 
-  if vim.fn.filereadable(cache_path) == 1 then
-    return cache_path
-  end
+  if vim.fn.filereadable(cache_path) == 1 then return cache_path end
   return nil
 end
 
@@ -516,9 +530,7 @@ end
 ---@return true?
 local function probe_kitty_via_apc()
   local ok, tty = pcall(require, "vim.tty")
-  if not ok or type(tty) ~= "table" or type(tty.query_apc) ~= "function" then
-    return nil
-  end
+  if not ok or type(tty) ~= "table" or type(tty.query_apc) ~= "function" then return nil end
   -- Some terminals (notably Apple Terminal) echo unknown APC payloads back
   -- into the buffer; skip the probe outright there.
   if vim.env.TERM_PROGRAM == "Apple_Terminal" then return nil end
@@ -532,7 +544,9 @@ local function probe_kitty_via_apc()
       return true
     end
   end)
-  vim.wait(250, function() return supported ~= nil end, 20)
+  vim.wait(250, function()
+    return supported ~= nil
+  end, 20)
   return supported
 end
 
@@ -626,7 +640,7 @@ end
 ---@param s string
 ---@return boolean
 function M.is_url(s)
-  return s:match("^https?://") ~= nil
+  return s:match "^https?://" ~= nil
 end
 
 --- URLs that are badges or tiny icons — not worth displaying as block images
@@ -665,7 +679,7 @@ local _url_cache = {}
 --- Get cache directory for downloaded images
 ---@return string
 local function get_cache_dir()
-  local dir = vim.fn.stdpath("cache") .. "/md-render/images"
+  local dir = vim.fn.stdpath "cache" .. "/md-render/images"
   vim.fn.mkdir(dir, "p")
   return dir
 end
@@ -676,9 +690,9 @@ end
 local function url_to_cache_path(url)
   -- Use a hash of the URL as filename, preserve extension
   local hash = vim.fn.sha256(url):sub(1, 16)
-  local ext = url:match("%.(%w+)$") or "png"
+  local ext = url:match "%.(%w+)$" or "png"
   -- Clean extension (remove query params)
-  ext = ext:match("^(%w+)") or "png"
+  ext = ext:match "^(%w+)" or "png"
   return get_cache_dir() .. "/" .. hash .. "." .. ext
 end
 
@@ -688,9 +702,7 @@ end
 function M.get_cached(url)
   if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then
     -- Validate cached file is a recognized image or video format
-    if M.image_dimensions(_url_cache[url]) or M.is_video_content(_url_cache[url]) then
-      return _url_cache[url]
-    end
+    if M.image_dimensions(_url_cache[url]) or M.is_video_content(_url_cache[url]) then return _url_cache[url] end
     -- Stale/corrupt cache entry: remove file and clear in-memory cache
     os.remove(_url_cache[url])
     _url_cache[url] = nil
@@ -708,9 +720,9 @@ function M.get_cached(url)
     return nil
   end
   -- Try video extensions (file may have been renamed by finalize_download)
-  local hash = cache_path:match("/([^/]+)%.[^.]+$")
+  local hash = cache_path:match "/([^/]+)%.[^.]+$"
   if hash then
-    for _, ext in ipairs({ "mp4", "webm", "avi" }) do
+    for _, ext in ipairs { "mp4", "webm", "avi" } do
       local alt_path = get_cache_dir() .. "/" .. hash .. "." .. ext
       if vim.fn.filereadable(alt_path) == 1 and M.is_video_content(alt_path) then
         _url_cache[url] = alt_path
@@ -748,7 +760,7 @@ local function finalize_download(url, cache_path, callback)
     -- Check if it's a video with wrong extension
     local video_ext = detect_video_ext(cache_path)
     if video_ext then
-      local current_ext = cache_path:match("%.(%w+)$")
+      local current_ext = cache_path:match "%.(%w+)$"
       if current_ext and current_ext ~= video_ext then
         local correct_path = cache_path:gsub("%." .. current_ext .. "$", "." .. video_ext)
         os.rename(cache_path, correct_path)
@@ -816,9 +828,7 @@ end
 ---@param url string
 ---@return string? cached_path
 function M.get_video_cached(url)
-  if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then
-    return _url_cache[url]
-  end
+  if _url_cache[url] and vim.fn.filereadable(_url_cache[url]) == 1 then return _url_cache[url] end
   local cache_path = url_to_cache_path(url)
   if vim.fn.filereadable(cache_path) == 1 then
     _url_cache[url] = cache_path
@@ -887,21 +897,15 @@ function M.resolve(src, base_dir)
   end
 
   local resolved = vim.fn.expand(src)
-  if resolved:sub(1, 1) ~= "/" and base_dir then
-    resolved = base_dir .. "/" .. resolved
-  end
+  if resolved:sub(1, 1) ~= "/" and base_dir then resolved = base_dir .. "/" .. resolved end
 
-  if vim.fn.filereadable(resolved) == 1 then
-    return resolved
-  end
+  if vim.fn.filereadable(resolved) == 1 then return resolved end
 
   -- Fallback: try Obsidian vault resolution
   if base_dir then
     local obsidian = require "md-render.obsidian"
     local vault_resolved = obsidian.resolve(src, base_dir)
-    if vault_resolved then
-      return vault_resolved
-    end
+    if vault_resolved then return vault_resolved end
   end
 
   return nil
@@ -920,11 +924,11 @@ local _convert_checked = false
 local function find_convert_tool()
   if _convert_checked then return _convert_cmd end
   _convert_checked = true
-  if vim.fn.has("mac") == 1 and vim.fn.executable("sips") == 1 then
+  if vim.fn.has "mac" == 1 and vim.fn.executable "sips" == 1 then
     _convert_cmd = "sips"
-  elseif vim.fn.executable("ffmpeg") == 1 then
+  elseif vim.fn.executable "ffmpeg" == 1 then
     _convert_cmd = "ffmpeg"
-  elseif vim.fn.executable("magick") == 1 then
+  elseif vim.fn.executable "magick" == 1 then
     _convert_cmd = "magick"
   end
   return _convert_cmd
@@ -939,9 +943,9 @@ local _anim_checked = false
 local function find_anim_tool()
   if _anim_checked then return _anim_cmd end
   _anim_checked = true
-  if vim.fn.executable("ffmpeg") == 1 then
+  if vim.fn.executable "ffmpeg" == 1 then
     _anim_cmd = "ffmpeg"
-  elseif vim.fn.executable("magick") == 1 then
+  elseif vim.fn.executable "magick" == 1 then
     _anim_cmd = "magick"
   end
   return _anim_cmd
@@ -965,9 +969,14 @@ local function build_convert_cmd(tool, src, dst)
     -- scale filter with force_original_aspect_ratio keeps aspect ratio;
     -- -vframes 1 ensures only one frame for static images
     return {
-      "ffmpeg", "-y", "-i", src,
-      "-vframes", "1",
-      "-vf", "scale='min(" .. dim .. ",iw)':'min(" .. dim .. ",ih)':force_original_aspect_ratio=decrease",
+      "ffmpeg",
+      "-y",
+      "-i",
+      src,
+      "-vframes",
+      "1",
+      "-vf",
+      "scale='min(" .. dim .. ",iw)':'min(" .. dim .. ",ih)':force_original_aspect_ratio=decrease",
       dst,
     }
   else
@@ -982,7 +991,7 @@ end
 --- Get cache directory for converted PNGs (JPEG/WebP → PNG).
 ---@return string
 local function get_converted_cache_dir()
-  local dir = vim.fn.stdpath("cache") .. "/md-render/converted"
+  local dir = vim.fn.stdpath "cache" .. "/md-render/converted"
   vim.fn.mkdir(dir, "p")
   return dir
 end
@@ -996,10 +1005,7 @@ local function get_converted_cache_path(src_path)
   local mtime = vim.fn.getftime(src_path)
   if mtime < 0 then return nil end
   local hash = vim.fn.sha256(src_path):sub(1, 16)
-  return string.format(
-    "%s/%s_%d_%d.png",
-    get_converted_cache_dir(), hash, mtime, MAX_CONVERT_DIM
-  )
+  return string.format("%s/%s_%d_%d.png", get_converted_cache_dir(), hash, mtime, MAX_CONVERT_DIM)
 end
 
 --- Atomically install a freshly converted PNG into the cache.
@@ -1018,7 +1024,7 @@ local function install_to_cache(tmp, cache_path)
     local data
     local f = io.open(tmp, "rb")
     if f then
-      data = f:read("*a")
+      data = f:read "*a"
       f:close()
     end
     if not data then return false end
@@ -1041,15 +1047,11 @@ function M.ensure_png(path)
   local tool = find_convert_tool()
   if not tool then return nil, false end
   local cache_path = get_converted_cache_path(path)
-  if cache_path and vim.fn.filereadable(cache_path) == 1 then
-    return cache_path, false
-  end
+  if cache_path and vim.fn.filereadable(cache_path) == 1 then return cache_path, false end
   local tmp = vim.fn.tempname() .. ".png"
   local result = vim.system(build_convert_cmd(tool, path, tmp), { text = true }):wait()
   if result.code ~= 0 then return nil, false end
-  if cache_path and install_to_cache(tmp, cache_path) then
-    return cache_path, false
-  end
+  if cache_path and install_to_cache(tmp, cache_path) then return cache_path, false end
   return tmp, true
 end
 
@@ -1072,23 +1074,19 @@ function M.ensure_png_async(path, callback)
     return
   end
   local tmp = vim.fn.tempname() .. ".png"
-  vim.system(
-    build_convert_cmd(tool, path, tmp),
-    { text = true },
-    function(result)
-      vim.schedule(function()
-        if result.code ~= 0 then
-          callback(nil, false)
-          return
-        end
-        if cache_path and install_to_cache(tmp, cache_path) then
-          callback(cache_path, false)
-        else
-          callback(tmp, true)
-        end
-      end)
-    end
-  )
+  vim.system(build_convert_cmd(tool, path, tmp), { text = true }, function(result)
+    vim.schedule(function()
+      if result.code ~= 0 then
+        callback(nil, false)
+        return
+      end
+      if cache_path and install_to_cache(tmp, cache_path) then
+        callback(cache_path, false)
+      else
+        callback(tmp, true)
+      end
+    end)
+  end)
 end
 
 --- Choose the rounding direction (floor vs ceil) for the dependent dimension
@@ -1115,9 +1113,7 @@ local function best_round(fixed_cells, fixed_cell_px, dep_px, dep_cell_px, dep_m
     fl_ratio = (r_floor * dep_cell_px) / (fixed_cells * fixed_cell_px)
     cl_ratio = (r_ceil * dep_cell_px) / (fixed_cells * fixed_cell_px)
   end
-  if math.abs(fl_ratio - target) <= math.abs(cl_ratio - target) then
-    return r_floor
-  end
+  if math.abs(fl_ratio - target) <= math.abs(cl_ratio - target) then return r_floor end
   return r_ceil
 end
 
@@ -1161,8 +1157,8 @@ end
 -- ============================================================================
 
 local _image_id = 100
-local _image_paths = {}  -- image_id → file path (for Ghostty a=T workaround)
-local _temp_image_paths = {}  -- image_id → true for temp files that need cleanup
+local _image_paths = {} -- image_id → file path (for Ghostty a=T workaround)
+local _temp_image_paths = {} -- image_id → true for temp files that need cleanup
 local _session_cleared = false
 
 --- Transmit image data to terminal (store without displaying).
@@ -1183,10 +1179,7 @@ function M.transmit_image(path)
   local t = (is_temp and not is_ghostty()) and "t" or "f"
 
   -- a=t: transmit and store, q=2: suppress all responses
-  local message = string.format(
-    "\x1b_Ga=t,f=100,t=%s,i=%d,q=2;%s\x1b\\",
-    t, id, b64_path
-  )
+  local message = string.format("\x1b_Ga=t,f=100,t=%s,i=%d,q=2;%s\x1b\\", t, id, b64_path)
   term_write(message)
 
   if is_temp and is_ghostty() then
@@ -1199,7 +1192,7 @@ function M.transmit_image(path)
   return id
 end
 
-local MAX_ANIM_FRAMES = 300  -- max frames to extract (= 60 seconds at 5 fps)
+local MAX_ANIM_FRAMES = 300 -- max frames to extract (= 60 seconds at 5 fps)
 
 --- Build a command to count frames in an animated GIF.
 ---@param tool string  "ffmpeg" or "magick"
@@ -1208,10 +1201,17 @@ local MAX_ANIM_FRAMES = 300  -- max frames to extract (= 60 seconds at 5 fps)
 local function build_frame_count_cmd(tool, path)
   if tool == "ffmpeg" then
     return {
-      "ffprobe", "-v", "error",
-      "-count_frames", "-select_streams", "v:0",
-      "-show_entries", "stream=nb_read_frames",
-      "-of", "csv=p=0", path,
+      "ffprobe",
+      "-v",
+      "error",
+      "-count_frames",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=nb_read_frames",
+      "-of",
+      "csv=p=0",
+      path,
     }
   else
     return { "magick", "identify", "-format", "%n\n", path }
@@ -1231,10 +1231,16 @@ local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
     table.insert(vf_parts, "fps=5")
     table.insert(vf_parts, "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease")
     return {
-      "ffmpeg", "-y", "-i", path,
-      "-vf", table.concat(vf_parts, ","),
-      "-frames:v", tostring(MAX_ANIM_FRAMES),
-      "-vsync", "vfr",
+      "ffmpeg",
+      "-y",
+      "-i",
+      path,
+      "-vf",
+      table.concat(vf_parts, ","),
+      "-frames:v",
+      tostring(MAX_ANIM_FRAMES),
+      "-vsync",
+      "vfr",
       cache_dir .. "/frame_%04d.png",
     }
   else
@@ -1243,9 +1249,7 @@ local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
       local step = math.ceil(total_frames / MAX_ANIM_FRAMES)
       local delete = {}
       for i = 0, total_frames - 1 do
-        if i % step ~= 0 then
-          table.insert(delete, tostring(i))
-        end
+        if i % step ~= 0 then table.insert(delete, tostring(i)) end
       end
       if #delete > 0 then
         table.insert(cmd, "-delete")
@@ -1280,13 +1284,10 @@ function M.transmit_animated(path)
   local cached = get_cached_frames(path, cache_dir)
   if not cached then
     -- Count total frames first
-    local count_result = vim.system(
-      build_frame_count_cmd(anim_tool, path),
-      { text = true }
-    ):wait()
+    local count_result = vim.system(build_frame_count_cmd(anim_tool, path), { text = true }):wait()
     local total_frames = 1
     if count_result.code == 0 and count_result.stdout then
-      total_frames = tonumber(count_result.stdout:match("%d+")) or 1
+      total_frames = tonumber(count_result.stdout:match "%d+") or 1
     end
 
     vim.fn.mkdir(cache_dir, "p")
@@ -1315,10 +1316,7 @@ function M.transmit_animated(path)
     _image_id = _image_id + 1
     local id = _image_id
     local b64_path = vim.base64.encode(frame_path)
-    term_write(string.format(
-      "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
-      id, b64_path
-    ))
+    term_write(string.format("\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\", id, b64_path))
     _image_paths[id] = frame_path
     table.insert(frame_ids, id)
   end
@@ -1348,13 +1346,8 @@ function M.transmit_image_async(path, callback)
     local b64_path = vim.base64.encode(png_path)
     -- Ghostty does not support t=t; always use t=f and delete temp files ourselves
     local t = (is_temp and not is_ghostty()) and "t" or "f"
-    term_write(string.format(
-      "\x1b_Ga=t,f=100,t=%s,i=%d,q=2;%s\x1b\\",
-      t, id, b64_path
-    ))
-    if is_temp and is_ghostty() then
-      _temp_image_paths[id] = true
-    end
+    term_write(string.format("\x1b_Ga=t,f=100,t=%s,i=%d,q=2;%s\x1b\\", t, id, b64_path))
+    if is_temp and is_ghostty() then _temp_image_paths[id] = true end
     _image_paths[id] = png_path
     -- Return actual transmitted dimensions when the converted PNG differs from
     -- the source (conversion may have resized, e.g. large JPEG → 2000px PNG).
@@ -1439,17 +1432,12 @@ function M.transmit_animated_async(path, callback)
       M.begin_batch()
       for i = idx, end_idx do
         local b64_path = vim.base64.encode(frames[i])
-        term_write(string.format(
-          "\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\",
-          all_ids[i], b64_path
-        ))
+        term_write(string.format("\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\", all_ids[i], b64_path))
         _image_paths[all_ids[i]] = frames[i]
       end
       M.flush_batch()
       idx = end_idx + 1
-      if idx <= total then
-        vim.defer_fn(send_next_batch, 10)
-      end
+      if idx <= total then vim.defer_fn(send_next_batch, 10) end
     end
 
     send_next_batch()
@@ -1464,42 +1452,38 @@ function M.transmit_animated_async(path, callback)
   end
 
   -- Count frames first
-  vim.system(
-    build_frame_count_cmd(anim_tool, path),
-    { text = true },
-    function(count_result)
-      vim.schedule(function()
-        local total_frames = 1
-        if count_result.code == 0 and count_result.stdout then
-          total_frames = tonumber(count_result.stdout:match("%d+")) or 1
-        end
+  vim.system(build_frame_count_cmd(anim_tool, path), { text = true }, function(count_result)
+    vim.schedule(function()
+      local total_frames = 1
+      if count_result.code == 0 and count_result.stdout then
+        total_frames = tonumber(count_result.stdout:match "%d+") or 1
+      end
 
-        vim.fn.mkdir(cache_dir, "p")
+      vim.fn.mkdir(cache_dir, "p")
 
-        local cmd = build_frame_extract_cmd(anim_tool, path, cache_dir, total_frames)
+      local cmd = build_frame_extract_cmd(anim_tool, path, cache_dir, total_frames)
 
-        vim.system(cmd, { text = true, timeout = 30000 }, function(result)
-          vim.schedule(function()
-            if result.code ~= 0 then
-              vim.fn.delete(cache_dir, "rf")
-              callback(nil)
-              return
-            end
+      vim.system(cmd, { text = true, timeout = 30000 }, function(result)
+        vim.schedule(function()
+          if result.code ~= 0 then
+            vim.fn.delete(cache_dir, "rf")
+            callback(nil)
+            return
+          end
 
-            local frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
-            table.sort(frames)
-            if #frames == 0 then
-              vim.fn.delete(cache_dir, "rf")
-              callback(nil)
-              return
-            end
+          local frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
+          table.sort(frames)
+          if #frames == 0 then
+            vim.fn.delete(cache_dir, "rf")
+            callback(nil)
+            return
+          end
 
-            transmit_frames(frames)
-          end)
+          transmit_frames(frames)
         end)
       end)
-    end
-  )
+    end)
+  end)
 end
 
 --- Display an image at a screen position.
@@ -1527,7 +1511,7 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   -- spill `winbar_height` rows into the statusline.
   local wininfo = vim.fn.getwininfo(win)[1]
   local win_height = wininfo.height
-  local topline = wininfo.topline - 1  -- 0-indexed
+  local topline = wininfo.topline - 1 -- 0-indexed
   local leftcol = wininfo.leftcol or 0
   -- Gutter width (signcolumn + number + foldcolumn + statuscolumn). Buffer
   -- text starts at win_pos[2] + textoff, so Kitty placements need the same
@@ -1549,16 +1533,12 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     if type(border) == "table" then
       local left = border[8] -- 8th element = left border char
       if type(left) == "table" then left = left[1] end
-      if left and left ~= "" then
-        border_left_width = vim.api.nvim_strwidth(left)
-      end
+      if left and left ~= "" then border_left_width = vim.api.nvim_strwidth(left) end
       local top = border[2] -- 2nd element = top border char
       if type(top) == "table" then top = top[1] end
-      if top and top ~= "" then
-        border_top_height = 1
-      end
+      if top and top ~= "" then border_top_height = 1 end
     elseif border ~= "none" and border ~= "" then
-      border_left_width = vim.api.nvim_strwidth("│")
+      border_left_width = vim.api.nvim_strwidth "│"
       border_top_height = 1
     end
   end
@@ -1609,10 +1589,10 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   -- are placed one row too high and overlap any wrapped header lines below
   -- the image label (most visible with long alt text).
   local winbar_height = 0
-  local ok_wb, wb = pcall(function() return vim.wo[win].winbar end)
-  if ok_wb and wb and wb ~= "" then
-    winbar_height = 1
-  end
+  local ok_wb, wb = pcall(function()
+    return vim.wo[win].winbar
+  end)
+  if ok_wb and wb and wb ~= "" then winbar_height = 1 end
   local screen_row = wininfo.winrow + visual_row + border_top_height + winbar_height
 
   -- Bottom crop: image extends below visible area
@@ -1637,10 +1617,7 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
   -- as "no crop" and silently scale the entire image into the display cells.
   local crop_params = ""
   if (src_x or src_y or src_w or src_h) and img_w and img_h then
-    crop_params = string.format(
-      ",x=%d,y=%d,w=%d,h=%d",
-      src_x or 0, src_y or 0, src_w or img_w, src_h or img_h
-    )
+    crop_params = string.format(",x=%d,y=%d,w=%d,h=%d", src_x or 0, src_y or 0, src_w or img_w, src_h or img_h)
   end
 
   local message
@@ -1652,20 +1629,22 @@ function M.put_image(image_id, win, row, col, display_cols, display_rows, anim_p
     local b64_path = vim.base64.encode(img_path)
     message = string.format(
       "\x1b_Ga=T,f=100,t=f,i=%d,c=%d,r=%d%s,C=1,q=2;%s\x1b\\",
-      image_id, display_cols, display_rows, crop_params, b64_path
+      image_id,
+      display_cols,
+      display_rows,
+      crop_params,
+      b64_path
     )
   else
     -- Static: put a previously transmitted image
-    message = string.format(
-      "\x1b_Ga=p,i=%d,c=%d,r=%d%s,C=1,q=2\x1b\\",
-      image_id, display_cols, display_rows, crop_params
-    )
+    message =
+      string.format("\x1b_Ga=p,i=%d,c=%d,r=%d%s,C=1,q=2\x1b\\", image_id, display_cols, display_rows, crop_params)
   end
 
-  term_write("\x1b[s")
+  term_write "\x1b[s"
   move_cursor(screen_col, screen_row)
   term_write(message)
-  term_write("\x1b[u")
+  term_write "\x1b[u"
 end
 
 --- Delete all placements for an image but keep the transmitted data.
@@ -1678,11 +1657,9 @@ end
 --- Delete all images and placements from terminal memory.
 function M.delete_all()
   if not M.supports_kitty() then return end
-  term_write("\x1b_Ga=d,d=A,q=2\x1b\\")
+  term_write "\x1b_Ga=d,d=A,q=2\x1b\\"
   for id, path in pairs(_image_paths) do
-    if _temp_image_paths[id] then
-      os.remove(path)
-    end
+    if _temp_image_paths[id] then os.remove(path) end
   end
   _image_paths = {}
   _temp_image_paths = {}
@@ -1724,13 +1701,11 @@ function M.clear_all()
   _session_cleared = true
   if not M.supports_kitty() then return end
   -- d=A: delete all stored image data and placements
-  term_write("\x1b_Ga=d,d=A\x1b\\")
+  term_write "\x1b_Ga=d,d=A\x1b\\"
   -- Reset ID counter and path mapping to ensure clean state
   _image_id = 100
   for id, path in pairs(_image_paths) do
-    if _temp_image_paths[id] then
-      os.remove(path)
-    end
+    if _temp_image_paths[id] then os.remove(path) end
   end
   _image_paths = {}
   _temp_image_paths = {}

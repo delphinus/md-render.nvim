@@ -109,9 +109,7 @@ local DEFAULT_IMAGE_ICON = "󰋩"
 ---@param icon string single icon character
 ---@return string
 function M.pad_icon(icon)
-  if vim.api.nvim_strwidth(icon) == 1 then
-    return icon .. " "
-  end
+  if vim.api.nvim_strwidth(icon) == 1 then return icon .. " " end
   return icon
 end
 
@@ -125,34 +123,26 @@ function M.get_file_icon(filename)
   local ok, devicons = pcall(require, "nvim-web-devicons")
   if ok then
     local icon, hl = devicons.get_icon(filename, nil, { default = false })
-    if icon then
-      return icon, hl
-    end
+    if icon then return icon, hl end
   end
 
   -- Try mini.icons
   local ok2, mini_icons = pcall(require, "mini.icons")
   if ok2 then
     local ok3, icon, hl = pcall(mini_icons.get, "file", filename)
-    if ok3 and icon then
-      return icon, hl
-    end
+    if ok3 and icon then return icon, hl end
   end
 
   -- Built-in fallback: check special filenames first
-  local base = filename:match("[^/]+$") or filename
+  local base = filename:match "[^/]+$" or filename
   local base_lower = base:lower()
-  if file_name_icons[base_lower] then
-    return file_name_icons[base_lower], nil
-  end
+  if file_name_icons[base_lower] then return file_name_icons[base_lower], nil end
 
   -- Then check extension
-  local ext = base:match("%.([^.]+)$")
+  local ext = base:match "%.([^.]+)$"
   if ext then
     local icon = file_ext_icons[ext:lower()]
-    if icon then
-      return icon, nil
-    end
+    if icon then return icon, nil end
   end
 
   -- Default file icon
@@ -168,12 +158,10 @@ end
 function M.get_image_icon(path)
   -- Extract basename from path or URL (strip query string / fragment)
   local clean = path:gsub("[?#].*$", "")
-  local base = clean:match("([^/]+)$") or clean
+  local base = clean:match "([^/]+)$" or clean
   if base ~= "" then
     local icon, hl = M.get_file_icon(base)
-    if icon ~= "" then
-      return icon, hl
-    end
+    if icon ~= "" then return icon, hl end
   end
   return DEFAULT_IMAGE_ICON, nil
 end

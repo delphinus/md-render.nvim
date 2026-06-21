@@ -10,9 +10,7 @@
 local previewer_cache = nil
 
 local function get_previewer()
-  if not previewer_cache then
-    previewer_cache = require("md-render.telescope").previewer()
-  end
+  if not previewer_cache then previewer_cache = require("md-render.telescope").previewer() end
   return previewer_cache
 end
 

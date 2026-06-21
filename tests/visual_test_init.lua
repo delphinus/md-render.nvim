@@ -7,7 +7,7 @@ local plugin_root = vim.fn.getcwd()
 vim.opt.runtimepath:prepend(plugin_root)
 
 -- Load the plugin
-vim.cmd("runtime plugin/md-render.lua")
+vim.cmd "runtime plugin/md-render.lua"
 
 -- Open the test markdown file
 vim.cmd("edit " .. plugin_root .. "/tests/fixtures/visual_test.md")
@@ -27,7 +27,7 @@ vim.defer_fn(function()
   vim.defer_fn(function()
     local f = io.open(signal, "w")
     if f then
-      f:write("ready\n")
+      f:write "ready\n"
       f:close()
     end
   end, 5000)

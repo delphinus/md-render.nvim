@@ -204,6 +204,4 @@ do
 end
 
 print(pass_count .. " passed, " .. fail_count .. " failed")
-if fail_count > 0 then
-  os.exit(1)
-end
+if fail_count > 0 then os.exit(1) end

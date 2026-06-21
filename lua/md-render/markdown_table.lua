@@ -18,18 +18,12 @@ local wrap_mod = require "md-render.wrap"
 local function split_row(line)
   -- Strip leading whitespace, then expect |
   local stripped = line:match "^%s*(.*)" or line
-  if stripped:sub(1, 1) ~= "|" then
-    return nil
-  end
+  if stripped:sub(1, 1) ~= "|" then return nil end
   -- Remove leading and trailing |
   local inner = stripped:match "^|(.*)$"
-  if not inner then
-    return nil
-  end
+  if not inner then return nil end
   -- Remove trailing | if present (but not escaped \|)
-  if inner:sub(-1) == "|" and inner:sub(-2, -2) ~= "\\" then
-    inner = inner:sub(1, -2)
-  end
+  if inner:sub(-1) == "|" and inner:sub(-2, -2) ~= "\\" then inner = inner:sub(1, -2) end
   local cells = {}
   local pos = 1
   while pos <= #inner do
@@ -61,15 +55,11 @@ end
 ---@return string[]|nil alignments array or nil if not a separator
 local function parse_separator(line)
   local cells = split_row(line)
-  if not cells or #cells == 0 then
-    return nil
-  end
+  if not cells or #cells == 0 then return nil end
   local alignments = {}
   for _, cell in ipairs(cells) do
     -- Must match pattern: optional :, one or more -, optional :
-    if not cell:match "^:?%-+:?$" then
-      return nil
-    end
+    if not cell:match "^:?%-+:?$" then return nil end
     local left = cell:sub(1, 1) == ":"
     local right = cell:sub(-1) == ":"
     if left and right then
@@ -107,9 +97,7 @@ end
 ---@param max_display_width integer
 ---@return {text: string, byte_start: integer}[]
 local function wrap_cell_text(text, max_display_width)
-  if vim.api.nvim_strwidth(text) <= max_display_width then
-    return { { text = text, byte_start = 0 } }
-  end
+  if vim.api.nvim_strwidth(text) <= max_display_width then return { { text = text, byte_start = 0 } } end
 
   local wrapped_lines, line_starts = wrap_mod.wrap_words(text, max_display_width)
   local result = {}
@@ -127,9 +115,7 @@ local function wrap_cell_text(text, max_display_width)
             current_byte = seg.byte_pos
             current_text = seg.text
           else
-            if current_text == "" then
-              current_byte = seg.byte_pos
-            end
+            if current_text == "" then current_byte = seg.byte_pos end
             current_text = current_text .. seg.text
           end
         end
@@ -171,9 +157,7 @@ local function wrap_cell_text(text, max_display_width)
               current_byte = byte_offset
               current_text = g
             else
-              if current_text == "" then
-                current_byte = byte_offset
-              end
+              if current_text == "" then current_byte = byte_offset end
               current_text = current_text .. g
             end
             byte_offset = byte_offset + #g
@@ -201,21 +185,15 @@ end
 ---@return integer byte_length of the kept portion (before "…")
 local function truncate_to_width(text, max_display_width)
   local text_width = vim.api.nvim_strwidth(text)
-  if text_width <= max_display_width then
-    return text, #text
-  end
-  local ellipsis_width = vim.api.nvim_strwidth("…")
+  if text_width <= max_display_width then return text, #text end
+  local ellipsis_width = vim.api.nvim_strwidth "…"
   local target = max_display_width - ellipsis_width
-  if target <= 0 then
-    return "…", 0
-  end
+  if target <= 0 then return "…", 0 end
   local current_width = 0
   local byte_pos = 0
   for char in text:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
     local char_width = vim.api.nvim_strwidth(char)
-    if current_width + char_width > target then
-      break
-    end
+    if current_width + char_width > target then break end
     current_width = current_width + char_width
     byte_pos = byte_pos + #char
   end
@@ -231,9 +209,7 @@ end
 local function pad_cell(text, width, align)
   local text_width = vim.api.nvim_strwidth(text)
   local total_pad = width - text_width
-  if total_pad <= 0 then
-    return text, 0
-  end
+  if total_pad <= 0 then return text, 0 end
   if align == "right" then
     return string.rep(" ", total_pad) .. text, total_pad
   elseif align == "center" then
@@ -251,26 +227,18 @@ end
 ---@param autolinks? MdRender.Autolink[]
 ---@return MdRender.MarkdownTable.ParsedTable|nil
 function MarkdownTable.parse(lines, repo_base_url, autolinks)
-  if #lines < 2 then
-    return nil
-  end
+  if #lines < 2 then return nil end
 
   -- Line 1: header row
   local header_cells = split_row(lines[1])
-  if not header_cells or #header_cells == 0 then
-    return nil
-  end
+  if not header_cells or #header_cells == 0 then return nil end
 
   -- Line 2: separator row
   local alignments = parse_separator(lines[2])
-  if not alignments then
-    return nil
-  end
+  if not alignments then return nil end
 
   -- Column count must match
-  if #header_cells ~= #alignments then
-    return nil
-  end
+  if #header_cells ~= #alignments then return nil end
 
   -- Process header cells
   local headers = {}
@@ -282,9 +250,7 @@ function MarkdownTable.parse(lines, repo_base_url, autolinks)
   local rows = {}
   for i = 3, #lines do
     local cells = split_row(lines[i])
-    if not cells then
-      break
-    end
+    if not cells then break end
     local row = {}
     for col = 1, #alignments do
       local cell_text = cells[col] or ""
@@ -298,9 +264,7 @@ function MarkdownTable.parse(lines, repo_base_url, autolinks)
   for col = 1, #alignments do
     local w = vim.api.nvim_strwidth(headers[col].text)
     for _, row in ipairs(rows) do
-      if row[col] then
-        w = math.max(w, vim.api.nvim_strwidth(row[col].text))
-      end
+      if row[col] then w = math.max(w, vim.api.nvim_strwidth(row[col].text)) end
     end
     col_widths[col] = w
   end
@@ -344,13 +308,13 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
   local out_source_offsets = {}
   local num_cols = #parsed_table.col_widths
   local col_widths = vim.deepcopy(parsed_table.col_widths)
-  local sep_width = vim.api.nvim_strwidth("│") -- border char display width (varies with ambiwidth)
+  local sep_width = vim.api.nvim_strwidth "│" -- border char display width (varies with ambiwidth)
 
   --- Strip leading HTML comments from text
   ---@param text string
   ---@return string
   local function strip_html_comments(text)
-    return text:gsub("<!%-%-.-%-%->" , ""):match "^%s*(.-)%s*$"
+    return text:gsub("<!%-%-.-%-%->", ""):match "^%s*(.-)%s*$"
   end
 
   --- Check if a cell contains only an image reference ![alt](url), <img>, or <video> tag
@@ -380,8 +344,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
     if video_tag then
       local src = video_tag:match 'src="([^"]*)"' or video_tag:match "src='([^']*)'"
       if not src then
-        src = video_tag:match '<source[^>]*src="([^"]*)"'
-          or video_tag:match "<source[^>]*src='([^']*)'>"
+        src = video_tag:match '<source[^>]*src="([^"]*)"' or video_tag:match "<source[^>]*src='([^']*)'>"
       end
       if src then
         alt = src:match "([^/]+)$" or src
@@ -413,7 +376,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
   do
     local image_mod = require "md-render.image"
     if image_mod.supports_kitty() then
-      buf_dir = buf_dir or vim.fn.expand("%:p:h")
+      buf_dir = buf_dir or vim.fn.expand "%:p:h"
       local indent_width = vim.api.nvim_strwidth(indent)
       local overhead = indent_width + num_cols * (sep_width + 2) + sep_width
       local effective_max = max_width and max_width < 1e6 and max_width or 1e6
@@ -434,12 +397,8 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
                     resolved = image_mod.get_video_cached(src_url)
                   else
                     local video_path = vim.fn.expand(url)
-                    if video_path:sub(1, 1) ~= "/" and buf_dir then
-                      video_path = buf_dir .. "/" .. video_path
-                    end
-                    if vim.fn.filereadable(video_path) == 1 then
-                      resolved = video_path
-                    end
+                    if video_path:sub(1, 1) ~= "/" and buf_dir then video_path = buf_dir .. "/" .. video_path end
+                    if vim.fn.filereadable(video_path) == 1 then resolved = video_path end
                     -- Fallback: try Obsidian vault resolution for local video files
                     if not resolved and buf_dir then
                       local obsidian = require "md-render.obsidian"
@@ -464,8 +423,12 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
                   local display_cols = image_mod.calc_display_size(img_w, img_h, initial_max_per_col, 15)
                   if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
                   row_images_cache[row_idx][col] = {
-                    alt = alt, url = url, resolved = resolved,
-                    img_w = img_w, img_h = img_h, video = is_video,
+                    alt = alt,
+                    url = url,
+                    resolved = resolved,
+                    img_w = img_w,
+                    img_h = img_h,
+                    video = is_video,
                   }
                   col_image_widths[col] = math.max(col_image_widths[col] or 0, display_cols)
                   has_image_cells = true
@@ -473,14 +436,21 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
                   -- Auto-detected video with resolved path but no dimensions yet
                   if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
                   row_images_cache[row_idx][col] = {
-                    alt = alt, url = url, resolved = resolved, video = true,
+                    alt = alt,
+                    url = url,
+                    resolved = resolved,
+                    video = true,
                   }
                   col_image_widths[col] = math.max(col_image_widths[col] or 0, initial_max_per_col)
                   has_image_cells = true
                 elseif src_url then
                   if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
                   row_images_cache[row_idx][col] = {
-                    alt = alt, url = url, resolved = nil, src_url = src_url, video = is_video,
+                    alt = alt,
+                    url = url,
+                    resolved = nil,
+                    src_url = src_url,
+                    video = is_video,
                   }
                   col_image_widths[col] = math.max(col_image_widths[col] or 0, initial_max_per_col)
                   has_image_cells = true
@@ -498,7 +468,9 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
           if cells then
             for _, cell_text in ipairs(cells) do
               local trimmed = strip_html_comments(cell_text)
-              if trimmed and (trimmed:match "^!%[.-%]%(.-%)" or trimmed:match "^<img%s" or trimmed:match "^<video[%s>]") then
+              if
+                trimmed and (trimmed:match "^!%[.-%]%(.-%)" or trimmed:match "^<img%s" or trimmed:match "^<video[%s>]")
+              then
                 has_image_cells = true
                 break
               end
@@ -525,9 +497,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
     if has_image_cells then
       -- Ensure columns are wide enough for actual image display sizes
       for col = 1, num_cols do
-        if col_image_widths[col] then
-          col_widths[col] = math.max(col_widths[col], col_image_widths[col])
-        end
+        if col_image_widths[col] then col_widths[col] = math.max(col_widths[col], col_image_widths[col]) end
       end
       if expanded then
         -- Expanded: also ensure columns fit full image labels (no truncation)
@@ -550,9 +520,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
     total = overhead + content_sum
     if total > max_width then
       local budget = max_width - overhead
-      if budget < num_cols then
-        budget = num_cols
-      end
+      if budget < num_cols then budget = num_cols end
       -- In expanded mode, content wraps so no column needs more than the full
       -- budget.  Cap each column's width for proportion calculation to prevent
       -- columns with very long content from starving shorter columns.
@@ -593,9 +561,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
   -- When expanded, ensure minimum column width of 2 to prevent CJK character overflow
   if expanded then
     for col = 1, num_cols do
-      if col_widths[col] < 2 then
-        col_widths[col] = 2
-      end
+      if col_widths[col] < 2 then col_widths[col] = 2 end
     end
   end
 
@@ -909,21 +875,31 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
         if img.img_w and img.img_h then
           local display_cols, display_rows = image_mod.calc_display_size(img.img_w, img.img_h, col_widths[col], 15)
           row_images[col] = {
-            alt = img.alt, url = img.url, resolved = img.resolved,
-            display_cols = display_cols, display_rows = display_rows,
+            alt = img.alt,
+            url = img.url,
+            resolved = img.resolved,
+            display_cols = display_cols,
+            display_rows = display_rows,
             video = img.video,
           }
         elseif img.resolved and img.video then
           -- Auto-detected video: resolved path but no dimensions yet
           row_images[col] = {
-            alt = img.alt, url = img.url, resolved = img.resolved,
-            display_cols = col_widths[col], display_rows = 10,
+            alt = img.alt,
+            url = img.url,
+            resolved = img.resolved,
+            display_cols = col_widths[col],
+            display_rows = 10,
             video = true,
           }
         elseif img.src_url then
           row_images[col] = {
-            alt = img.alt, url = img.url, resolved = nil, src_url = img.src_url,
-            display_cols = col_widths[col], display_rows = 10,
+            alt = img.alt,
+            url = img.url,
+            resolved = nil,
+            src_url = img.src_url,
+            display_cols = col_widths[col],
+            display_rows = 10,
             video = img.video,
           }
         end
@@ -949,9 +925,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
           local lbl_hls = {
             { col = #img_icon + 1, end_col = #label, hl = "Comment" },
           }
-          if icon_hl then
-            table.insert(lbl_hls, 1, { col = 0, end_col = #img_icon, hl = icon_hl })
-          end
+          if icon_hl then table.insert(lbl_hls, 1, { col = 0, end_col = #img_icon, hl = icon_hl }) end
           label_cells[col] = {
             text = label,
             highlights = lbl_hls,
@@ -964,9 +938,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
       -- Center-align image label cells
       local img_align_overrides = {}
       for col = 1, num_cols do
-        if row_images[col] then
-          img_align_overrides[col] = "center"
-        end
+        if row_images[col] then img_align_overrides[col] = "center" end
       end
       local label_line, label_hls, label_links = build_row(label_cells, false, img_align_overrides)
       table.insert(out_lines, label_line)
@@ -975,7 +947,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
       table.insert(out_source_offsets, 1 + row_idx) -- data row N -> offset 1+N (separator at 1)
 
       -- Add placeholder rows for images
-      local img_start_line_idx = #out_lines  -- 0-indexed line where images start
+      local img_start_line_idx = #out_lines -- 0-indexed line where images start
       for _ = 1, max_img_rows do
         local empty_line, empty_hls = build_empty_row()
         table.insert(out_lines, empty_line)
@@ -998,9 +970,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
         -- When the gap is odd, expand the image by 1 cell so centering is symmetric.
         local img_cols = img.display_cols
         local diff = col_widths[col] - img_cols
-        if diff > 0 and diff % 2 == 1 then
-          img_cols = img_cols + 1
-        end
+        if diff > 0 and diff % 2 == 1 then img_cols = img_cols + 1 end
         local center_pad = math.max(0, math.floor((col_widths[col] - img_cols) / 2))
         col_display_offset = col_display_offset + center_pad
 

@@ -36,12 +36,12 @@ end
 
 -- Test 1: <em> inside <figcaption> is stripped (not shown literally)
 do
-  local out = render({
-    "<figure align=\"center\">",
-    "  <img src=\"x.png\" alt=\"x\" />",
+  local out = render {
+    '<figure align="center">',
+    '  <img src="x.png" alt="x" />',
     "  <figcaption><em>caption text</em></figcaption>",
     "</figure>",
-  })
+  }
   assert_false(any_line_contains(out, "<em>"), "<em> opening tag should not appear in output")
   assert_false(any_line_contains(out, "</em>"), "</em> closing tag should not appear in output")
   assert_true(any_line_contains(out, "caption text"), "caption text should appear in output")
@@ -52,7 +52,7 @@ do
   local long_caption = string.rep("word ", 30):gsub("%s+$", "")
   local out = render({
     "<figure>",
-    "  <img src=\"x.png\" alt=\"x\" />",
+    '  <img src="x.png" alt="x" />',
     "  <figcaption>" .. long_caption .. "</figcaption>",
     "</figure>",
   }, { max_width = 40, indent = "  " })
@@ -67,12 +67,12 @@ end
 
 -- Test 3: caption highlights include "Comment" base
 do
-  local out = render({
+  local out = render {
     "<figure>",
-    "  <img src=\"x.png\" alt=\"x\" />",
+    '  <img src="x.png" alt="x" />',
     "  <figcaption>plain caption</figcaption>",
     "</figure>",
-  })
+  }
   local found_comment = false
   for _, entry in ipairs(out.highlights or {}) do
     for _, hl in ipairs(entry.groups or {}) do

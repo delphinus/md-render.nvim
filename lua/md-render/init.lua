@@ -26,7 +26,8 @@ local ALERT_HL_BASES = {
 ---@return integer blended color
 local function blend_color(fg, bg, alpha)
   local r = math.floor(bit.rshift(fg, 16) * alpha + bit.rshift(bg, 16) * (1 - alpha) + 0.5)
-  local g = math.floor(bit.band(bit.rshift(fg, 8), 0xFF) * alpha + bit.band(bit.rshift(bg, 8), 0xFF) * (1 - alpha) + 0.5)
+  local g =
+    math.floor(bit.band(bit.rshift(fg, 8), 0xFF) * alpha + bit.band(bit.rshift(bg, 8), 0xFF) * (1 - alpha) + 0.5)
   local b = math.floor(bit.band(fg, 0xFF) * alpha + bit.band(bg, 0xFF) * (1 - alpha) + 0.5)
   return bit.lshift(r, 16) + bit.lshift(g, 8) + b
 end
@@ -55,9 +56,7 @@ end
 --- Set up alert highlight groups (MdRenderAlert* and MdRenderAlert*Bg)
 function M.setup_alert_highlights()
   local normal_hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
-  if not normal_hl.bg then
-    normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
-  end
+  if not normal_hl.bg then normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false }) end
   local normal_bg = normal_hl.bg or 0x1e1e2e
 
   for name, base_hl_name in pairs(ALERT_HL_BASES) do
@@ -71,9 +70,7 @@ end
 --- Set up <details> highlight groups (MdRenderDetailsBg)
 function M.setup_details_highlights()
   local normal_hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
-  if not normal_hl.bg then
-    normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
-  end
+  if not normal_hl.bg then normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false }) end
   local normal_bg = normal_hl.bg or 0x1e1e2e
 
   local border_hl = vim.api.nvim_get_hl(0, { name = "FloatBorder", link = false })
@@ -110,9 +107,7 @@ end
 --- Set up image placeholder highlight group (MdRenderImagePlaceholder)
 function M.setup_image_placeholder_highlight()
   local normal_hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
-  if not normal_hl.bg then
-    normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
-  end
+  if not normal_hl.bg then normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false }) end
   local normal_bg = normal_hl.bg or 0x1e1e2e
   local comment_hl = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
   local fg = comment_hl.fg or 0x888888
@@ -126,9 +121,7 @@ end
 --- visually distinct from headings even when the colorscheme paints both green.
 function M.setup_inline_code_highlight()
   local normal_hl = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
-  if not normal_hl.bg then
-    normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
-  end
+  if not normal_hl.bg then normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false }) end
   local normal_bg = normal_hl.bg or 0x1e1e2e
   local comment_hl = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
   local tint = comment_hl.fg or 0x888888

@@ -12,9 +12,7 @@ end
 --- Check if the terminal supports OSC 8 hyperlinks
 ---@return boolean
 function M.supports_osc8()
-  if _osc8_supported ~= nil then
-    return _osc8_supported
-  end
+  if _osc8_supported ~= nil then return _osc8_supported end
 
   local term = vim.env.TERM_PROGRAM
   if term then
@@ -47,9 +45,7 @@ function M.supports_osc8()
   end
 
   -- Fallback: detect via terminal-specific env vars
-  if vim.env.KITTY_WINDOW_ID
-    or vim.env.GHOSTTY_RESOURCES_DIR
-    or vim.env.WEZTERM_EXECUTABLE then
+  if vim.env.KITTY_WINDOW_ID or vim.env.GHOSTTY_RESOURCES_DIR or vim.env.WEZTERM_EXECUTABLE then
     _osc8_supported = true
     return true
   end
@@ -138,17 +134,13 @@ function M.apply_treesitter_highlights(buf, ns, content)
       -- Clamp to actual line lengths to handle truncated lines correctly.
       local start_line_text = content.lines[buf_sr + 1]
       if start_line_text and buf_sc > #start_line_text then
-        if buf_sr == buf_er then
-          goto skip_capture
-        end
+        if buf_sr == buf_er then goto skip_capture end
         buf_sr = buf_sr + 1
         buf_sc = prefix_len
       end
 
       local end_line_text = content.lines[buf_er + 1]
-      if end_line_text and buf_ec > #end_line_text then
-        buf_ec = #end_line_text
-      end
+      if end_line_text and buf_ec > #end_line_text then buf_ec = #end_line_text end
 
       pcall(vim.api.nvim_buf_set_extmark, buf, ns, buf_sr, buf_sc, {
         end_row = buf_er,
@@ -182,16 +174,12 @@ function M.apply_content_to_buffer(buf, ns, content, opts)
     if line_text then
       for _, group in ipairs(hl_info.groups) do
         local end_col = group.end_col
-        if end_col == -1 or end_col > #line_text then
-          end_col = #line_text
-        end
+        if end_col == -1 or end_col > #line_text then end_col = #line_text end
         local extmark_opts = {
           end_col = end_col,
           hl_group = group.hl,
         }
-        if group.hl_eol then
-          extmark_opts.hl_eol = true
-        end
+        if group.hl_eol then extmark_opts.hl_eol = true end
         vim.api.nvim_buf_set_extmark(buf, ns, hl_info.line, group.col, extmark_opts)
       end
     end
@@ -202,12 +190,8 @@ function M.apply_content_to_buffer(buf, ns, content, opts)
     if line_text then
       local col_start = link.col_start
       local col_end = link.col_end
-      if col_start > #line_text then
-        goto next_link
-      end
-      if col_end > #line_text then
-        col_end = #line_text
-      end
+      if col_start > #line_text then goto next_link end
+      if col_end > #line_text then col_end = #line_text end
       local hl
       if link.url:match "^#" then
         hl = "MdRenderLinkAnchor"
@@ -267,12 +251,8 @@ function M.open_float_window(buf, content, float_win, opts)
   local total_height = height + 2
   local max_row = vim.o.lines - vim.o.cmdheight - 1
 
-  if row + total_height > max_row then
-    row = math.max(0, max_row - total_height)
-  end
-  if col + width > vim.o.columns then
-    col = math.max(0, vim.o.columns - width)
-  end
+  if row + total_height > max_row then row = math.max(0, max_row - total_height) end
+  if col + width > vim.o.columns then col = math.max(0, vim.o.columns - width) end
 
   local win = vim.api.nvim_open_win(buf, enter, {
     relative = "editor",
@@ -397,8 +377,13 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
 
       -- Helper: check if click is on an internal anchor or URL extmark
       local function try_open_url()
-        local extmarks =
-          vim.api.nvim_buf_get_extmarks(buf, ns, { click_line, 0 }, { click_line + 1, 0 }, { details = true })
+        local extmarks = vim.api.nvim_buf_get_extmarks(
+          buf,
+          ns,
+          { click_line, 0 },
+          { click_line + 1, 0 },
+          { details = true }
+        )
         for _, mark in ipairs(extmarks) do
           local _, _, start_col, details = unpack(mark)
           if details.url then
@@ -485,9 +470,7 @@ end
 ---@param opts? { buf?: integer, build_content?: fun(): MdRender.Content }
 ---@return MdRender.ImageState?
 function M.setup_images(win, content, ns, opts)
-  if not content.image_placements or #content.image_placements == 0 then
-    return nil
-  end
+  if not content.image_placements or #content.image_placements == 0 then return nil end
 
   local image = require "md-render.image"
   if not image.supports_kitty() then return nil end
@@ -504,7 +487,7 @@ function M.setup_images(win, content, ns, opts)
     placements = content.image_placements,
     image_ids = {},
     anims = {},
-    tx_dims = {},   -- path → {w, h}: actual transmitted image dimensions
+    tx_dims = {}, -- path → {w, h}: actual transmitted image dimensions
     win = win,
     redraw_timer = nil,
     autocmd_ids = {},
@@ -516,9 +499,7 @@ function M.setup_images(win, content, ns, opts)
   local on_download
   if opts and opts.buf and opts.build_content then
     on_download = function()
-      if state._rebuild_timer then
-        state._rebuild_timer:stop()
-      end
+      if state._rebuild_timer then state._rebuild_timer:stop() end
       state._rebuild_timer = vim.defer_fn(function()
         state._rebuild_timer = nil
         if not vim.api.nvim_win_is_valid(win) then return end
@@ -553,11 +534,10 @@ function M.setup_images(win, content, ns, opts)
     local wininfo = vim.fn.getwininfo(state.win)[1]
     if not wininfo then return false end
     local topline = wininfo.topline - 1
-    local win_height = wininfo.height  -- excludes winbar; matches put_image()
+    local win_height = wininfo.height -- excludes winbar; matches put_image()
     local p_start = placement.line or 0
     local p_end = p_start + (placement.rows or 1) - 1
-    return p_end >= topline - LAZY_PADDING
-      and p_start < topline + win_height + LAZY_PADDING
+    return p_end >= topline - LAZY_PADDING and p_start < topline + win_height + LAZY_PADDING
   end
 
   local function place_images()
@@ -570,7 +550,8 @@ function M.setup_images(win, content, ns, opts)
     -- when WinScrolled brings them within range, and skipping them here
     -- prevents bulk transmission of off-screen images.
     for _, placement in ipairs(state.placements) do
-      if placement.path
+      if
+        placement.path
         and not state.image_ids[placement.path]
         and not state.anims[placement.path]
         and not placement._converting
@@ -594,29 +575,45 @@ function M.setup_images(win, content, ns, opts)
       -- Previous frames have no active placement, so clearing them is unnecessary.
       for _, anim in pairs(state.anims) do
         local current_id = anim.frame_ids[anim.current]
-        if current_id then
-          image.clear_placements(current_id)
-        end
+        if current_id then image.clear_placements(current_id) end
       end
       for _, placement in ipairs(state.placements) do
         local anim = state.anims[placement.path]
         if anim then
           local id = anim.frame_ids[anim.current]
           if id then
-            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+            image.put_image(
+              id,
+              state.win,
+              placement.line,
+              placement.col,
+              placement.cols,
+              placement.rows,
+              nil,
+              placement.img_w,
+              placement.img_h
+            )
           end
         else
           local id = state.image_ids[placement.path]
           if id then
-            image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+            image.put_image(
+              id,
+              state.win,
+              placement.line,
+              placement.col,
+              placement.cols,
+              placement.rows,
+              nil,
+              placement.img_w,
+              placement.img_h
+            )
           end
         end
       end
     end)
     image.flush_batch()
-    if not ok then
-      vim.notify("md-render: image redraw error: " .. tostring(err), vim.log.levels.WARN)
-    end
+    if not ok then vim.notify("md-render: image redraw error: " .. tostring(err), vim.log.levels.WARN) end
   end
 
   -- Single shared animation timer for all animated images.
@@ -640,49 +637,69 @@ function M.setup_images(win, content, ns, opts)
       return
     end
     if anim_timer:is_active() then return end
-    anim_timer:start(200, 200, vim.schedule_wrap(function()
-      if not vim.api.nvim_win_is_valid(state.win) then
-        anim_timer:stop()
-        return
-      end
-      -- Clear only animation previous frames, then re-place ALL images.
-      -- - Animation frames must be cleared for the new frame to show
-      --   (WezTerm doesn't visually replace overlapping placements).
-      -- - Static images are NOT cleared but still re-placed every tick
-      --   because WezTerm removes placements when TUI rewrites cells.
-      -- - Clearing must happen BEFORE placing (clear after put causes
-      --   WezTerm to remove the just-placed images too).
-      for _, anim in pairs(state.anims) do
-        if #anim.frame_ids > 1 then
-          local prev_id = anim.frame_ids[anim.current]
-          anim.current = anim.current % #anim.frame_ids + 1
-          if prev_id then
-            image.clear_placements(prev_id)
+    anim_timer:start(
+      200,
+      200,
+      vim.schedule_wrap(function()
+        if not vim.api.nvim_win_is_valid(state.win) then
+          anim_timer:stop()
+          return
+        end
+        -- Clear only animation previous frames, then re-place ALL images.
+        -- - Animation frames must be cleared for the new frame to show
+        --   (WezTerm doesn't visually replace overlapping placements).
+        -- - Static images are NOT cleared but still re-placed every tick
+        --   because WezTerm removes placements when TUI rewrites cells.
+        -- - Clearing must happen BEFORE placing (clear after put causes
+        --   WezTerm to remove the just-placed images too).
+        for _, anim in pairs(state.anims) do
+          if #anim.frame_ids > 1 then
+            local prev_id = anim.frame_ids[anim.current]
+            anim.current = anim.current % #anim.frame_ids + 1
+            if prev_id then image.clear_placements(prev_id) end
           end
         end
-      end
-      image.begin_batch()
-      local ok, err = pcall(function()
-        for _, placement in ipairs(state.placements) do
-          local anim = state.anims[placement.path]
-          if anim then
-            local id = anim.frame_ids[anim.current]
-            if id then
-              image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
-            end
-          else
-            local id = state.image_ids[placement.path]
-            if id then
-              image.put_image(id, state.win, placement.line, placement.col, placement.cols, placement.rows, nil, placement.img_w, placement.img_h)
+        image.begin_batch()
+        local ok, err = pcall(function()
+          for _, placement in ipairs(state.placements) do
+            local anim = state.anims[placement.path]
+            if anim then
+              local id = anim.frame_ids[anim.current]
+              if id then
+                image.put_image(
+                  id,
+                  state.win,
+                  placement.line,
+                  placement.col,
+                  placement.cols,
+                  placement.rows,
+                  nil,
+                  placement.img_w,
+                  placement.img_h
+                )
+              end
+            else
+              local id = state.image_ids[placement.path]
+              if id then
+                image.put_image(
+                  id,
+                  state.win,
+                  placement.line,
+                  placement.col,
+                  placement.cols,
+                  placement.rows,
+                  nil,
+                  placement.img_w,
+                  placement.img_h
+                )
+              end
             end
           end
-        end
+        end)
+        image.flush_batch()
+        if not ok then vim.notify("md-render: animation error: " .. tostring(err), vim.log.levels.WARN) end
       end)
-      image.flush_batch()
-      if not ok then
-        vim.notify("md-render: animation error: " .. tostring(err), vim.log.levels.WARN)
-      end
-    end))
+    )
   end
 
   -- Pause all animation timers (during scroll/redraw to avoid racing with redraw!)
@@ -712,7 +729,7 @@ function M.setup_images(win, content, ns, opts)
       image.end_sync_update()
       resume_anim_timers()
     else
-      vim.cmd("redraw!")
+      vim.cmd "redraw!"
       vim.schedule(function()
         place_images()
         resume_anim_timers()
@@ -721,9 +738,7 @@ function M.setup_images(win, content, ns, opts)
   end
 
   local function schedule_redraw()
-    if state.redraw_timer then
-      state.redraw_timer:stop()
-    end
+    if state.redraw_timer then state.redraw_timer:stop() end
     -- Pause animations immediately on scroll to stop terminal writes
     pause_anim_timers()
     state.redraw_timer = vim.defer_fn(function()
@@ -748,7 +763,7 @@ function M.setup_images(win, content, ns, opts)
     local marks = vim.api.nvim_buf_get_extmarks(buf, ns, { start_line, 0 }, { end_line, -1 }, { details = true })
     for _, mark in ipairs(marks) do
       if mark[4] and mark[4].hl_group == "MdRenderImagePlaceholder" then
-        placeholder_lines[mark[2]] = true  -- mark[2] is the line number
+        placeholder_lines[mark[2]] = true -- mark[2] is the line number
         vim.api.nvim_buf_del_extmark(buf, ns, mark[1])
       end
     end
@@ -857,9 +872,7 @@ function M.setup_images(win, content, ns, opts)
       local placeholder_rows = placement.rows
 
       -- Auto-detect video content when not already flagged (e.g. URL without extension)
-      if not placement.video and image.is_video_content(path) then
-        placement.video = true
-      end
+      if not placement.video and image.is_video_content(path) then placement.video = true end
 
       if placement.video then
         -- Video: always animated, get dimensions via ffprobe
@@ -980,17 +993,17 @@ function M.setup_images(win, content, ns, opts)
       image.begin_batch()
       local ok, err = pcall(process_placement, placement)
       image.flush_batch()
-      if not ok then
-        vim.notify("md-render: image setup error: " .. tostring(err), vim.log.levels.WARN)
-      end
+      if not ok then vim.notify("md-render: image setup error: " .. tostring(err), vim.log.levels.WARN) end
     end
-    vim.schedule(function() process_one(idx + 1) end)
+    vim.schedule(function()
+      process_one(idx + 1)
+    end)
   end
   process_one(1)
 
   -- Re-display on scroll and cursor movement; clean up on window close
   local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
-  for _, event in ipairs({ "WinScrolled", "CursorMoved", "CursorMovedI" }) do
+  for _, event in ipairs { "WinScrolled", "CursorMoved", "CursorMovedI" } do
     local id = vim.api.nvim_create_autocmd(event, {
       group = augroup,
       callback = function(ev)
@@ -1028,9 +1041,7 @@ end
 ---@return MdRender.ImageState?
 function M.update_images(state, win, content)
   -- No previous state: full setup from scratch
-  if not state then
-    return M.setup_images(win, content, nil)
-  end
+  if not state then return M.setup_images(win, content, nil) end
 
   -- No images in new content: full cleanup
   if not content.image_placements or #content.image_placements == 0 then
@@ -1117,9 +1128,7 @@ function M.cleanup_images(state)
   state.canceled = true
 
   -- Stop download-rebuild timer
-  if state._rebuild_timer then
-    state._rebuild_timer:stop()
-  end
+  if state._rebuild_timer then state._rebuild_timer:stop() end
 
   -- Delete static images from terminal
   local ids = {}
@@ -1136,9 +1145,7 @@ function M.cleanup_images(state)
     for _, fid in ipairs(anim.frame_ids) do
       table.insert(ids, fid)
     end
-    if anim.tmp_dir then
-      vim.fn.delete(anim.tmp_dir, "rf")
-    end
+    if anim.tmp_dir then vim.fn.delete(anim.tmp_dir, "rf") end
   end
 
   image.delete_images(ids)
@@ -1146,9 +1153,7 @@ function M.cleanup_images(state)
   image.delete_all()
 
   -- Stop redraw timer
-  if state.redraw_timer then
-    state.redraw_timer:stop()
-  end
+  if state.redraw_timer then state.redraw_timer:stop() end
 
   -- Remove autocmds
   pcall(vim.api.nvim_del_augroup_by_name, "md_render_images_" .. state.win)

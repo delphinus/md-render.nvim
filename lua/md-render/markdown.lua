@@ -166,8 +166,8 @@ end
 local function restore_backslashes(text, escapes, highlights, links)
   if #escapes == 0 then return text end
   local result = {}
-  local byte_offset = 0  -- cumulative byte shift (3-byte placeholder → 1-byte char = -2 each)
-  local offsets = {}      -- {pos_in_output, delta} for position adjustments
+  local byte_offset = 0 -- cumulative byte shift (3-byte placeholder → 1-byte char = -2 each)
+  local offsets = {} -- {pos_in_output, delta} for position adjustments
   local i = 1
   while i <= #text do
     local b1 = text:byte(i)
@@ -194,9 +194,7 @@ local function restore_backslashes(text, escapes, highlights, links)
     local function adjust(pos)
       local shift = 0
       for _, o in ipairs(offsets) do
-        if pos > o.pos then
-          shift = shift + o.delta
-        end
+        if pos > o.pos then shift = shift + o.delta end
       end
       return pos - shift
     end
@@ -219,17 +217,46 @@ end
 
 --- Common HTML named character references
 local HTML_ENTITIES = {
-  amp = "&", lt = "<", gt = ">", quot = '"', apos = "'",
+  amp = "&",
+  lt = "<",
+  gt = ">",
+  quot = '"',
+  apos = "'",
   nbsp = "\194\160", -- U+00A0
-  ndash = "–", mdash = "—", lsquo = "\226\128\152", rsquo = "\226\128\153",
-  ldquo = "\226\128\156", rdquo = "\226\128\157", bull = "•",
-  hellip = "…", copy = "©", reg = "®", trade = "™",
-  laquo = "«", raquo = "»", middot = "·", times = "×", divide = "÷",
-  plusmn = "±", micro = "µ", para = "¶", sect = "§", deg = "°",
-  frac14 = "¼", frac12 = "½", frac34 = "¾",
-  larr = "←", rarr = "→", uarr = "↑", darr = "↓",
-  hearts = "♥", diams = "♦", clubs = "♣", spades = "♠",
-  checkmark = "✓", cross = "✗",
+  ndash = "–",
+  mdash = "—",
+  lsquo = "\226\128\152",
+  rsquo = "\226\128\153",
+  ldquo = "\226\128\156",
+  rdquo = "\226\128\157",
+  bull = "•",
+  hellip = "…",
+  copy = "©",
+  reg = "®",
+  trade = "™",
+  laquo = "«",
+  raquo = "»",
+  middot = "·",
+  times = "×",
+  divide = "÷",
+  plusmn = "±",
+  micro = "µ",
+  para = "¶",
+  sect = "§",
+  deg = "°",
+  frac14 = "¼",
+  frac12 = "½",
+  frac34 = "¾",
+  larr = "←",
+  rarr = "→",
+  uarr = "↑",
+  darr = "↓",
+  hearts = "♥",
+  diams = "♦",
+  clubs = "♣",
+  spades = "♠",
+  checkmark = "✓",
+  cross = "✗",
 }
 
 --- Encode a Unicode codepoint as a UTF-8 string
@@ -269,9 +296,7 @@ local function decode_html_entities(text, highlights, links)
       local num_match, num_end = text:match("^(&#(%d+);)", i)
       if not num_match then
         num_match, num_end = text:match("^(&#[xX](%x+);)", i)
-        if num_match then
-          num_end = tonumber(num_end, 16)
-        end
+        if num_match then num_end = tonumber(num_end, 16) end
       else
         num_end = tonumber(num_end)
       end
@@ -279,9 +304,7 @@ local function decode_html_entities(text, highlights, links)
         local replacement = utf8_char(num_end)
         local out_pos = #table.concat(result)
         local delta = #num_match - #replacement
-        if delta ~= 0 then
-          table.insert(offsets, { pos = out_pos, delta = delta })
-        end
+        if delta ~= 0 then table.insert(offsets, { pos = out_pos, delta = delta }) end
         table.insert(result, replacement)
         i = i + #num_match
       else
@@ -293,9 +316,7 @@ local function decode_html_entities(text, highlights, links)
             local full = "&" .. name .. ";"
             local out_pos = #table.concat(result)
             local delta = #full - #replacement
-            if delta ~= 0 then
-              table.insert(offsets, { pos = out_pos, delta = delta })
-            end
+            if delta ~= 0 then table.insert(offsets, { pos = out_pos, delta = delta }) end
             table.insert(result, replacement)
             i = i + #full
           else
@@ -317,9 +338,7 @@ local function decode_html_entities(text, highlights, links)
     local function adjust(pos)
       local shift = 0
       for _, o in ipairs(offsets) do
-        if pos > o.pos then
-          shift = shift + o.delta
-        end
+        if pos > o.pos then shift = shift + o.delta end
       end
       return pos - shift
     end
@@ -341,9 +360,7 @@ end
 ---@param icon string single icon character
 ---@return string
 local function pad_icon(icon)
-  if vim.api.nvim_strwidth(icon) == 1 then
-    return icon .. " "
-  end
+  if vim.api.nvim_strwidth(icon) == 1 then return icon .. " " end
   return icon
 end
 
@@ -385,9 +402,7 @@ local ALERT_TYPES = {
 ---@param hl_count integer number of highlights to adjust (from the beginning)
 ---@param link_count integer number of links to adjust (from the beginning)
 local function adjust_positions(highlights, links, removals, hl_count, link_count)
-  if #removals == 0 then
-    return
-  end
+  if #removals == 0 then return end
   local function adjust(pos)
     local shift = 0
     for _, r in ipairs(removals) do
@@ -642,7 +657,10 @@ local function process_embeds(text, highlights, links)
         if embed_icon_hl then
           table.insert(highlights, { col = start_col, end_col = start_col + #icon - 1, hl = embed_icon_hl })
         end
-        table.insert(highlights, { col = start_col + #icon, end_col = start_col + #display, hl = "MdRenderLinkObsidian" })
+        table.insert(
+          highlights,
+          { col = start_col + #icon, end_col = start_col + #display, hl = "MdRenderLinkObsidian" }
+        )
         table.insert(links, {
           col_start = start_col,
           col_end = start_col + #display,
@@ -730,9 +748,7 @@ end
 ---@param links MdRender.Markdown.Link[]
 ---@return string processed
 local function process_reference_links(text, ref_links, highlights, links)
-  if not ref_links or not next(ref_links) then
-    return text
-  end
+  if not ref_links or not next(ref_links) then return text end
   local pre_hl_count = #highlights
   local pre_link_count = #links
   local removals = {}
@@ -749,9 +765,7 @@ local function process_reference_links(text, ref_links, highlights, links)
           if close2 then
             local ref = text:sub(close + 2, close2 - 1)
             -- Collapsed reference link: [text][] uses label as ref
-            if ref == "" then
-              ref = label
-            end
+            if ref == "" then ref = label end
             local url = ref_links[ref:lower()]
             if url then
               local start_col = #processed
@@ -833,14 +847,12 @@ local function process_bare_urls(text, max_url_width, highlights, links)
           local start_col = #processed
           local display_url
           if vim.api.nvim_strwidth(captured) > max_url_width then
-            local target = max_url_width - vim.api.nvim_strwidth("…")
+            local target = max_url_width - vim.api.nvim_strwidth "…"
             local current_width = 0
             local byte_pos = 0
             for char in captured:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
               local char_width = vim.api.nvim_strwidth(char)
-              if current_width + char_width > target then
-                break
-              end
+              if current_width + char_width > target then break end
               current_width = current_width + char_width
               byte_pos = byte_pos + #char
             end
@@ -865,53 +877,51 @@ local function process_bare_urls(text, max_url_width, highlights, links)
         end
       end
       if not handled_autolink then
-      local s, e = text:find("https?://[^%s%)<>\"]+", i)
-      if s == i then
-        local url_match = text:sub(s, e)
-        -- Strip trailing punctuation (including markdown markers)
-        local url = url_match:gsub("[.,;:!?*~]+$", "")
-        -- Strip trailing non-ASCII symbols (e.g. ⏎, →) that are not valid in URLs.
-        -- charclass returns 1 for punctuation/symbols, >=2 for letters/digits.
-        while #url > 0 do
-          local last_char = vim.fn.strcharpart(url, vim.fn.strchars(url) - 1, 1)
-          if #last_char > 1 and vim.fn.charclass(last_char) <= 1 then
-            url = url:sub(1, #url - #last_char)
-          else
-            break
-          end
-        end
-        local start_col = #processed
-        local display_url
-
-        if vim.api.nvim_strwidth(url) > max_url_width then
-          local target = max_url_width - vim.api.nvim_strwidth("…")
-          local current_width = 0
-          local byte_pos = 0
-          for char in url:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-            local char_width = vim.api.nvim_strwidth(char)
-            if current_width + char_width > target then
+        local s, e = text:find('https?://[^%s%)<>"]+', i)
+        if s == i then
+          local url_match = text:sub(s, e)
+          -- Strip trailing punctuation (including markdown markers)
+          local url = url_match:gsub("[.,;:!?*~]+$", "")
+          -- Strip trailing non-ASCII symbols (e.g. ⏎, →) that are not valid in URLs.
+          -- charclass returns 1 for punctuation/symbols, >=2 for letters/digits.
+          while #url > 0 do
+            local last_char = vim.fn.strcharpart(url, vim.fn.strchars(url) - 1, 1)
+            if #last_char > 1 and vim.fn.charclass(last_char) <= 1 then
+              url = url:sub(1, #url - #last_char)
+            else
               break
             end
-            current_width = current_width + char_width
-            byte_pos = byte_pos + #char
           end
-          display_url = url:sub(1, byte_pos) .. "…"
-          table.insert(adjustments, {
-            input_pos = i - 1 + byte_pos,
-            delta = #url - byte_pos - #"…",
-          })
-        else
-          display_url = url
-        end
+          local start_col = #processed
+          local display_url
 
-        processed = processed .. display_url
-        table.insert(highlights, { col = start_col, end_col = start_col + #display_url, hl = "Underlined" })
-        table.insert(links, { col_start = start_col, col_end = start_col + #display_url, url = url })
-        i = i + #url
-      else
-        processed = processed .. text:sub(i, i)
-        i = i + 1
-      end
+          if vim.api.nvim_strwidth(url) > max_url_width then
+            local target = max_url_width - vim.api.nvim_strwidth "…"
+            local current_width = 0
+            local byte_pos = 0
+            for char in url:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
+              local char_width = vim.api.nvim_strwidth(char)
+              if current_width + char_width > target then break end
+              current_width = current_width + char_width
+              byte_pos = byte_pos + #char
+            end
+            display_url = url:sub(1, byte_pos) .. "…"
+            table.insert(adjustments, {
+              input_pos = i - 1 + byte_pos,
+              delta = #url - byte_pos - #"…",
+            })
+          else
+            display_url = url
+          end
+
+          processed = processed .. display_url
+          table.insert(highlights, { col = start_col, end_col = start_col + #display_url, hl = "Underlined" })
+          table.insert(links, { col_start = start_col, col_end = start_col + #display_url, url = url })
+          i = i + #url
+        else
+          processed = processed .. text:sub(i, i)
+          i = i + 1
+        end
       end -- if not handled_autolink
     else
       processed = processed .. text:sub(i, i)
@@ -923,9 +933,7 @@ local function process_bare_urls(text, max_url_width, highlights, links)
     local function adjust(pos)
       local total_delta = 0
       for _, adj in ipairs(adjustments) do
-        if pos > adj.input_pos then
-          total_delta = total_delta + adj.delta
-        end
+        if pos > adj.input_pos then total_delta = total_delta + adj.delta end
       end
       return pos - total_delta
     end
@@ -1141,8 +1149,7 @@ local function process_html_tags(text, highlights, links)
         if video_tag then
           local src = video_tag:match 'src="([^"]*)"' or video_tag:match "src='([^']*)'"
           if not src then
-            src = video_tag:match '<source[^>]*src="([^"]*)"'
-              or video_tag:match "<source[^>]*src='([^']*)'>"
+            src = video_tag:match '<source[^>]*src="([^"]*)"' or video_tag:match "<source[^>]*src='([^']*)'>"
           end
           if src then
             local icons_mod = require "md-render.icons"
@@ -1185,9 +1192,7 @@ local function process_html_tags(text, highlights, links)
                 table.insert(removals, { start = close_start - 1, count = #close_tag })
                 local start_col = #processed
                 processed = processed .. content
-                if hl then
-                  table.insert(highlights, { col = start_col, end_col = start_col + #content, hl = hl })
-                end
+                if hl then table.insert(highlights, { col = start_col, end_col = start_col + #content, hl = hl }) end
                 i = close_start + #close_tag
                 matched = true
               end
@@ -1273,9 +1278,7 @@ end
 ---@param links MdRender.Markdown.Link[]
 ---@return string processed
 local function process_footnote_refs(text, footnote_map, highlights, links)
-  if not footnote_map or not next(footnote_map) then
-    return text
-  end
+  if not footnote_map or not next(footnote_map) then return text end
   local processed = ""
   local i = 1
   while i <= #text do
@@ -1289,7 +1292,10 @@ local function process_footnote_refs(text, footnote_map, highlights, links)
           local start_col = #processed
           processed = processed .. display
           table.insert(highlights, { col = start_col, end_col = start_col + #display, hl = "Special" })
-          table.insert(links, { col_start = start_col, col_end = start_col + #display, url = "#footnote-def-" .. label })
+          table.insert(
+            links,
+            { col_start = start_col, col_end = start_col + #display, url = "#footnote-def-" .. label }
+          )
           i = close + 1
         else
           processed = processed .. text:sub(i, i)
@@ -1467,8 +1473,7 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   end
 
   -- List items (- * + 1. 1)) - detect marker
-  local list_marker = rendered_text:match "^(%s*[-*+]%s)"
-    or rendered_text:match "^(%s*%d+[.)]%s)"
+  local list_marker = rendered_text:match "^(%s*[-*+]%s)" or rendered_text:match "^(%s*%d+[.)]%s)"
 
   -- Checkbox (- [ ] / - [x] / - [X] / - [-]) - replace marker + checkbox with icon
   local checkbox_hl = nil
@@ -1478,13 +1483,13 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
     if cb_match then
       local icon
       if cb_char == " " then
-        icon = pad_icon("󰄱") .. " "
+        icon = pad_icon "󰄱" .. " "
         checkbox_hl = "Comment"
       elseif cb_char == "-" then
-        icon = pad_icon("󰡖") .. " "
+        icon = pad_icon "󰡖" .. " "
         checkbox_hl = "DiagnosticWarn"
       else
-        icon = pad_icon("󰄲") .. " "
+        icon = pad_icon "󰄲" .. " "
         checkbox_hl = "DiagnosticOk"
       end
       local indent_part = list_marker:match "^(%s*)" or ""
@@ -1518,17 +1523,15 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   -- no markdown-significant characters.  This dramatically speeds up rendering
   -- of large documents (e.g. classical Chinese texts) where most lines are
   -- pure prose with no formatting.
-  local needs_inline = rendered_text:find("[%*_~`%[<>=!$\\&#%%]")
-    or rendered_text:find("https?://")
+  local needs_inline = rendered_text:find "[%*_~`%[<>=!$\\&#%%]"
+    or rendered_text:find "https?://"
     or (autolinks and #autolinks > 0)
-    or (footnote_map and next(footnote_map) and rendered_text:find("%[%^"))
+    or (footnote_map and next(footnote_map) and rendered_text:find "%[%^")
   -- Declare locals before the fast-path goto so they are in scope at ::finalize::
   local code_spans
   local backslash_escapes
 
-  if not needs_inline then
-    goto finalize
-  end
+  if not needs_inline then goto finalize end
 
   -- Protect code spans before any inline processing (code spans take precedence)
   rendered_text, code_spans = protect_code_spans(rendered_text)
@@ -1548,9 +1551,7 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
   until rendered_text == prev
   rendered_text = strip_html_tags(rendered_text, highlights)
   rendered_text = process_bare_urls(rendered_text, MAX_URL_DISPLAY_WIDTH, highlights, links)
-  if repo_base_url then
-    rendered_text = process_issue_refs(rendered_text, repo_base_url, highlights, links)
-  end
+  if repo_base_url then rendered_text = process_issue_refs(rendered_text, repo_base_url, highlights, links) end
   if autolinks and #autolinks > 0 then
     rendered_text = process_autolink_refs(rendered_text, autolinks, highlights, links)
   end
@@ -1636,9 +1637,7 @@ Markdown.parse_footnotes = function(lines)
   end
 
   for _, line in ipairs(lines) do
-    if line:match "^```" then
-      in_code = not in_code
-    end
+    if line:match "^```" then in_code = not in_code end
     if in_code then goto continue end
 
     local label, text = line:match "^%[%^([^%]]+)%]:%s+(.+)$"
@@ -1696,13 +1695,9 @@ end
 ---@return string? marker_type
 Markdown.list_marker_type = function(line)
   local bullet = line:match "^%s*([-*+])%s"
-  if bullet then
-    return bullet
-  end
+  if bullet then return bullet end
   local delim = line:match "^%s*%d+([.)])%s"
-  if delim then
-    return delim
-  end
+  if delim then return delim end
   return nil
 end
 
@@ -1730,9 +1725,7 @@ Markdown.renumber_ordered_lists = function(lines)
       end
       table.insert(result, prefix .. tostring(stack[#stack].counter) .. rest)
     else
-      if not line:match "^%s*$" then
-        stack = {}
-      end
+      if not line:match "^%s*$" then stack = {} end
       table.insert(result, line)
     end
   end

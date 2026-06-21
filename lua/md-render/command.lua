@@ -26,7 +26,7 @@ function M.dispatch(args)
   elseif sub == "toggle" then
     p.toggle()
   elseif sub == "split" then
-    p.split({ mods = args.smods })
+    p.split { mods = args.smods }
   elseif sub == "demo" then
     p.show_demo()
   elseif sub == "auto" then
@@ -38,10 +38,7 @@ function M.dispatch(args)
     elseif a == "toggle" then
       p.auto_toggle()
     else
-      vim.notify(
-        "MdRender auto: unknown argument '" .. a .. "' (expected on|off|toggle)",
-        vim.log.levels.WARN
-      )
+      vim.notify("MdRender auto: unknown argument '" .. a .. "' (expected on|off|toggle)", vim.log.levels.WARN)
     end
   else
     vim.notify(
@@ -57,16 +54,16 @@ end
 ---@param cmdline string The full command line so far.
 ---@return string[]
 function M.complete(arglead, cmdline, _cursorpos)
-  local tail = cmdline:match("MdRender%s+(.*)$") or ""
+  local tail = cmdline:match "MdRender%s+(.*)$" or ""
   local before = tail:sub(1, #tail - #arglead)
   local n = 0
-  for _ in before:gmatch("%S+") do
+  for _ in before:gmatch "%S+" do
     n = n + 1
   end
   local list
   if n == 0 then
     list = SUBCOMMANDS
-  elseif n == 1 and before:match("^%s*auto%s+$") then
+  elseif n == 1 and before:match "^%s*auto%s+$" then
     list = AUTO_ARGS
   else
     return {}

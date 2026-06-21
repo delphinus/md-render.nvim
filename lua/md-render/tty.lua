@@ -79,12 +79,12 @@ end
 -- Platform constants
 -- ============================================================================
 
-local SOL_LOCAL = 0          -- macOS: level for local socket options
-local LOCAL_PEERPID = 0x002  -- macOS: retrieve peer pid
-local SOL_SOCKET_LINUX = 1   -- Linux: SOL_SOCKET
-local SO_PEERCRED = 17       -- Linux: retrieve peer credentials
-local PROC_PIDTBSDINFO = 3   -- macOS: proc_pidinfo flavor
-local S_IFCHR = 0x2000       -- character device mode
+local SOL_LOCAL = 0 -- macOS: level for local socket options
+local LOCAL_PEERPID = 0x002 -- macOS: retrieve peer pid
+local SOL_SOCKET_LINUX = 1 -- Linux: SOL_SOCKET
+local SO_PEERCRED = 17 -- Linux: retrieve peer credentials
+local PROC_PIDTBSDINFO = 3 -- macOS: proc_pidinfo flavor
+local S_IFCHR = 0x2000 -- character device mode
 
 -- ============================================================================
 -- Level 1: Direct TTY detection via isatty() + ttyname()
@@ -96,12 +96,10 @@ function M._detect_direct()
   if IS_WINDOWS then return nil end
   ensure_ffi()
   -- Try stderr first (most likely to survive redirects), then stdout, stdin
-  for _, fd in ipairs({ 2, 1, 0 }) do
+  for _, fd in ipairs { 2, 1, 0 } do
     if ffi.C.isatty(fd) ~= 0 then
       local name = ffi.C.ttyname(fd)
-      if name ~= nil then
-        return ffi.string(name)
-      end
+      if name ~= nil then return ffi.string(name) end
     end
   end
   return nil
@@ -134,15 +132,15 @@ local function get_socket_peer_pid(fd)
   if IS_WINDOWS then return nil end
   ensure_ffi()
   if IS_OSX then
-    local pid = ffi.new("int[1]")
-    local len = ffi.new("unsigned int[1]", ffi.sizeof("int"))
+    local pid = ffi.new "int[1]"
+    local len = ffi.new("unsigned int[1]", ffi.sizeof "int")
     if ffi.C.getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, pid, len) == 0 then
       local p = pid[0]
       if p > 1 then return p end
     end
   elseif IS_LINUX then
-    local cred = ffi.new("struct md_ucred")
-    local len = ffi.new("unsigned int[1]", ffi.sizeof("struct md_ucred"))
+    local cred = ffi.new "struct md_ucred"
+    local len = ffi.new("unsigned int[1]", ffi.sizeof "struct md_ucred")
     if ffi.C.getsockopt(fd, SOL_SOCKET_LINUX, SO_PEERCRED, cred, len) == 0 then
       local p = cred.pid
       if p > 1 then return p end
@@ -157,7 +155,7 @@ M._get_socket_peer_pid = get_socket_peer_pid -- expose for testing
 ---@return string?
 local function get_pid_tty_darwin(pid)
   ensure_ffi()
-  local info = ffi.new("struct md_proc_bsdinfo")
+  local info = ffi.new "struct md_proc_bsdinfo"
   local size = ffi.C.proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, info, ffi.sizeof(info))
   if size <= 0 then return nil end
   local dev = info.e_tdev
@@ -175,14 +173,14 @@ M._get_pid_tty_darwin = get_pid_tty_darwin
 local function get_pid_tty_linux(pid)
   local f = io.open("/proc/" .. pid .. "/stat", "r")
   if not f then return nil end
-  local content = f:read("*a")
+  local content = f:read "*a"
   f:close()
   -- Format: pid (comm) state ppid pgrp session tty_nr ...
   -- comm can contain spaces/parens, so find the LAST ")"
-  local after_comm = content:match("^.*%)%s+(.*)")
+  local after_comm = content:match "^.*%)%s+(.*)"
   if not after_comm then return nil end
   local fields = {}
-  for field in after_comm:gmatch("%S+") do
+  for field in after_comm:gmatch "%S+" do
     table.insert(fields, field)
     if #fields >= 5 then break end
   end
@@ -192,9 +190,7 @@ local function get_pid_tty_linux(pid)
   local major = bit.band(bit.rshift(tty_nr, 8), 0xFF)
   local minor = bit.bor(bit.band(tty_nr, 0xFF), bit.band(bit.rshift(tty_nr, 12), 0xFFF00))
   -- pts devices have major 136
-  if major == 136 then
-    return "/dev/pts/" .. minor
-  end
+  if major == 136 then return "/dev/pts/" .. minor end
   -- Other TTY types: try /dev/ttyN
   return "/dev/tty" .. minor
 end
@@ -246,9 +242,7 @@ end
 function M.get_tty_path()
   if _tty_detected then return _tty_path end
   _tty_detected = true
-  _tty_path = M._detect_direct()
-    or M._detect_dev_tty()
-    or M._detect_socket_peer()
+  _tty_path = M._detect_direct() or M._detect_dev_tty() or M._detect_socket_peer()
   return _tty_path
 end
 

@@ -18,9 +18,7 @@ local _file_cache = {}
 function M.find_vault_root(buf_dir)
   if _vault_cache[buf_dir] ~= nil then
     local cached = _vault_cache[buf_dir]
-    if cached then
-      return cached.vault_root or nil
-    end
+    if cached then return cached.vault_root or nil end
     return nil
   end
 
@@ -30,9 +28,7 @@ function M.find_vault_root(buf_dir)
     if dir ~= buf_dir and _vault_cache[dir] ~= nil then
       _vault_cache[buf_dir] = _vault_cache[dir]
       local cached = _vault_cache[dir]
-      if cached then
-        return cached.vault_root or nil
-      end
+      if cached then return cached.vault_root or nil end
       return nil
     end
 
@@ -58,9 +54,7 @@ end
 function M.get_attachment_folder(vault_root)
   local info = _vault_cache[vault_root]
   if info and info.attachment_folder ~= nil then
-    if info.attachment_folder then
-      return info.attachment_folder
-    end
+    if info.attachment_folder then return info.attachment_folder end
     return nil
   end
 
@@ -103,9 +97,7 @@ function M.resolve(filename, buf_dir)
   local cache_key = vault_root .. ":" .. basename
   local cached = _file_cache[cache_key]
   if cached then
-    if vim.fn.filereadable(cached) == 1 then
-      return cached
-    end
+    if vim.fn.filereadable(cached) == 1 then return cached end
     _file_cache[cache_key] = nil
   end
 
