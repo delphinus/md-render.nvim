@@ -2147,8 +2147,8 @@ function ContentBuilder:render_document(lines, opts)
     else
       local handled = false
 
-      -- Handle code blocks inside callouts
-      if current_alert_type and line:match "^>" then
+      -- Handle code blocks inside blockquotes (both plain blockquotes and callouts)
+      if line:match "^>" then
         local stripped = line:gsub("^>%s?", "")
         if stripped:match "^```" then
           if not in_callout_code_block then
@@ -2175,7 +2175,9 @@ function ContentBuilder:render_document(lines, opts)
                   cb_hls[2].col = cb_icon_start
                 end
                 self:add_line(fname_line, cb_hls)
-                self:apply_alert_styling(lines_before, #self.lines, current_alert_type, false)
+                if current_alert_type then
+                  self:apply_alert_styling(lines_before, #self.lines, current_alert_type, false)
+                end
                 lines_shown = lines_shown + 1
               end
             end
@@ -2237,7 +2239,7 @@ function ContentBuilder:render_document(lines, opts)
             })
             detect_urls_in_code_line(self, stripped, #callout_code_prefix, #code_line)
           end
-          self:apply_alert_styling(lines_before, #self.lines, current_alert_type, false)
+          if current_alert_type then self:apply_alert_styling(lines_before, #self.lines, current_alert_type, false) end
           handled = true
         end
       end
