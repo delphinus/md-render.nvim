@@ -1,0 +1,17 @@
+# Pre-commit hooks for md-render.nvim.
+# Setup:  pipx install pre-commit  (or: brew install pre-commit)
+#         pre-commit install
+# Run against everything:  pre-commit run --all-files
+#
+# Only StyLua runs here. It downloads its own release binary, so the hook needs no
+# local toolchain and formats staged Lua files in place (honoring .stylua.toml).
+#
+# Luacheck is intentionally CI-only (.github/workflows/lint.yml): its distribution
+# can't run cleanly on every local setup (e.g. the official language:lua hook fails
+# to build under Lua 5.5, and the Docker image is amd64-only). CI runs it on every
+# push / PR, which is enough to guard the lint gate.
+repos:
+  - repo: https://github.com/JohnnyMorganz/StyLua
+    rev: v2.5.2
+    hooks:
+      - id: stylua-github

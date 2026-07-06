@@ -1,0 +1,23 @@
+name: Lint
+on: [push, pull_request]
+jobs:
+  stylua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting
+        uses: JohnnyMorganz/stylua-action@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Keep in sync with the rev in .pre-commit-config.yaml.
+          version: 2.5.2
+          args: --check .
+
+  luacheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint
+        uses: lunarmodules/luacheck@v1
+        with:
+          args: .
