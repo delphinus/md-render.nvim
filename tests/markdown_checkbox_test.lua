@@ -1001,6 +1001,66 @@ test("multiple code spans with link: underline position correct", function()
   end
 end)
 
+-- Fenced code blocks inside plain blockquotes
+local function render_doc_full_cb(input_lines, opts)
+  local builder = ContentBuilder.new()
+  builder:render_document(input_lines, opts or { max_width = 80, indent = "" })
+  return builder.lines, builder.highlights, builder.code_blocks
+end
+
+test("blockquote code fence: fence lines are not rendered as text", function()
+  local lines = render_doc_full_cb {
+    "> hoge",
+    "> ```sh",
+    "> echo $FOO",
+    "> ```",
+    "> fuga",
+  }
+  assert_eq(#lines, 3, "bq code fence: only hoge/code/fuga lines rendered")
+  assert_eq(lines[1], "│ hoge", "bq code fence: first quote line")
+  assert_eq(lines[2], "│ echo $FOO", "bq code fence: code line keeps │ prefix, no backticks")
+  assert_eq(lines[3], "│ fuga", "bq code fence: last quote line")
+  for _, l in ipairs(lines) do
+    assert_eq(l:find "```" == nil, true, "bq code fence: no literal backtick fence in output")
+  end
+end)
+
+test("blockquote code fence: registers a code block for syntax highlighting", function()
+  local _, _, code_blocks = render_doc_full_cb {
+    "> ```sh",
+    "> echo $FOO",
+    "> ```",
+  }
+  assert_eq(#code_blocks, 1, "bq code fence: one code block registered")
+  assert_eq(code_blocks[1].language, "sh", "bq code fence: language detected")
+  assert_eq(code_blocks[1].source_lines[1], "echo $FOO", "bq code fence: source line captured")
+end)
+
+test("blockquote code fence: code content gets String highlight, prefix FloatBorder", function()
+  local _, highlights = render_doc_full_cb {
+    "> ```sh",
+    "> echo $FOO",
+    "> ```",
+  }
+  -- Only the code line is rendered (line index 0), fences consumed
+  local groups
+  for _, h in ipairs(highlights) do
+    if h.line == 0 then groups = h.groups end
+  end
+  assert_eq(groups ~= nil, true, "bq code fence: highlight groups present for code line")
+  if groups then
+    local has_border, has_string = false, false
+    for _, g in ipairs(groups) do
+      if g.hl == "FloatBorder" then has_border = true end
+      if g.hl == "String" then has_string = true end
+      -- must not be styled as an alert/callout
+      assert_eq(g.hl:find "MdRenderAlert" == nil, true, "bq code fence: no alert styling")
+    end
+    assert_eq(has_border, true, "bq code fence: │ prefix is FloatBorder")
+    assert_eq(has_string, true, "bq code fence: code content is String")
+  end
+end)
+
 -- Print summary
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
