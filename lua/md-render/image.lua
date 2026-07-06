@@ -450,7 +450,7 @@ function M.render_mermaid(source)
   f:close()
 
   local cmd = build_mmdc_cmd(cmd_prefix, tmp_input, cache_path)
-  local result = vim.system(cmd, { text = true, timeout = 30000 }):wait()
+  vim.system(cmd, { text = true, timeout = 30000 }):wait()
   os.remove(tmp_input)
 
   if vim.fn.filereadable(cache_path) == 1 then return cache_path end
@@ -484,7 +484,7 @@ function M.render_mermaid_async(source, callback)
 
   local cmd = build_mmdc_cmd(cmd_prefix, tmp_input, cache_path)
 
-  vim.system(cmd, { text = true, timeout = 30000 }, function(result)
+  vim.system(cmd, { text = true, timeout = 30000 }, function(_)
     vim.schedule(function()
       os.remove(tmp_input)
       if vim.fn.filereadable(cache_path) == 1 then
@@ -513,6 +513,16 @@ end
 
 local _kitty_supported = nil
 local _is_ghostty = nil
+
+-- Mutable module state hoisted here so M.reset_cache() (defined below, before the
+-- sections that use these) resolves to the same upvalues. Declaring them only in
+-- the later sections left reset_cache() writing to accidental globals instead.
+local _convert_cmd = nil
+local _convert_checked = false
+local _anim_cmd = nil
+local _anim_checked = false
+local _image_id = 100
+local _session_cleared = false
 
 --- Check if running inside Ghostty terminal.
 --- Ghostty does not support t=t (temporary file transfer mode) in Kitty
@@ -915,9 +925,6 @@ end
 -- Image conversion tool detection
 -- ============================================================================
 
-local _convert_cmd = nil
-local _convert_checked = false
-
 --- Detect the best available tool for static image conversion (JPEG/WebP → PNG).
 --- Priority: sips (macOS) → ffmpeg → magick
 ---@return string? tool  "sips", "ffmpeg", or "magick"
@@ -933,9 +940,6 @@ local function find_convert_tool()
   end
   return _convert_cmd
 end
-
-local _anim_cmd = nil
-local _anim_checked = false
 
 --- Detect the best available tool for animated GIF frame extraction.
 --- Priority: ffmpeg → magick
@@ -1156,10 +1160,8 @@ end
 -- Two-phase image display: transmit + put
 -- ============================================================================
 
-local _image_id = 100
 local _image_paths = {} -- image_id → file path (for Ghostty a=T workaround)
 local _temp_image_paths = {} -- image_id → true for temp files that need cleanup
-local _session_cleared = false
 
 --- Transmit image data to terminal (store without displaying).
 --- The image can then be displayed cheaply with put_image().
@@ -1263,6 +1265,12 @@ local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
   end
 end
 
+-- Forward declarations: these helpers are defined further down but are already
+-- referenced by M.transmit_animated below. Without this, the calls would resolve
+-- to (nil) globals instead of the locals.
+local get_frames_cache_dir
+local get_cached_frames
+
 --- Extract frames from an animated GIF and transmit each as a separate image.
 --- Large GIFs are resized and frames are sampled to stay under MAX_ANIM_FRAMES.
 --- Extracted frames are cached on disk for fast subsequent loads.
@@ -1365,7 +1373,7 @@ end
 --- Uses a hash of the source path to create a stable directory name.
 ---@param gif_path string
 ---@return string
-local function get_frames_cache_dir(gif_path)
+function get_frames_cache_dir(gif_path)
   local hash = vim.fn.sha256(gif_path):sub(1, 16)
   local dir = get_cache_dir() .. "/frames_" .. hash
   return dir
@@ -1375,7 +1383,7 @@ end
 ---@param gif_path string
 ---@param cache_dir string
 ---@return string[]?  sorted list of frame PNG paths, or nil if cache miss
-local function get_cached_frames(gif_path, cache_dir)
+function get_cached_frames(gif_path, cache_dir)
   local frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
   if #frames == 0 then return nil end
   table.sort(frames)

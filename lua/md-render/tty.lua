@@ -4,7 +4,6 @@
 --- module's public API returns nil without invoking any FFI calls.
 
 local ffi = require "ffi"
-local uv = vim.uv or vim.loop
 
 local M = {}
 

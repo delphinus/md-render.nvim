@@ -185,7 +185,6 @@ end
 local wrap_mod = require "md-render.wrap"
 local icons = require "md-render.icons"
 
-local split_segments = wrap_mod.split_segments
 local wrap_words = wrap_mod.wrap_words
 
 --- Distribute markdown highlights across wrapped lines
@@ -1057,8 +1056,6 @@ function ContentBuilder:render_document(lines, opts)
   local callout_code_block_id = nil
   local callout_code_has_truncation = false
   local in_math_block = false
-  local math_block_start = nil
-  local math_block_id = nil
   local in_indented_code = false
   local in_comment_block = false
   local in_html_comment = false
@@ -1970,12 +1967,8 @@ function ContentBuilder:render_document(lines, opts)
     if not in_code_block and line:match "^%$%$$" then
       if not in_math_block then
         in_math_block = true
-        math_block_start = #self.lines
-        math_block_id = src_idx
       else
         in_math_block = false
-        math_block_start = nil
-        math_block_id = nil
       end
     elseif in_math_block then
       local indented = indent .. line
