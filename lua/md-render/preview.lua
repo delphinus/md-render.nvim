@@ -1030,7 +1030,6 @@ local function install_scroll_sync(session)
     -- small margin so a one-line move on the source side doesn't
     -- immediately push it off-screen on the render side.
     if target_cursor then
-      local cursor = math.max(1, math.floor(target_cursor + 0.5))
       local margin = math.min(3, math.floor(dest_height / 4))
       if cursor < topline + margin then
         topline = cursor - margin

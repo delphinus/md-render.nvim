@@ -1,4 +1,3 @@
-local FloatWin = require "md-render.float_win"
 local UrlHover = require "md-render.url_hover"
 
 local M = {}
@@ -479,8 +478,6 @@ function M.setup_images(win, content, ns, opts)
   -- Previous sessions may have left image data in terminal memory (IDs persist
   -- across Neovim restarts but cleanup commands may not have been processed).
   image.clear_all()
-
-  local uv = vim.uv or vim.loop
 
   ---@type MdRender.ImageState
   local state = {

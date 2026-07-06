@@ -717,7 +717,6 @@ function M.wrap_words(text, max_width)
 
   -- For kinsoku 追い出し: track state before the last segment was appended
   local prev_current = ""
-  local prev_width = 0
   local last_seg_text = ""
   local last_seg_pos = 0
 
@@ -786,7 +785,6 @@ function M.wrap_words(text, max_width)
         current_width = seg_width
       end
       prev_current = ""
-      prev_width = 0
       last_seg_text = ""
       last_seg_pos = 0
     else
@@ -804,7 +802,6 @@ function M.wrap_words(text, max_width)
           current_start = seg.byte_pos
           current_width = seg_width
           prev_current = ""
-          prev_width = 0
           last_seg_text = ""
           last_seg_pos = 0
           goto continue
@@ -813,7 +810,6 @@ function M.wrap_words(text, max_width)
 
       -- Save state before appending (for potential 追い出し on the next segment)
       prev_current = current
-      prev_width = current_width
       last_seg_text = seg.text
       last_seg_pos = seg.byte_pos
 

@@ -492,7 +492,6 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
     for _, w in ipairs(col_widths) do
       content_sum = content_sum + w
     end
-    local total = overhead + content_sum
 
     if has_image_cells then
       -- Ensure columns are wide enough for actual image display sizes
@@ -517,7 +516,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
     for _, w in ipairs(col_widths) do
       content_sum = content_sum + w
     end
-    total = overhead + content_sum
+    local total = overhead + content_sum
     if total > max_width then
       local budget = max_width - overhead
       if budget < num_cols then budget = num_cols end
@@ -583,7 +582,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
       local display_text = cell.text
       local cell_hls = cell.highlights
       local cell_links = cell.links
-      local truncated_byte_len = #display_text
+      local truncated_byte_len
 
       -- Truncate cell text if it exceeds the (possibly shrunk) column width
       if vim.api.nvim_strwidth(display_text) > col_widths[col] then
