@@ -2,6 +2,7 @@ local FloatWin = require "md-render.float_win"
 local TabWin = require "md-render.tab_win"
 local cb = require "md-render.content_builder"
 local display_utils = require "md-render.display_utils"
+local wrap = require "md-render.wrap"
 local ContentBuilder = cb.ContentBuilder
 
 local float_win = FloatWin.new "md_render_preview_float"
@@ -77,6 +78,7 @@ end
 MdPreview.build_content = function(lines, opts)
   opts = opts or {}
   local max_width = opts.max_width or DEFAULT_MAX_WIDTH
+  local expand_state = opts.expand_state or {}
 
   local b = ContentBuilder.new()
 
@@ -98,25 +100,66 @@ MdPreview.build_content = function(lines, opts)
         b:add_line("  Properties", {
           { col = 2, end_col = 2 + #"Properties", hl = "Title" },
         })
+        -- Unique block id per overflowing frontmatter entry. Negative so it
+        -- can never collide with table expand ids, which are positive source
+        -- line numbers. Stable across rebuilds because entries parse
+        -- deterministically, so expand_state persists per entry.
+        local fm_block_counter = 0
         for _, entry in ipairs(entries) do
           local label = "  " .. entry.key
+          -- Byte/display column where the value starts, after "<label>: ".
+          -- label is ASCII (key matches [%w_%-]+), so bytes == display cols.
+          local value_col = #label + 2
           local full_line = label .. ": " .. entry.value
           local display_width = vim.api.nvim_strwidth(full_line)
           if display_width > max_width then
-            local target = max_width - vim.api.nvim_strwidth "…"
-            local current_width = 0
-            local byte_pos = 0
-            for char in full_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
-              local char_width = vim.api.nvim_strwidth(char)
-              if current_width + char_width > target then break end
-              current_width = current_width + char_width
-              byte_pos = byte_pos + #char
+            fm_block_counter = fm_block_counter + 1
+            local block_id = -fm_block_counter
+            local expanded = expand_state[block_id] or false
+            local start_line = #b.lines
+            if expanded then
+              -- Wrap the value across lines, aligning continuation lines
+              -- under the value's start column (like a table cell expand).
+              local value_width = math.max(1, max_width - value_col)
+              local wrapped = wrap.wrap_words(entry.value, value_width)
+              local cont_indent = string.rep(" ", value_col)
+              for idx, wline in ipairs(wrapped) do
+                if idx == 1 then
+                  local line = label .. ": " .. wline
+                  b:add_line(line, {
+                    { col = 0, end_col = #label, hl = "Comment" },
+                    { col = value_col, end_col = #line, hl = "String" },
+                  })
+                else
+                  local line = cont_indent .. wline
+                  b:add_line(line, {
+                    { col = value_col, end_col = #line, hl = "String" },
+                  })
+                end
+              end
+            else
+              local target = max_width - vim.api.nvim_strwidth "…"
+              local current_width = 0
+              local byte_pos = 0
+              for char in full_line:gmatch "[%z\1-\127\194-\253][\128-\191]*" do
+                local char_width = vim.api.nvim_strwidth(char)
+                if current_width + char_width > target then break end
+                current_width = current_width + char_width
+                byte_pos = byte_pos + #char
+              end
+              local truncated = full_line:sub(1, byte_pos) .. "…"
+              b:add_line(truncated, {
+                { col = 0, end_col = #label, hl = "Comment" },
+                { col = value_col, end_col = byte_pos, hl = "String" },
+                { col = byte_pos, end_col = #truncated, hl = "Underlined" },
+              })
             end
-            local truncated = full_line:sub(1, byte_pos) .. "…"
-            b:add_line(truncated, {
-              { col = 0, end_col = #label, hl = "Comment" },
-              { col = #label + 2, end_col = byte_pos, hl = "String" },
-              { col = byte_pos, end_col = #truncated, hl = "Underlined" },
+            -- Register the region so clicking / za / <CR> toggles expansion.
+            table.insert(b.expandable_regions, {
+              start_line = start_line,
+              end_line = #b.lines - 1,
+              block_id = block_id,
+              expanded = expanded,
             })
           else
             b:add_labeled(label, entry.value, "String")
