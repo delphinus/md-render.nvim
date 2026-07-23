@@ -3,7 +3,7 @@
 
 local M = {}
 
-local SUBCOMMANDS = { "float", "tab", "pager", "toggle", "split", "auto", "demo" }
+local SUBCOMMANDS = { "float", "tab", "pager", "toggle", "split", "auto", "demo", "present" }
 local AUTO_ARGS = { "on", "off", "toggle" }
 
 local function preview()
@@ -29,6 +29,8 @@ function M.dispatch(args)
     p.split { mods = args.smods }
   elseif sub == "demo" then
     p.show_demo()
+  elseif sub == "present" then
+    p.show_present()
   elseif sub == "auto" then
     local a = (fargs[2] or "toggle"):lower()
     if a == "on" then

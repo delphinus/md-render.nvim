@@ -655,6 +655,29 @@ end
 -- show_pager: full-screen pager mode (existing behavior)
 -- =====================================================================
 
+--- Apply full-screen "no chrome" window/editor options (pager & presenter).
+---@param win integer
+---@param buf integer
+function MdPreview.apply_pager_chrome(win, buf)
+  vim.o.showtabline = 0
+  vim.o.laststatus = 0
+  vim.o.cmdheight = 0
+  vim.o.ruler = false
+  vim.o.showcmd = false
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].signcolumn = "no"
+  vim.wo[win].foldcolumn = "0"
+  vim.wo[win].statuscolumn = ""
+  vim.wo[win].cursorline = true
+  vim.wo[win].wrap = true
+  vim.wo[win].spell = false
+  vim.wo[win].list = false
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].buftype = "nofile"
+end
+
 --- Show markdown in pager mode (full-screen, minimal UI, q to quit Neovim)
 ---@param opts? { max_width?: integer }
 MdPreview.show_pager = function(opts)
@@ -670,26 +693,7 @@ MdPreview.show_pager = function(opts)
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(win, session.buf)
 
-  -- Hide all chrome for pager feel
-  vim.o.showtabline = 0
-  vim.o.laststatus = 0
-  vim.o.cmdheight = 0
-  vim.o.ruler = false
-  vim.o.showcmd = false
-
-  vim.wo[win].number = false
-  vim.wo[win].relativenumber = false
-  vim.wo[win].signcolumn = "no"
-  vim.wo[win].foldcolumn = "0"
-  vim.wo[win].statuscolumn = ""
-  vim.wo[win].cursorline = true
-  vim.wo[win].wrap = true
-  vim.wo[win].spell = false
-  vim.wo[win].list = false
-
-  vim.bo[session.buf].modifiable = false
-  vim.bo[session.buf].bufhidden = "wipe"
-  vim.bo[session.buf].buftype = "nofile"
+  MdPreview.apply_pager_chrome(win, session.buf)
 
   session:bind_window(win)
 
@@ -778,6 +782,12 @@ MdPreview.show_pager = function(opts)
 
     try_open_url()
   end, { buffer = session.buf, noremap = true, silent = true })
+end
+
+--- Enter full-screen presenter mode for the current markdown buffer.
+---@param opts? table
+MdPreview.show_present = function(opts)
+  require("md-render.presenter").start(opts)
 end
 
 -- =====================================================================
