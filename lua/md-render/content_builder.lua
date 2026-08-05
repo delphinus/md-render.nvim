@@ -841,10 +841,19 @@ local function is_block_start(line)
   return false
 end
 
+--- Check if a line ends with a CommonMark hard line break marker
+--- (two or more trailing spaces, or a trailing backslash).
+---@param line string
+---@return boolean
+local function has_hard_break(line)
+  return line:match "%S  +$" ~= nil or line:match "%S\\$" ~= nil
+end
+
 --- Join paragraph continuation lines into single lines.
 --- In CommonMark, consecutive lines that don't start block-level constructs
 --- form a single paragraph. This is needed for inline constructs (like links)
---- that span multiple source lines.
+--- that span multiple source lines.  Lines ending in a hard line break
+--- marker are *not* joined with the next line: the break is preserved.
 ---
 --- `src_indices` is a parallel array giving the original buffer line
 --- number for each input line. The returned `result_indices` carries the
@@ -863,7 +872,9 @@ local function join_paragraph_continuations(lines, src_indices)
 
   local function flush_para()
     if #para > 0 then
-      table.insert(result, table.concat(para, " "))
+      -- join_soft_lines also drops the trailing-space form of the hard
+      -- break marker; the break itself is expressed by ending the line here.
+      table.insert(result, wrap_mod.join_soft_lines(para))
       table.insert(result_indices, para_src)
       para = {}
       para_src = nil
@@ -897,11 +908,19 @@ local function join_paragraph_continuations(lines, src_indices)
     if in_code or is_block_start(line) then
       -- Flush accumulated paragraph
       flush_para()
+      -- These lines always end their own output line, so a trailing hard
+      -- break marker is redundant: drop it so it does not leave a stray
+      -- trailing space (visible on highlighted lines such as blockquotes).
+      -- Code and HTML are left alone, where whitespace can be content.
+      if not in_code and not line:match "^    %S" and not line:match "^%s*<" then line = (line:gsub("%s+$", "")) end
       table.insert(result, line)
       table.insert(result_indices, src)
     else
       if #para == 0 then para_src = src end
       table.insert(para, line)
+      -- Hard line break: end the visual line here, but stay in the same
+      -- paragraph (the next line starts a new output line).
+      if has_hard_break(line) then flush_para() end
     end
 
     ::next_line::
@@ -941,7 +960,7 @@ local function preprocess_multiline_html(lines, src_indices)
       end
       if accum.depth <= 0 then
         -- Join all lines with spaces (HTML whitespace collapsing)
-        local joined = table.concat(accum.lines, " ")
+        local joined = wrap_mod.join_soft_lines(accum.lines)
         joined = joined:gsub("  +", " ")
         table.insert(result, joined)
         table.insert(result_indices, accum.src)
@@ -1401,7 +1420,7 @@ function ContentBuilder:render_document(lines, opts)
           if before then
             if before ~= "" then table.insert(details_summary_parts, before) end
             in_details_summary = false
-            local joined = table.concat(details_summary_parts, " ")
+            local joined = wrap_mod.join_soft_lines(details_summary_parts)
             render_details_summary(joined ~= "" and joined or "Details")
             goto continue
           end

@@ -514,6 +514,74 @@ local function last_char(s)
   return last
 end
 
+--- East Asian wide code point ranges, used to decide whether a soft line
+--- break between two characters collapses to a space or to nothing.
+--- Half-width katakana (U+FF61-U+FF9F) and emoji are deliberately excluded:
+--- they are not East Asian *wide* letters for this purpose.
+local EAST_ASIAN_WIDE_RANGES = {
+  { 0x1100, 0x115F }, -- Hangul Jamo
+  { 0x2E80, 0x303E }, -- CJK radicals, Kangxi, CJK symbols and punctuation
+  { 0x3041, 0x33FF }, -- kana, Hangul compat Jamo, CJK compat
+  { 0x3400, 0x4DBF }, -- CJK unified ideographs extension A
+  { 0x4E00, 0x9FFF }, -- CJK unified ideographs
+  { 0xA960, 0xA97F }, -- Hangul Jamo extended A
+  { 0xAC00, 0xD7A3 }, -- Hangul syllables
+  { 0xF900, 0xFAFF }, -- CJK compatibility ideographs
+  { 0xFE10, 0xFE19 }, -- vertical forms
+  { 0xFE30, 0xFE6F }, -- CJK compatibility forms, small form variants
+  { 0xFF01, 0xFF60 }, -- fullwidth forms
+  { 0xFFE0, 0xFFE6 }, -- fullwidth signs
+  { 0x20000, 0x3FFFD }, -- CJK extension B and beyond
+}
+
+--- Check if a character is an East Asian wide character.
+--- Results are cached per character (same rationale as is_cjk_or_kinsoku).
+---@param char string? a single UTF-8 character
+---@return boolean
+local _is_wide_cache = {}
+local function is_east_asian_wide(char)
+  if not char or #char < 3 then return false end -- 1-2 byte code points are never wide
+  local cached = _is_wide_cache[char]
+  if cached ~= nil then return cached end
+  local cp = utf8_codepoint(char)
+  local result = false
+  for _, range in ipairs(EAST_ASIAN_WIDE_RANGES) do
+    if cp >= range[1] and cp <= range[2] then
+      result = true
+      break
+    end
+  end
+  _is_wide_cache[char] = result
+  return result
+end
+
+--- Join soft-wrapped source lines into a single line.
+---
+--- CommonMark turns a soft line break into a space, which is right for
+--- Latin text but inserts an unwanted gap in CJK text.  The space is
+--- therefore dropped when the characters on both sides of the break are
+--- East Asian wide.  Leading whitespace of the continuation lines is
+--- removed, as CommonMark does; the first line keeps its indentation so
+--- that continuation paragraphs stay aligned with their list item.
+---@param lines string[]
+---@return string
+local function join_soft_lines(lines)
+  local text = ""
+  for i, line in ipairs(lines) do
+    local trimmed = i == 1 and (line:gsub("%s+$", "")) or (line:gsub("^%s+", ""):gsub("%s+$", ""))
+    if text == "" then
+      text = trimmed
+    elseif trimmed ~= "" then
+      if is_east_asian_wide(last_char(text)) and is_east_asian_wide(first_char(trimmed)) then
+        text = text .. trimmed
+      else
+        text = text .. " " .. trimmed
+      end
+    end
+  end
+  return text
+end
+
 --- Vowel lookup for English syllable-like word splitting.
 local ascii_vowels = {
   [string.byte "a"] = true,
@@ -846,6 +914,8 @@ M.AMBIGUOUS_QUOTE = AMBIGUOUS_QUOTE
 M.classify_quotes = classify_quotes
 M.split_segments = split_segments
 M.is_cjk_or_kinsoku = is_cjk_or_kinsoku
+M.is_east_asian_wide = is_east_asian_wide
+M.join_soft_lines = join_soft_lines
 M.first_char = first_char
 M.last_char = last_char
 M.split_by_script = split_by_script

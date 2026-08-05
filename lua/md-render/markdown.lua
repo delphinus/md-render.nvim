@@ -20,6 +20,8 @@
 ---@class MdRender.Markdown
 local Markdown = {}
 
+local wrap_mod = require "md-render.wrap"
+
 local MAX_URL_DISPLAY_WIDTH = 50
 
 --- Convert heading text to a URL-safe slug (GitHub-compatible).
@@ -1592,7 +1594,7 @@ Markdown.parse_footnotes = function(lines)
   local function flush()
     if current_label then
       if not label_to_num[current_label] then
-        table.insert(defs, { label = current_label, text = table.concat(current_parts, " ") })
+        table.insert(defs, { label = current_label, text = wrap_mod.join_soft_lines(current_parts) })
         label_to_num[current_label] = #defs
       end
       current_label = nil

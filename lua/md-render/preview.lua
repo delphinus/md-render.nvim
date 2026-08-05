@@ -2063,6 +2063,16 @@ MdPreview.show_demo = function()
       "",
       "**Bold**, ~~strikethrough~~, `inline code`, and [links](https://neovim.io) — all rendered inline. Bare URLs like https://neovim.io stay clickable. Long ones like https://github.com/neovim/neovim/blob/master/src/nvim/api/buffer.c#L123-L456 are truncated. Obsidian ==highlight== and `%%comments%%` also work.",
       "",
+      "### Line Breaks",
+      "",
+      -- The two trailing spaces below are the hard line break marker itself.
+      -- Do not trim them.
+      "A line ending in two spaces is a hard line break, so this line  ",
+      "and this one stay apart.",
+      "",
+      "Without the two spaces the lines are soft-wrapped, so this line",
+      "joins the previous one into a single paragraph.",
+      "",
       "### Code & Tables",
       "",
       "```lua",
@@ -2146,6 +2156,12 @@ MdPreview.show_demo = function()
       "budoux.luaがインストールされていれば、BudouXによる自然な分節処理で日本語テキストを文節の区切りで改行します。未インストールの場合は1文字ずつ分割して折り返します。",
       "",
       "句読点「、」や閉じ括弧「)」が行頭に来ないよう禁則処理(JIS X 4051)を適用。開き括弧「(」は行末に残さず次の行へ送ります。",
+      "",
+      -- The two trailing spaces below are the hard line break marker itself.
+      -- Do not trim them.
+      "行末に半角スペースを2つ置くと、ここで改行されます。  ",
+      "スペースが無ければ次の行と連結され、和字同士の連結では",
+      "余分な半角スペースを入れません。",
       "",
       "> [!NOTE] 日本語コールアウト",
       "> コールアウト内でも禁則処理は有効。budoux.luaがあればBudouXの分節処理も適用され、長い文章を自然な位置で折り返します。",
