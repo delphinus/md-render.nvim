@@ -986,7 +986,14 @@ function M.setup_images(win, content, ns, opts)
       return
     end
     local placement = state.placements[idx]
-    if placement_near_viewport(placement) then
+    -- Async-render placements (Mermaid diagrams, remote URL images) have no
+    -- `path` yet, so the WinScrolled-driven retry in place_images (which only
+    -- re-processes placements that already have a `.path`) can never pick them
+    -- up later. Skipping them here based on viewport would strand them on the
+    -- placeholder forever, even after the user scrolls to them. Kick off their
+    -- render/download regardless of position; only truly static images (which
+    -- retry correctly on scroll) get the lazy-viewport optimization.
+    if placement.mermaid_source or placement.src_url or placement_near_viewport(placement) then
       image.begin_batch()
       local ok, err = pcall(process_placement, placement)
       image.flush_batch()
