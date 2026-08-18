@@ -20,6 +20,7 @@ Neovim 用の Markdown レンダリングエンジンです。生の Markdown �
 - **CJK 対応ワードラップ** — JIS X 4051 禁則処理 + [BudouX](https://github.com/google/budoux)（[budoux.lua](https://github.com/delphinus/budoux.lua) 経由）によるオプションのフレーズ分割
 - **クリック可能リンク** — マウスクリックで URL を開く。対応ターミナルでは OSC 8 ハイパーリンク
 - **`<details>` 対応** — クリックまたは `za` / `<CR>` で折りたたみ可能なセクション。`open` 属性にも対応
+- **ステータスフッタ** — フローティングプレビューの下ボーダーにファイル名・ソース内の現在位置・罫線素片のプログレスバーを表示。本文の行を消費せず、ステータスラインにも干渉しない
 - **ライブラリ API** — レンダリングエンジンを自作プラグインからプログラム的に利用可能
 
 <figure align="center">

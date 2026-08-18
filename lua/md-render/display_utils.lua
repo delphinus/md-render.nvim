@@ -218,11 +218,141 @@ function M.apply_content_to_buffer(buf, ns, content, opts)
   M.apply_treesitter_highlights(buf, ns, content)
 end
 
+--- Separator placed between footer segments.  Two spaces rather than a
+--- punctuation glyph: East Asian ambiguous-width characters (·, │, ...) are
+--- rendered at different widths depending on the terminal, which would make
+--- the fit calculation in `build_footer_chunks` unreliable.
+local FOOTER_SEP = "  "
+
+--- Progress bar drawn from box-drawing pieces: a heavy line for the part
+--- already scrolled past, a light line for the rest.  The light half is the
+--- same glyph the "rounded" border is made of, so the unfilled part reads as
+--- a continuation of the bottom border rather than as a separate widget, and
+--- `BAR_HALF` (heavy left, light right) keeps the line unbroken where the two
+--- meet — which also buys half-cell resolution.
+local BAR_FULL = "━"
+local BAR_HALF = "╾"
+local BAR_EMPTY = "─"
+local BAR_CELLS = 10
+--- Narrowest bar still worth drawing; below this the bar is dropped instead.
+local BAR_MIN_CELLS = 4
+
+--- Render `ratio` (0.0-1.0) as a `cells`-wide bar.
+---@param ratio number
+---@param cells integer
+---@return table[] chunks
+local function progress_bar(ratio, cells)
+  local halves = math.max(0, math.min(math.floor(ratio * cells * 2 + 0.5), cells * 2))
+  local full = math.floor(halves / 2)
+  local half = halves % 2
+  local filled = string.rep(BAR_FULL, full) .. (half == 1 and BAR_HALF or "")
+  local empty = string.rep(BAR_EMPTY, cells - full - half)
+
+  local chunks = {}
+  if filled ~= "" then table.insert(chunks, { filled, "MdRenderFooterBar" }) end
+  if empty ~= "" then table.insert(chunks, { empty, "MdRenderFooterBarEmpty" }) end
+  return chunks
+end
+
+--- Build the chunk list for a floating window's footer.
+---
+--- Floats can't rely on a statusline: Neovim only draws one inside a float
+--- when 'laststatus' is 1 or 2, and with 'laststatus' = 3 (what lualine's
+--- `globalstatus` sets) a float's window-local 'statusline' is used for the
+--- global bar at the bottom of the screen instead — so the info would not
+--- only be invisible, it would overwrite the user's statusline.  The border
+--- footer is drawn unconditionally and costs no content row, so status info
+--- goes there.
+---
+--- The layout is `<name>  <line>/<total>  <bar>`.  When it doesn't fit
+--- `width` the bar shrinks first, then segments are dropped from the right
+--- (bar, then position, then name).
+---@param info { name?: string, line?: integer, total?: integer }
+---@param width integer inner width of the float
+---@return table[] chunks  {text, hl_group} pairs for `footer`
+function M.build_footer_chunks(info, width)
+  local name = (info.name and info.name ~= "") and info.name or nil
+  local line, total
+  if info.line and info.total and info.total > 0 then
+    total = info.total
+    line = math.max(1, math.min(info.line, total))
+  end
+
+  --- Segments, each a chunk list of its own (the bar needs two chunks).
+  ---@param bar_cells integer  0 omits the bar
+  ---@param drop integer  how many trailing segments to leave out
+  local function segments_for(bar_cells, drop)
+    local segments = {}
+    if name then table.insert(segments, { { name, "MdRenderFooterName" } }) end
+    if line then
+      -- Right-align the line number to the width of `total`.  Unpadded, the
+      -- footer would grow as the cursor crosses a power of ten, shifting the
+      -- file name and resizing the bar while you scroll.
+      local position = string.format("%" .. #tostring(total) .. "d/%d", line, total)
+      table.insert(segments, { { position, "MdRenderFooter" } })
+      if bar_cells > 0 then table.insert(segments, progress_bar(line / total, bar_cells)) end
+    end
+    for _ = 1, drop do
+      table.remove(segments)
+    end
+    return segments
+  end
+
+  local bar_cells = BAR_CELLS
+  local drop = 0
+  while true do
+    local segments = segments_for(bar_cells, drop)
+    if #segments == 0 then return {} end
+
+    local chunks = { { " ", "MdRenderFooter" } }
+    -- One padding space on each side of the text.
+    local text_width = 2
+    for i, segment in ipairs(segments) do
+      if i > 1 then
+        table.insert(chunks, { FOOTER_SEP, "MdRenderFooter" })
+        text_width = text_width + vim.api.nvim_strwidth(FOOTER_SEP)
+      end
+      for _, chunk in ipairs(segment) do
+        table.insert(chunks, chunk)
+        text_width = text_width + vim.api.nvim_strwidth(chunk[1])
+      end
+    end
+    if text_width <= width then
+      table.insert(chunks, { " ", "MdRenderFooter" })
+      return chunks
+    end
+
+    if bar_cells > BAR_MIN_CELLS then
+      bar_cells = bar_cells - 1
+    elseif bar_cells > 0 then
+      bar_cells = 0
+    else
+      drop = drop + 1
+    end
+  end
+end
+
+--- Apply a footer to a floating window.  No-op for dead or non-floating
+--- windows, so callers can share code with the tab/split presentations.
+---@param win integer
+---@param chunks table[] chunk list from |build_footer_chunks|
+---@param pos? "left"|"center"|"right" defaults to "right"
+function M.set_float_footer(win, chunks, pos)
+  if not win or not vim.api.nvim_win_is_valid(win) then return end
+  local config = vim.api.nvim_win_get_config(win)
+  if config.relative == "" then return end
+  -- Partial configs are merged for floats, so size/position/title survive.
+  pcall(vim.api.nvim_win_set_config, win, {
+    footer = #chunks > 0 and chunks or "",
+    footer_pos = #chunks > 0 and (pos or "right") or nil,
+  })
+end
+
 --- Calculate window size and position, open the floating window
 ---@param buf integer
 ---@param content MdRender.Content
 ---@param float_win MdRender.FloatWin
----@param opts? { title?: string, position?: "mouse"|"center", enter?: boolean }
+---@param opts? { title?: string, position?: "mouse"|"center", enter?: boolean, footer?: table[] }
 ---@return integer win
 function M.open_float_window(buf, content, float_win, opts)
   opts = opts or {}
@@ -263,13 +393,17 @@ function M.open_float_window(buf, content, float_win, opts)
     border = "rounded",
     title = title,
     title_pos = "center",
+    footer = opts.footer,
+    footer_pos = opts.footer and "right" or nil,
   })
 
   float_win:setup(win, { auto_close = not enter })
 
   vim.api.nvim_set_option_value("wrap", true, { win = win })
   vim.api.nvim_set_option_value("cursorline", true, { win = win })
-  vim.wo[win].statusline = " "
+  -- Deliberately no window-local 'statusline' here: see the comment on
+  -- `build_footer_chunks`.  With 'laststatus' = 3 it would blank out the
+  -- global statusline while the float is focused.
   vim.api.nvim_buf_set_option(buf, "modifiable", false)
   vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
 

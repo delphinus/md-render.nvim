@@ -20,6 +20,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **CJK-aware word wrapping** — JIS X 4051 kinsoku shori + optional [BudouX](https://github.com/google/budoux) phrase segmentation via [budoux.lua](https://github.com/delphinus/budoux.lua)
 - **Clickable links** — mouse click to open URLs; hover the mouse over a link to peek the full URL in a subtle floating window; OSC 8 hyperlink support for compatible terminals
 - **`<details>` support** — collapsible sections you can toggle by clicking or with `za` / `<CR>`, respecting the `open` attribute
+- **Status footer** — the floating preview shows the file name, your position in the source, and a box-drawing progress bar on its bottom border, without stealing a content row or touching your statusline
 - **Library API** — use the rendering engine programmatically from your own plugins
 
 <figure align="center">

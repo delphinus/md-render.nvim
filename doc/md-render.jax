@@ -491,6 +491,13 @@ grep 系の picker では、マッチしたソース行に自動スクロール�
 MdPreview.show({opts}) ~
 	現在の Markdown バッファのフローティングプレビューをトグルします。
 
+	下ボーダーにはステータスフッタが表示されます。内容はソースのファイル名、
+	カーソル位置が対応するソースの行、そして罫線素片で描いたプログレスバー
+	です: >
+	  ╰──────────── README.md   25/100  ━━╾─────── ╯
+<	カーソルに追従し、ウィンドウの幅が足りないときはバー、位置の順に省略され
+	ます。|md-render-float-footer| を参照してください。
+
 	パラメータ: ~
 	  {opts}  (table|nil) オプション設定:
 		  - {max_width}  (integer) 最大レンダリング幅
@@ -725,6 +732,56 @@ display_utils.open_float_window({buf}, {content}, {float_win}, {opts}) ~
 	レンダリング済みコンテンツ用のフローティングウィンドウを作成・配置しま
 	す。
 
+	パラメータ: ~
+	  {opts}  (table|nil) オプション設定:
+		  - {title}     (string) ボーダーのタイトル
+		  - {position}  ("mouse"|"center") 配置
+		  - {enter}     (boolean) ウィンドウにフォーカスするか
+		  - {footer}    (table[]) 下ボーダーに表示する chunk のリス
+		    ト。通常は |display_utils.build_footer_chunks()| の戻り値
+
+					  *display_utils.build_footer_chunks()*
+					  *md-render-float-footer*
+display_utils.build_footer_chunks({info}, {width}) ~
+	フローティングウィンドウのステータスフッタ用に `{text, hl_group}` の
+	chunk リストを作ります。
+
+	ステータスラインではなくボーダーの footer を使うのは、フローティング
+	ウィンドウが 'laststatus' の値が 1 か 2 のときしかステータスラインを描
+	画しないためです。'laststatus' が 3（lualine の `globalstatus` オプショ
+	ンが設定する値）のときは、フローティングウィンドウのウィンドウローカル
+	な 'statusline' が画面下端のグローバルなステータスラインとして使われる
+	ので、情報が表示されないばかりか、ユーザのステータスラインを上書きして
+	しまいます。footer は常に描画され、本文の行を消費しません。
+
+	レイアウトは `<name>  <line>/<total>  <bar>` です。バーは 10 セル幅で、
+	罫線素片で描かれます（通過済みの部分が `━` 、残りが `─` 、半セル分が
+	`╾` ）。細線の側はボーダー自身と同じ字なので、未達の部分はウィジェット
+	ではなくボーダーの続きとして見えます。
+
+	行番号は {total} の桁数に合わせて右寄せされるので、スクロールしても
+	フッタの幅は変わりません。{width} に収まらないときは、まずバーが最小 4
+	セルまで縮み、それでも収まらなければ右側のセグメント（バー → 位置 →
+	ファイル名の順）から削られます。幅は表示セル単位で測るので、CJK のファ
+	イル名も正しく扱えます。
+
+	パラメータ: ~
+	  {info}   (table) 表示するセグメント:
+		   - {name}   (string|nil) ファイル名
+		   - {line}   (integer|nil) 現在行（{total} でクランプ）
+		   - {total}  (integer|nil) 総行数
+	  {width}  (integer) フローティングウィンドウの内側の幅
+
+	戻り値: ~
+	  (table[]) chunk リスト。何も収まらない場合は空。
+
+					     *display_utils.set_float_footer()*
+display_utils.set_float_footer({win}, {chunks}, {pos}) ~
+	|display_utils.build_footer_chunks()| で作った footer をフローティング
+	ウィンドウに適用します。{pos} の既定値は `"right"` です。無効なウィンド
+	ウや非フローティングウィンドウでは何もしないので、タブ・分割・ページャー
+	表示と同じコードから呼べます。
+
 					   *display_utils.setup_float_keymaps()*
 display_utils.setup_float_keymaps({buf}, {ns}, {win}, {content}, ...) ~
 	フローティングウィンドウでインタラクティブなキーマップ（リン
@@ -861,6 +918,18 @@ Details ~
 
   *MdRenderImagePlaceholder*
                         画像読み込み中に表示されるプレースホルダー
+
+フローティングウィンドウの footer ~
+
+  *MdRenderFooter*      フローティングプレビューの下ボーダーに表示される
+                        ステータス情報（ `FloatFooter` にリンク）
+  *MdRenderFooterName*  その footer のファイル名部分
+                        （ `FloatTitle` にリンク）
+  *MdRenderFooterBar*   プログレスバーの通過済みの部分
+                        （ `FloatTitle` にリンク）
+							*MdRenderFooterBarEmpty*
+                        プログレスバーの残りの部分。描画先のボーダーに
+                        溶け込むよう `FloatBorder` にリンクしている
 
 分割モード ~
 

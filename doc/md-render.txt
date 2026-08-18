@@ -486,6 +486,14 @@ PREVIEW							     *md-render-preview*
 MdPreview.show({opts}) ~
 	Toggle a floating preview window for the current Markdown buffer.
 
+	The bottom border carries a status footer with the source file name,
+	the source line the cursor maps back to, and a progress bar drawn
+	from box-drawing pieces: >
+	  ╰──────────── README.md   25/100  ━━╾─────── ╯
+<	It follows the cursor and shrinks — the bar first, then the whole
+	position — when the window is too narrow.  See
+	|md-render-float-footer|.
+
 	Parameters: ~
 	  {opts}  (table|nil) Optional settings:
 		  - {max_width}  (integer) Maximum rendering width
@@ -721,6 +729,57 @@ display_utils.apply_treesitter_highlights({buf}, {ns}, {content}) ~
 display_utils.open_float_window({buf}, {content}, {float_win}, {opts}) ~
 	Create and position a floating window for rendered content.
 
+	Parameters: ~
+	  {opts}  (table|nil) Optional settings:
+		  - {title}     (string) Border title
+		  - {position}  ("mouse"|"center") Placement
+		  - {enter}     (boolean) Focus the window
+		  - {footer}    (table[]) Chunk list for the bottom border,
+		    typically from |display_utils.build_footer_chunks()|
+
+					  *display_utils.build_footer_chunks()*
+					  *md-render-float-footer*
+display_utils.build_footer_chunks({info}, {width}) ~
+	Build the `{text, hl_group}` chunk list for a float's status footer.
+
+	Status info goes on the border footer rather than a statusline
+	because floating windows only draw a statusline when 'laststatus' is
+	1 or 2.  With 'laststatus' = 3 — what lualine's `globalstatus`
+	option sets — a float's window-local 'statusline' is used for the
+	global bar at the bottom of the screen instead, so the info would
+	not only be invisible, it would overwrite your statusline.  The
+	footer is always drawn and costs no content row.
+
+	The layout is `<name>  <line>/<total>  <bar>`.  The bar is ten cells
+	wide and made of box-drawing pieces — `━` for the part scrolled
+	past, `─` for the rest, `╾` for a half-filled cell.  The light half
+	is the glyph the border itself is made of, so the unfilled part
+	reads as a continuation of the border rather than as a widget.
+
+	The line number is right-aligned to the width of {total} so the
+	footer keeps a fixed width as you scroll.  When it doesn't fit
+	{width}, the bar shrinks to a minimum of four cells, then segments
+	are dropped from the right (bar, then position, then name).  Widths
+	are measured in display cells, so CJK file names are handled
+	correctly.
+
+	Parameters: ~
+	  {info}   (table) Segments to show:
+		   - {name}   (string|nil) File name
+		   - {line}   (integer|nil) Current line (clamped to {total})
+		   - {total}  (integer|nil) Total lines
+	  {width}  (integer) Inner width of the float
+
+	Return: ~
+	  (table[]) Chunk list; empty when nothing fits.
+
+					     *display_utils.set_float_footer()*
+display_utils.set_float_footer({win}, {chunks}, {pos}) ~
+	Apply a footer built by |display_utils.build_footer_chunks()| to a
+	floating window.  {pos} defaults to `"right"`.  A no-op for dead or
+	non-floating windows, so callers can share code with the tab, split,
+	and pager presentations.
+
 					   *display_utils.setup_float_keymaps()*
 display_utils.setup_float_keymaps({buf}, {ns}, {win}, {content}, ...) ~
 	Set up interactive keymaps (link clicking, fold toggling, etc.) in a
@@ -858,6 +917,19 @@ IMAGE ~
 
   *MdRenderImagePlaceholder*
                         Placeholder shown while images are loading
+
+FLOAT FOOTER ~
+
+  *MdRenderFooter*      Status info on the floating preview's bottom
+                        border (links to `FloatFooter`)
+  *MdRenderFooterName*  The file name segment of that footer
+                        (links to `FloatTitle`)
+  *MdRenderFooterBar*   Filled part of the progress bar
+                        (links to `FloatTitle`)
+							*MdRenderFooterBarEmpty*
+                        Unfilled part of the progress bar.  Links to
+                        `FloatBorder` so it blends into the border it
+                        is drawn on.
 
 SPLIT MODE ~
 

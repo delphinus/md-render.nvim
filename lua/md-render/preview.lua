@@ -209,6 +209,7 @@ end
 ---@field image_state? MdRender.ImageState
 ---@field dirty boolean               -- true when source changed while render was hidden
 ---@field _debounce_timer? table      -- libuv timer handle for live-update debounce
+---@field _update_footer? fun()       -- redraws the float footer (set by install_footer)
 local Session = {}
 Session.__index = Session
 
@@ -328,6 +329,9 @@ function Session:rebuild()
   end
   self.content = new_content
   self.dirty = false
+  -- Folding/expanding shifts the rendered line under the cursor without
+  -- firing CursorMoved, so refresh the footer explicitly.
+  if self._update_footer then self._update_footer() end
 end
 
 --- Lazily build sync points from `content.source_line_map`. A sync point
@@ -519,6 +523,56 @@ function Session:install_float_keymaps(close_handle, keymap_opts)
   })
 end
 
+--- Show status info (source file name, position in the source buffer) on the
+--- float's bottom border and keep it in sync with the cursor.
+---
+--- The footer is used rather than a statusline because floating windows only
+--- draw one when 'laststatus' is 1 or 2; see
+--- |display_utils.build_footer_chunks()| for the details.  It is a no-op for
+--- non-floating windows, so tab/split/pager presentations are unaffected.
+function Session:install_footer()
+  local win = self.win
+  if not win or not vim.api.nvim_win_is_valid(win) then return end
+  if vim.api.nvim_win_get_config(win).relative == "" then return end
+
+  local source_name = vim.api.nvim_buf_get_name(self.source_bufnr)
+  local name = source_name ~= "" and vim.fn.fnamemodify(source_name, ":t") or nil
+  local last_text = nil
+
+  local function update()
+    local w = self.win
+    if not w or not vim.api.nvim_win_is_valid(w) then return end
+    local rendered_line = vim.api.nvim_win_get_cursor(w)[1]
+    local chunks = display_utils.build_footer_chunks({
+      name = name,
+      -- Rendered lines don't line up with the source, so report the source
+      -- line the cursor maps back to — that's the number the user can act on.
+      line = self:rendered_to_source(rendered_line) or rendered_line,
+      total = #self.source_lines,
+    }, vim.api.nvim_win_get_config(w).width)
+
+    -- Most cursor movements land on the same source line (one source line
+    -- spans several rendered lines). Reconfiguring the window redraws it,
+    -- which can make inline images flicker, so only do it on a real change.
+    local text = ""
+    for _, chunk in ipairs(chunks) do
+      text = text .. chunk[1]
+    end
+    if text == last_text then return end
+    last_text = text
+
+    display_utils.set_float_footer(w, chunks)
+  end
+
+  self._update_footer = update
+  update()
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = self.buf,
+    callback = update,
+  })
+end
+
 --- Track preview cursor and sync source cursor back when the window closes.
 --- Used by show / show_tab (not pager — pager replaces the buffer in place).
 function Session:install_cursor_sync()
@@ -602,6 +656,7 @@ MdPreview.show = function(opts)
   session:bind_window(win)
   session:scroll_to_source_line(source_cursor_line)
   session:install_cursor_sync()
+  session:install_footer()
   session:install_float_keymaps(float_win)
 end
 

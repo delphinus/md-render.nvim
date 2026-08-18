@@ -97,6 +97,13 @@ function M.setup_highlights()
   vim.api.nvim_set_hl(0, "MdRenderLinkObsidian", { link = "Special", default = true })
   -- MdRenderSplit shadow cursor (marks the unfocused side's matching line)
   vim.api.nvim_set_hl(0, "MdRenderShadowCursor", { link = "CursorLine", default = true })
+  -- Preview float footer (status info drawn on the bottom border).
+  -- The unfilled part of the progress bar follows FloatBorder so it blends
+  -- into the border it is drawn on.
+  vim.api.nvim_set_hl(0, "MdRenderFooter", { link = "FloatFooter", default = true })
+  vim.api.nvim_set_hl(0, "MdRenderFooterName", { link = "FloatTitle", default = true })
+  vim.api.nvim_set_hl(0, "MdRenderFooterBar", { link = "FloatTitle", default = true })
+  vim.api.nvim_set_hl(0, "MdRenderFooterBarEmpty", { link = "FloatBorder", default = true })
   M.setup_heading_highlights()
   M.setup_alert_highlights()
   M.setup_details_highlights()
