@@ -10,6 +10,7 @@ Requirements						|md-render-requirements|
 Installation						|md-render-installation|
 Mappings						    |md-render-mappings|
 Commands						    |md-render-commands|
+Presenter mode						  |md-render-presenter|
 Telescope Integration					   |md-render-telescope|
 Snacks.nvim Integration					      |md-render-snacks|
 Usage							       |md-render-usage|
@@ -131,6 +132,11 @@ Map them yourself: >lua
 <Plug>(md-render-split) ~
 	Open a split window showing the source and rendered views of the
 	current Markdown buffer.  See |:MdRender-split|.
+
+						      *<Plug>(md-render-present)*
+<Plug>(md-render-present) ~
+	Enter the full-screen slideshow presenter for the current buffer.
+	See |:MdRender-present|.
 
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
@@ -334,6 +340,10 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	  mdless README.md
 <
 
+						    *:MdRender-present*
+:MdRender present ~
+	Full-screen slideshow presenter.  See |md-render-presenter|.
+
 							      *:MdRender-demo*
 :MdRender demo ~
 	Show a demo window with all supported Markdown notations.
@@ -475,6 +485,72 @@ The preview function handles three kinds of files:
 
 For grep-based pickers the preview automatically scrolls to the matched
 source line.
+
+==============================================================================
+PRESENTER MODE						  *md-render-presenter*
+
+The presenter mode turns a Markdown buffer into a full-screen slideshow.
+`---` (a thematic break on its own line) separates slides; each slide fills
+the screen.  Mermaid diagrams render inline as images.
+
+ENTRY POINT ~
+
+The entry point is |:MdRender-present|, also accessible via
+|<Plug>(md-render-present)|.
+
+KEYS IN PRESENTER MODE ~
+
+The following keys are available inside the presenter:
+
+  `n` / `→` / `<Space>` / `<PageDown>`
+		Next slide
+
+  `p` / `←` / `<PageUp>`
+		Previous slide
+
+  `gg` / `G`
+		First / last slide
+
+  `L`	Cycle the layout of the diagram on the current slide (fit → left →
+	right → full).  On a slide with multiple diagrams, the first one is
+	affected.  The layout changes persist in the file via a hidden
+	link-label comment (see |md-render-presenter-metadata|).
+
+  `<` / `>`
+		Narrow / widen the split in `left` or `right` layout mode, by 5%
+		per keystroke.  Clamped to 20–80% to keep both the diagram and
+		text readable.  The width persists via the hidden comment.
+
+  `q` / `<Esc>` / `<C-c>`
+		Exit the presenter and restore the source buffer.
+
+SLIDE METADATA (HIDDEN COMMENTS)		*md-render-presenter-metadata*
+
+Slide metadata lives in link-label comments (in Markdown syntax,
+`[//]: # (...)`) that render as nothing in any Markdown viewer:
+
+```
+[//]: # (diagram: left:40)
+```​`​`​`mermaid
+flowchart LR
+  A --> B
+```​`​`​`
+```
+
+The comment `[//]: # (diagram: <layout>)` appears on the line *above* a
+mermaid fence and specifies that diagram's layout.
+
+Diagram layout formats: ~
+
+  `full`        The diagram fills the slide; any other text on the slide
+                renders above it
+  `fit`         Inline, coexists with text on the same slide
+  `left[:N]`    Diagram fills the left N% (default 50); text takes the right
+  `right[:N]`   Diagram fills the right N% (default 50); text takes the left
+
+When you change a layout with `L`, `<`, or `>`, the comment is automatically
+written back into the buffer.  This persists your choices across presenter
+exits and re-entries.
 
 ==============================================================================
 USAGE							       *md-render-usage*

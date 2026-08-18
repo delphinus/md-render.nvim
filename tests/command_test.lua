@@ -208,7 +208,7 @@ test("complete first arg empty -> all subcommands", function()
   -- Order matches the SUBCOMMANDS table
   assert_eq(
     out,
-    { "float", "tab", "pager", "toggle", "split", "auto", "demo" },
+    { "float", "tab", "pager", "toggle", "split", "auto", "demo", "present" },
     "all subcommands returned for empty arglead"
   )
   restore()
@@ -240,7 +240,7 @@ test("complete tolerates :vert mod prefix", function()
   local out = cmd.complete("", "vert MdRender ", #"vert MdRender ")
   assert_eq(
     out,
-    { "float", "tab", "pager", "toggle", "split", "auto", "demo" },
+    { "float", "tab", "pager", "toggle", "split", "auto", "demo", "present" },
     "leading :vert mod still yields full subcommand list"
   )
   restore()
@@ -276,6 +276,28 @@ test("deprecated wrapper warns once and forwards args", function()
   assert_true(notif[1].msg:match "MdRender toggle", "warning suggests the new form")
   restore_n()
   restore()
+end)
+
+test("complete: lists 'present' as a subcommand", function()
+  local cmd = require "md-render.command"
+  local out = cmd.complete("pr", "MdRender pr", 11)
+  local found = false
+  for _, s in ipairs(out) do
+    if s == "present" then found = true end
+  end
+  assert_eq(found, true, "'present' offered in completion")
+end)
+
+test("dispatch: 'present' calls show_present", function()
+  package.loaded["md-render"] = package.loaded["md-render"] or {}
+  local called = false
+  local fake = { show_present = function() called = true end }
+  local md = require "md-render"
+  local saved = rawget(md, "preview")
+  rawset(md, "preview", fake)
+  require("md-render.command").dispatch { fargs = { "present" } }
+  rawset(md, "preview", saved)
+  assert_eq(called, true, "dispatch routed to show_present")
 end)
 
 print(string.format("command_test: %d passed, %d failed", pass_count, fail_count))
