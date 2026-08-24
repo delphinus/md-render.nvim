@@ -17,6 +17,7 @@ Neovim 用の Markdown レンダリングエンジンです。生の Markdown �
 - **画像** — ローカルおよび Web 画像（PNG, JPEG, WebP, GIF, アニメーション GIF）をターミナルグラフィクスプロトコルでインライン表示
 - **動画** — ローカルおよび Web 動画（MP4, WebM, MOV, AVI, MKV, M4V）をアニメーションフレームとしてインライン再生
 - **Mermaid ダイアグラム** — 画像としてインライン表示
+- **CommonMark の段落** — 原文で折り返された行はひとつの段落に連結。箇条書き項目の継続行や引用の本文も同様で、和字同士の連結では半角スペースを入れません
 - **CJK 対応ワードラップ** — JIS X 4051 禁則処理 + [BudouX](https://github.com/google/budoux)（[budoux.lua](https://github.com/delphinus/budoux.lua) 経由）によるオプションのフレーズ分割
 - **クリック可能リンク** — マウスクリックで URL を開く。対応ターミナルでは OSC 8 ハイパーリンク
 - **`<details>` 対応** — クリックまたは `za` / `<CR>` で折りたたみ可能なセクション。`open` 属性にも対応

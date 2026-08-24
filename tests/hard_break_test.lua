@@ -123,15 +123,79 @@ do
   assert_eq(out, { "indented continuation" }, "continuation indent should collapse to one space")
 end
 
--- Test 12: a continuation paragraph keeps the indent that aligns it with
--- its list item (only the *continuation* lines get their indent stripped)
+-- Test 12: lines indented under a list item continue the item's paragraph
 do
   local out = render { "- item", "  続きの段落です。", "  さらに続きます。" }
   assert_eq(
     out,
-    { "• item", "  続きの段落です。さらに続きます。" },
-    "continuation paragraph should keep its indent"
+    { "• item 続きの段落です。さらに続きます。" },
+    "list continuation lines should join the item's paragraph"
   )
+
+  -- 和字 on both sides of the break: no space is inserted
+  out = render { "- これは一行目です。続けてこの", "  行も同じ段落になるはずです。" }
+  assert_eq(
+    out,
+    { "• これは一行目です。続けてこの行も同じ段落になるはずです。" },
+    "wide chars across a list continuation should join without a space"
+  )
+
+  -- Ordered lists behave the same
+  out = render { "1. first line and", "   its continuation." }
+  assert_eq(out, { "1. first line and its continuation." }, "ordered list continuation should join")
+
+  -- Lazy continuation: the follow-up line need not be indented
+  out = render { "- item", "lazy continuation" }
+  assert_eq(out, { "• item lazy continuation" }, "lazy continuation should join the item")
+
+  -- A blank line ends the paragraph: the next one keeps the indent that
+  -- aligns it with the item (blank lines are stripped by `render`)
+  out = render { "- item", "", "  別の段落です。" }
+  assert_eq(out, { "• item", "  別の段落です。" }, "a new paragraph should keep its indent")
+
+  -- A following item starts its own paragraph
+  out = render { "- 一つ目", "  の続き", "- 二つ目" }
+  assert_eq(out, { "• 一つ目の続き", "• 二つ目" }, "the next item should not be absorbed")
+
+  -- A thematic break is not a list item
+  out = render { "- - -", "後続の段落。" }
+  assert_eq(out[#out], "後続の段落。", "thematic break should not absorb the next line")
+end
+
+-- Test 12b: a blockquote is a container of its own: the lines inside it
+-- form paragraphs the same way they do at the top level
+do
+  local out = render { "> 引用の一行目です。続けてこの", "> 行も同じ段落になるはずです。" }
+  assert_eq(
+    out,
+    { "│ 引用の一行目です。続けてこの行も同じ段落になるはずです。" },
+    "quoted lines should join into one paragraph"
+  )
+
+  out = render { "> first line and", "> its continuation." }
+  assert_eq(out, { "│ first line and its continuation." }, "quoted latin lines should join with a space")
+
+  -- A blank quote line separates paragraphs
+  out = render { "> 一つ目の段落。", ">", "> 二つ目の段落。" }
+  assert_eq(out[1], "│ 一つ目の段落。", "a blank quote line should end the paragraph")
+  assert_eq(out[#out], "│ 二つ目の段落。", "the paragraph after a blank quote line stands alone")
+
+  -- A callout header is not absorbed into the body
+  out = render { "> [!NOTE]", "> 注記の一行目です。続けてこの", "> 行も連結されます。" }
+  assert_eq(#out, 2, "callout header should stay on its own line")
+  assert_eq(
+    out[2],
+    "│ 注記の一行目です。続けてこの行も連結されます。",
+    "callout body should join"
+  )
+
+  -- List items inside a quote follow the list rules
+  out = render { "> - 項目の一行目", ">   の続き", "> - 二つ目" }
+  assert_eq(out, { "│ • 項目の一行目の続き", "│ • 二つ目" }, "quoted list continuation should join")
+
+  -- Nested quotes recurse
+  out = render { "> > 内側の一行目。", "> > 内側の続き。" }
+  assert_eq(out, { "│ │ 内側の一行目。内側の続き。" }, "nested quote should join at its own level")
 end
 
 -- Test 13: half-width katakana is not treated as wide

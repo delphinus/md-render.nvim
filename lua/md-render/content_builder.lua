@@ -812,18 +812,24 @@ local function html_table_to_pipe(html_lines)
   return result
 end
 
---- Preprocess lines to handle multi-line HTML tags.
---- HTML collapses whitespace: all lines within a tag are joined with spaces.
---- This applies to both block and inline elements per the HTML spec.
----@param lines string[]
----@return string[]
---- Check if a line starts a block-level construct (not a paragraph continuation)
+--- Check if a line opens a list item (bullet or ordered).
+--- A thematic break (`- - -`) shares the bullet's leading characters, so it
+--- is excluded here.
 ---@param line string
 ---@return boolean
-local function is_block_start(line)
+local function is_list_item(line)
+  if not (line:match "^%s*[%-%*%+]%s" or line:match "^%s*%d+[%.)]%s") then return false end
+  return not is_thematic_break(line)
+end
+
+--- Check if a line starts a block-level construct (not a paragraph continuation)
+---@param line string
+---@param in_paragraph boolean whether a paragraph is currently open
+---@return boolean
+local function is_block_start(line, in_paragraph)
   if line:match "^%s*$" then return true end
   if line:match "^#+%s" then return true end
-  if line:match "^```" or line:match "^~~~" then return true end
+  if line:match "^%s*```" or line:match "^%s*~~~" then return true end
   if line:match "^%s*|" then return true end
   if line:match "^%s*[%-%*%+]%s" then return true end
   if line:match "^%s*%d+[%.)]%s" then return true end
@@ -832,12 +838,16 @@ local function is_block_start(line)
   if line:match "^[=-]+%s*$" then return true end
   if line:match "^%[.+%]:" then return true end
   if line:match "^%[%^.+%]:" then return true end
+  if line:match "^%[!%a+%]" then return true end -- callout header (marker already stripped)
   if line:match "^%s*<" then return true end
   if line:match "^%s*!%[" then return true end
   if line:match "^%$%$$" then return true end
   if line:match "^%%%%" then return true end
   if line:match "^:::" then return true end
-  if line:match "^    %S" then return true end -- indented code block (4+ spaces)
+  -- Indented code block (4+ spaces). Per CommonMark it cannot interrupt a
+  -- paragraph, so while one is open the line is a continuation instead --
+  -- this is what keeps deeply indented list continuations joined.
+  if not in_paragraph and line:match "^    %S" then return true end
   return false
 end
 
@@ -847,6 +857,25 @@ end
 ---@return boolean
 local function has_hard_break(line)
   return line:match "%S  +$" ~= nil or line:match "%S\\$" ~= nil
+end
+
+--- Remove up to `n` leading spaces from a line (CommonMark dedents fenced
+--- code content by the opening fence's indent, no further).
+---@param line string
+---@param n integer
+---@return string
+local function strip_indent(line, n)
+  if n <= 0 then return line end
+  local ws = line:match "^ *"
+  return line:sub(math.min(#ws, n) + 1)
+end
+
+--- Split one blockquote marker level (`>` plus an optional space) off a line.
+--- Only column 0 counts as a quote here, matching the rest of the renderer.
+---@param line string
+---@return string? marker, string? content
+local function split_quote_marker(line)
+  return line:match "^(>%s?)(.*)$"
 end
 
 --- Join paragraph continuation lines into single lines.
@@ -881,49 +910,93 @@ local function join_paragraph_continuations(lines, src_indices)
     end
   end
 
-  for idx, line in ipairs(lines) do
+  local idx = 1
+  while idx <= #lines do
+    local line = lines[idx]
     local src = src_indices[idx]
-    -- Track code fences
-    if line:match "^```" or line:match "^~~~" then in_code = not in_code end
+    -- How many input lines this iteration consumed (a blockquote eats its
+    -- whole run at once).
+    local consumed = 1
 
-    -- Track multi-line HTML comments
-    if not in_code then
-      if in_html_comment then
-        -- Flush paragraph, keep comment lines separate
+    do
+      -- Track code fences (the indent a list item adds is allowed)
+      if line:match "^%s*```" or line:match "^%s*~~~" then in_code = not in_code end
+
+      -- Track multi-line HTML comments
+      if not in_code then
+        if in_html_comment then
+          -- Flush paragraph, keep comment lines separate
+          flush_para()
+          table.insert(result, line)
+          table.insert(result_indices, src)
+          if line:match "%-%->" then in_html_comment = false end
+          goto next_line
+        end
+        if line:match "^%s*<!%-%-" and not line:match "%-%->%s*$" then
+          in_html_comment = true
+          flush_para()
+          table.insert(result, line)
+          table.insert(result_indices, src)
+          goto next_line
+        end
+      end
+
+      -- A blockquote is a container of block content: strip one marker level
+      -- off the whole run and recurse, so paragraphs (and list items) inside
+      -- the quote join exactly as they do at the top level. Each output line
+      -- gets back the marker of the line that started it.
+      if not in_code and line:match "^>" then
         flush_para()
-        table.insert(result, line)
-        table.insert(result_indices, src)
-        if line:match "%-%->" then in_html_comment = false end
+        local inner, inner_src, markers = {}, {}, {}
+        local last = idx
+        while last <= #lines and lines[last]:match "^>" do
+          local marker, content = split_quote_marker(lines[last])
+          table.insert(inner, content)
+          table.insert(inner_src, src_indices[last])
+          markers[src_indices[last]] = marker
+          last = last + 1
+        end
+        consumed = last - idx
+        local joined, joined_src = join_paragraph_continuations(inner, inner_src)
+        for k, joined_line in ipairs(joined) do
+          local marker = markers[joined_src[k]] or "> "
+          -- A quote line with no content must not keep the marker's space.
+          if joined_line == "" then marker = (marker:gsub("%s+$", "")) end
+          table.insert(result, marker .. joined_line)
+          table.insert(result_indices, joined_src[k])
+        end
         goto next_line
       end
-      if line:match "^%s*<!%-%-" and not line:match "%-%->%s*$" then
-        in_html_comment = true
+
+      -- A list item opens a paragraph of its own: the lines that follow it
+      -- (indented to its content, or lazily unindented) belong to that same
+      -- paragraph, so they must be joined onto the marker line.
+      local starts_list_item = not in_code and is_list_item(line)
+
+      if in_code or (is_block_start(line, #para > 0) and not starts_list_item) then
+        -- Flush accumulated paragraph
         flush_para()
+        -- These lines always end their own output line, so a trailing hard
+        -- break marker is redundant: drop it so it does not leave a stray
+        -- trailing space (visible on highlighted lines such as blockquotes).
+        -- Code and HTML are left alone, where whitespace can be content.
+        if not in_code and not line:match "^    %S" and not line:match "^%s*<" then line = (line:gsub("%s+$", "")) end
         table.insert(result, line)
         table.insert(result_indices, src)
-        goto next_line
+      else
+        -- A new list item ends the previous paragraph rather than continuing it.
+        if starts_list_item then flush_para() end
+        if #para == 0 then para_src = src end
+        table.insert(para, line)
+        -- Hard line break: end the visual line here, but stay in the same
+        -- paragraph (the next line starts a new output line).
+        if has_hard_break(line) then flush_para() end
       end
+
+      ::next_line::
     end
 
-    if in_code or is_block_start(line) then
-      -- Flush accumulated paragraph
-      flush_para()
-      -- These lines always end their own output line, so a trailing hard
-      -- break marker is redundant: drop it so it does not leave a stray
-      -- trailing space (visible on highlighted lines such as blockquotes).
-      -- Code and HTML are left alone, where whitespace can be content.
-      if not in_code and not line:match "^    %S" and not line:match "^%s*<" then line = (line:gsub("%s+$", "")) end
-      table.insert(result, line)
-      table.insert(result_indices, src)
-    else
-      if #para == 0 then para_src = src end
-      table.insert(para, line)
-      -- Hard line break: end the visual line here, but stay in the same
-      -- paragraph (the next line starts a new output line).
-      if has_hard_break(line) then flush_para() end
-    end
-
-    ::next_line::
+    idx = idx + consumed
   end
 
   flush_para()
@@ -967,7 +1040,7 @@ local function preprocess_multiline_html(lines, src_indices)
         accum = nil
       end
     else
-      if l:match "^```" then in_code = not in_code end
+      if l:match "^%s*```" then in_code = not in_code end
       if not in_code then
         local tag_name = l:match "^%s*<(%a%w*)[%s>]"
         if tag_name then
@@ -1057,6 +1130,10 @@ function ContentBuilder:render_document(lines, opts)
   local code_source_lines = nil
   local code_block_id = nil
   local code_block_has_truncation = false
+  -- Leading whitespace of the opening fence, e.g. a fence nested under a
+  -- list item. Content lines are dedented by it and re-indented on output,
+  -- so the block lines up with the item it belongs to.
+  local code_fence_indent = ""
   local prev_was_heading = false
   local prev_was_hr = false
   local prev_rendered_blank = false
@@ -1992,10 +2069,11 @@ function ContentBuilder:render_document(lines, opts)
     elseif in_math_block then
       local indented = indent .. line
       self:add_line(indented, { { col = 0, end_col = -1, hl = "MdRenderMath" } })
-    elseif line:match "^```" then
+    elseif line:match "^%s*```" then
       if not in_code_block then
         in_code_block = true
-        local info_string = line:match "^```(%S+)" or nil
+        code_fence_indent = line:match "^(%s*)"
+        local info_string = line:match "^%s*```(%S+)" or nil
         code_block_lang = info_string
         -- Split lang:filename (Qiita-style code block filename)
         local code_block_filename = nil
@@ -2010,9 +2088,9 @@ function ContentBuilder:render_document(lines, opts)
         if code_block_filename then
           local file_icon, icon_hl = get_file_icon(code_block_filename)
           file_icon = pad_icon(file_icon)
-          local icon_start = #indent
+          local icon_start = #indent + #code_fence_indent
           local icon_end = icon_start + #file_icon
-          local fname_line = indent .. file_icon .. " " .. code_block_filename
+          local fname_line = indent .. code_fence_indent .. file_icon .. " " .. code_block_filename
           local hls = {
             { col = icon_end, end_col = #fname_line, hl = "Comment" },
           }
@@ -2107,7 +2185,7 @@ function ContentBuilder:render_document(lines, opts)
 
         if not mermaid_handled then
           if code_block_lang and code_block_start < #self.lines then
-            local cb_prefix = #indent
+            local cb_prefix = #indent + #code_fence_indent
             if in_details and details_summary_rendered then cb_prefix = cb_prefix + #"│ " end
             table.insert(self.code_blocks, {
               language = code_block_lang,
@@ -2130,10 +2208,14 @@ function ContentBuilder:render_document(lines, opts)
         code_block_lang = nil
         code_source_lines = nil
         code_block_id = nil
+        code_fence_indent = ""
       end
     elseif in_code_block then
-      table.insert(code_source_lines, line)
-      local indented = indent .. line
+      -- Dedent by the opening fence's indent, then put it back on output:
+      -- the code keeps its own indentation but not the container's.
+      local content = strip_indent(line, #code_fence_indent)
+      table.insert(code_source_lines, content)
+      local indented = indent .. code_fence_indent .. content
       local display_width = vim.api.nvim_strwidth(indented)
       if not expand_state[code_block_id] and display_width > max_width then
         code_block_has_truncation = true
@@ -2151,10 +2233,10 @@ function ContentBuilder:render_document(lines, opts)
           { col = 0, end_col = byte_pos, hl = "String" },
           { col = byte_pos, end_col = #truncated_line, hl = "Underlined" },
         })
-        detect_urls_in_code_line(self, line, #indent, byte_pos)
+        detect_urls_in_code_line(self, content, #indent + #code_fence_indent, byte_pos)
       else
         self:add_line(indented, { { col = 0, end_col = -1, hl = "String" } })
-        detect_urls_in_code_line(self, line, #indent, #indented)
+        detect_urls_in_code_line(self, content, #indent + #code_fence_indent, #indented)
       end
     else
       local handled = false

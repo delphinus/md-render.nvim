@@ -88,6 +88,20 @@ def is_breathable(planet: str) -> bool:
 - [ ] Uranus — proposed Flagship mission (2030s?)
 - [-] Neptune — under study
 
+## Observing Tips
+
+1. Pick a **dark site** away from city lights and give your eyes at least
+   twenty minutes to adapt before you look up.
+2. Start with Jupiter — the four Galilean moons show up even in binoculars,
+   and they shift position from one night to the next.
+3. Keep a log of what you saw:
+
+   ```python
+   from datetime import date
+
+   session = {"date": date.today(), "target": "Jupiter", "seeing": 4}
+   ```
+
 <details>
 <summary>🔭 Fun facts about the outer planets</summary>
 
@@ -132,8 +146,21 @@ print(orbital_period(5.20))  -- Jupiter: 11.86 years
 月天心貧しき町を通りけり  
 　　　　　　　　　　― 与謝蕪村
 
+- 箇条書きの項目も、インデントを揃えて改行すれば
+  ひとつの段落として連結されます。
+- 項目の中にコードブロックも置けます。
+
+  ```lua
+  vim.keymap.set("n", "<Leader>md", "<Cmd>MdRender<CR>")
+  ```
+
+> 引用の中でも同じです。この段落も原文では2行に分かれていますが、
+> ひとつの段落として連結されます。
+
 > [!IMPORTANT] 禁則処理とBudouX
-> このプラグインはJIS X 4051に基づく禁則処理を実装しており、句読点「、。」や閉じ括弧「）」が行頭に来ることを防ぎます。budoux.luaがインストールされていれば、自然な文節の区切りで改行します。
+> このプラグインはJIS X 4051に基づく禁則処理を実装しており、句読点「、。」や
+> 閉じ括弧「）」が行頭に来ることを防ぎます。budoux.luaがインストールされていれば、
+> 自然な文節の区切りで改行します。
 
 ---
 

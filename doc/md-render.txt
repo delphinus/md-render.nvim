@@ -45,6 +45,9 @@ Features: ~
   graphics protocol
 - Video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
 - Mermaid diagrams rendered as images inline
+- CommonMark paragraphs (soft-wrapped source lines are joined into one
+  paragraph, including a list item's continuation lines and a blockquote
+  body; no extra space is inserted between CJK characters)
 - CJK-aware word wrapping (JIS X 4051 kinsoku shori + optional BudouX phrase
   segmentation)
 - Clickable links (mouse click to open URLs; mouse hover peeks the full URL
