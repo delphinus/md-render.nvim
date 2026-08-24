@@ -48,6 +48,9 @@ Features: ~
 - CommonMark paragraphs (soft-wrapped source lines are joined into one
   paragraph, including a list item's continuation lines and a blockquote
   body; no extra space is inserted between CJK characters)
+- Nested block structure (a blockquote, callout, or fenced code block
+  indented to a list item's content is rendered in place, not as literal
+  text)
 - CJK-aware word wrapping (JIS X 4051 kinsoku shori + optional BudouX phrase
   segmentation)
 - Clickable links (mouse click to open URLs; mouse hover peeks the full URL
