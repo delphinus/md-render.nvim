@@ -1220,6 +1220,21 @@ local function build_frame_count_cmd(tool, path)
   end
 end
 
+--- Report a frame-extraction failure once per distinct error.
+---
+--- Both extraction paths otherwise just drop the frames and return nil, which
+--- leaves the placeholder reading "Loading video..." with nothing to explain
+--- why. A removed FFmpeg option looked exactly like a slow download.
+---@param tool string
+---@param result vim.SystemCompleted
+local function warn_extract_failed(tool, result)
+  local detail = (result.stderr or ""):match "[^\r\n]+$" or ("exit code " .. tostring(result.code))
+  vim.notify_once(
+    string.format("md-render: %s could not extract video/animation frames: %s", tool, detail),
+    vim.log.levels.WARN
+  )
+end
+
 --- Build a command to extract frames from an animated GIF.
 ---@param tool string  "ffmpeg" or "magick"
 ---@param path string  GIF file path
@@ -1232,6 +1247,14 @@ local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
     -- Convert to display frame rate (5 fps matches the 200 ms animation timer)
     table.insert(vf_parts, "fps=5")
     table.insert(vf_parts, "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease")
+    -- No `-vsync` / `-fps_mode`: the `fps` filter above already resamples to a
+    -- constant rate, so the mode is redundant, and neither spelling works on
+    -- every FFmpeg. `-vsync` was deprecated in 2022 (5.1 added `-fps_mode` as
+    -- its replacement) and finally removed in 9.0; `-fps_mode` in turn does
+    -- not exist before 5.1. Passing an option the local FFmpeg does not know
+    -- makes it exit before decoding anything ("Unrecognized option 'vsync'"),
+    -- which surfaced as videos and animated GIFs stuck on "Loading video..."
+    -- forever. Omitting both is the only spelling valid across all versions.
     return {
       "ffmpeg",
       "-y",
@@ -1241,8 +1264,6 @@ local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
       table.concat(vf_parts, ","),
       "-frames:v",
       tostring(MAX_ANIM_FRAMES),
-      "-vsync",
-      "vfr",
       cache_dir .. "/frame_%04d.png",
     }
   else
@@ -1264,6 +1285,8 @@ local function build_frame_extract_cmd(tool, path, cache_dir, total_frames)
     return cmd
   end
 end
+
+M._build_frame_extract_cmd = build_frame_extract_cmd -- exposed for testing
 
 -- Forward declarations: these helpers are defined further down but are already
 -- referenced by M.transmit_animated below. Without this, the calls would resolve
@@ -1304,6 +1327,7 @@ function M.transmit_animated(path)
     local result = vim.system(cmd, { text = true, timeout = 30000 }):wait()
 
     if result.code ~= 0 then
+      warn_extract_failed(anim_tool, result)
       vim.fn.delete(cache_dir, "rf")
       return nil
     end
@@ -1474,6 +1498,7 @@ function M.transmit_animated_async(path, callback)
       vim.system(cmd, { text = true, timeout = 30000 }, function(result)
         vim.schedule(function()
           if result.code ~= 0 then
+            warn_extract_failed(anim_tool, result)
             vim.fn.delete(cache_dir, "rf")
             callback(nil)
             return

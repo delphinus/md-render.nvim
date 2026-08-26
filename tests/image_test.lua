@@ -840,6 +840,27 @@ if has_convert_tool() then
 end
 
 -- ============================================================================
+-- Frame extraction command
+-- ============================================================================
+
+test("frame extract cmd: no -vsync / -fps_mode", function()
+  -- `-vsync` was removed in FFmpeg 9.0 and `-fps_mode` only exists from 5.1,
+  -- so neither spelling works across the versions users have. Passing an
+  -- unknown one makes FFmpeg exit before decoding anything, which showed up as
+  -- videos and animated GIFs stuck on "Loading video..." forever. The `fps`
+  -- filter already resamples to a constant rate, so no mode option is needed.
+  local cmd = image._build_frame_extract_cmd("ffmpeg", "/tmp/in.mp4", "/tmp/out", 100)
+  for _, arg in ipairs(cmd) do
+    assert_true(arg ~= "-vsync", "extract cmd must not pass -vsync")
+    assert_true(arg ~= "-fps_mode", "extract cmd must not pass -fps_mode")
+  end
+  assert_eq(cmd[1], "ffmpeg", "extract cmd runs ffmpeg")
+  assert_eq(cmd[#cmd], "/tmp/out/frame_%04d.png", "extract cmd writes numbered frames")
+  local joined = table.concat(cmd, " ")
+  assert_match(joined, "fps=5", "extract cmd resamples with the fps filter")
+end)
+
+-- ============================================================================
 -- Summary
 -- ============================================================================
 
