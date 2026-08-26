@@ -366,6 +366,26 @@ local function pad_icon(icon)
   return icon
 end
 
+--- Heading level icons (nf-md-format_header_1 .. _6)
+local HEADING_ICONS = { "󰉫", "󰉬", "󰉭", "󰉮", "󰉯", "󰉰" }
+
+--- The bare level icon glyph, e.g. `"󰉬"` for `##`.
+---@param level integer 1-6
+---@return string
+function Markdown.heading_icon(level)
+  return HEADING_ICONS[level]
+end
+
+--- The icon and spacing a rendered heading line starts with, e.g. `"󰉬  "`.
+--- Exposed so callers can tell the icon apart from the heading text without
+--- re-deriving the padding rules. Note that wrapping collapses runs of spaces,
+--- so a wrapped heading line may carry fewer spaces than this returns.
+---@param level integer 1-6
+---@return string
+function Markdown.heading_icon_prefix(level)
+  return pad_icon(HEADING_ICONS[level]) .. " "
+end
+
 --- GitHub Flavored Markdown + Obsidian alert/callout types
 local ALERT_TYPES = {
   -- GitHub Alerts
@@ -1542,8 +1562,7 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
 
   -- Add heading icon and highlight
   if heading_level then
-    local raw_icons = { "󰉫", "󰉬", "󰉭", "󰉮", "󰉯", "󰉰" }
-    local icon = pad_icon(raw_icons[heading_level]) .. " "
+    local icon = Markdown.heading_icon_prefix(heading_level)
     local icon_len = #icon
     -- Shift all existing highlights and links by the icon length
     for _, hl in ipairs(highlights) do

@@ -52,6 +52,7 @@
 ---@field callout_folds MdRender.CalloutFold[]
 ---@field expandable_regions MdRender.ExpandableRegion[]
 ---@field image_placements MdRender.ImagePlacement[]
+---@field text_placements MdRender.TextPlacement[]
 ---@field footnote_anchors table<string, integer> anchor name → 0-indexed line number
 ---@field heading_anchors table<string, integer> heading slug → 0-indexed line number
 ---@field source_line_map integer[] rendered line index (1-based) → source line number (1-based)
@@ -67,6 +68,7 @@
 ---@field callout_folds MdRender.CalloutFold[]
 ---@field expandable_regions MdRender.ExpandableRegion[]
 ---@field image_placements MdRender.ImagePlacement[]
+---@field text_placements MdRender.TextPlacement[]
 ---@field footnote_anchors table<string, integer>
 ---@field source_line_map integer[]
 ---@field private _current_source_line integer
@@ -82,6 +84,7 @@ function ContentBuilder.new()
     callout_folds = {},
     expandable_regions = {},
     image_placements = {},
+    text_placements = {},
     footnote_anchors = {},
     heading_anchors = {},
     source_line_map = {},
@@ -123,6 +126,7 @@ function ContentBuilder:result()
     callout_folds = self.callout_folds,
     expandable_regions = self.expandable_regions,
     image_placements = self.image_placements,
+    text_placements = self.text_placements,
     footnote_anchors = self.footnote_anchors,
     heading_anchors = self.heading_anchors,
     source_line_map = self.source_line_map,
@@ -325,6 +329,7 @@ end
 ---@param max_width integer
 ---@param quote_prefix string
 ---@param list_marker? string
+---@param line_gap? integer blank lines to insert after each wrapped line
 function ContentBuilder:add_wrapped_markdown(
   rendered_text,
   md_highlights,
@@ -332,7 +337,8 @@ function ContentBuilder:add_wrapped_markdown(
   indent,
   max_width,
   quote_prefix,
-  list_marker
+  list_marker,
+  line_gap
 )
   local wrap_text = rendered_text
   local content_offset = 0
@@ -382,14 +388,21 @@ function ContentBuilder:add_wrapped_markdown(
   local list_prefix = list_marker or ""
   local list_continuation = string.rep(" ", list_cont_len)
 
+  line_gap = line_gap or 0
   for idx, wline in ipairs(wrapped_lines) do
     local line_prefix = quote_prefix ~= "" and (indent .. quote_prefix) or indent
     local lm = idx == 1 and list_prefix or list_continuation
     local line_hls = per_line_hls[idx]
     self:add_line(line_prefix .. lm .. wline, #line_hls > 0 and line_hls or nil)
+    for _ = 1, line_gap do
+      self:add_line ""
+    end
   end
 
   for _, entry in ipairs(link_entries) do
+    -- distribute_links assumed the wrapped lines were consecutive; spread the
+    -- entries back out over the gaps we just inserted.
+    if line_gap > 0 then entry.line = base_line + (entry.line - base_line) * (line_gap + 1) end
     table.insert(self.link_metadata, entry)
   end
 end
@@ -531,6 +544,83 @@ function ContentBuilder:_emit_image_header(indent, img_icon, icon_hl, display_na
   return #wrapped
 end
 
+--- Narrowest scaled heading worth drawing, in pre-scale cells. Below this a
+--- heading would wrap into a column of two-word fragments, which reads worse
+--- than leaving it at plain size.
+local MIN_SCALED_HEADING_WIDTH = 12
+
+--- Scale to draw a source line's heading at, and the width its text has to wrap
+--- to in order to fit once doubled. Returns nil when the heading must stay plain.
+---@param source_text string raw source line (still carrying the `#` markers)
+---@param indent string
+---@param max_width integer
+---@return integer? scale
+---@return integer? level
+---@return integer? content_width width for the text alone, indent excluded
+local function heading_scale_plan(source_text, indent, max_width)
+  local markers = source_text:match "^(#+)%s"
+  if not markers then return nil end
+  local level = math.min(#markers, 6)
+
+  local scale = require("md-render.text_size").scale_for(level)
+  if not scale then return nil end
+
+  -- `s=N` multiplies the width as well as the height, so the text has to wrap
+  -- at 1/N of the space it would normally get. The indent is not scaled (the
+  -- block starts after it), so take it off the top before dividing.
+  local avail = math.floor((max_width - vim.api.nvim_strwidth(indent)) / scale)
+  if avail < MIN_SCALED_HEADING_WIDTH then return nil end
+
+  return scale, level, avail
+end
+
+--- Register one scaled-text placement per rendered line of a heading.
+---
+--- The heading lines themselves stay in the buffer at plain size; the scaled
+--- text is painted over them later by `md-render.text_size`, so every terminal
+--- repaint falls back to the normal heading instead of to an empty line. The
+--- caller has already reserved `scale - 1` blank lines after each heading line,
+--- so the Nth line of a wrapped heading sits at `heading_line + N * scale`.
+---@param self MdRender.ContentBuilder
+---@param heading_line integer 0-indexed rendered line holding the heading
+---@param indent string
+---@param scale integer
+---@param level integer
+function ContentBuilder:add_heading_text_scale(heading_line, indent, scale, level)
+  -- The level icon is left out of the scaled run and stays as Neovim drew it.
+  -- Kitty gives a scaled run exactly `scale` cells per source cell, and it
+  -- reports these Nerd Font glyphs as one cell wide even though they are drawn
+  -- wider (hence `pad_icon`). Inside a multicell group there is no neighbouring
+  -- cell to overflow into, so the glyph gets clipped to its box and `󰉬` renders
+  -- as a bare "H".
+  -- Match the glyph plus whatever spacing follows rather than the exact
+  -- prefix: wrapping collapses runs of spaces, so a wrapped heading keeps one
+  -- space after the icon where an unwrapped one keeps two.
+  local icon_pat = "^" .. vim.pesc(require("md-render.markdown").heading_icon(level)) .. "%s*"
+
+  local segments = (#self.lines - heading_line) / scale
+  for n = 0, segments - 1 do
+    local line = heading_line + n * scale
+    local col = #indent
+    local content = (self.lines[line + 1] or ""):sub(col + 1)
+    -- Only the first line of a wrapped heading carries the icon.
+    local prefix = content:match(icon_pat)
+    if prefix then
+      col = col + #prefix
+      content = content:sub(#prefix + 1)
+    end
+    if content ~= "" then
+      table.insert(self.text_placements, {
+        line = line,
+        col = col,
+        text = content,
+        scale = scale,
+        hl = "MdRenderH" .. level,
+      })
+    end
+  end
+end
+
 --- Add a markdown-rendered line with wrapping support
 ---@param self MdRender.ContentBuilder
 ---@param text string
@@ -556,17 +646,45 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
     quote_prefix = rendered_text:sub(1, pos - 1)
   end
 
+  -- A scaled heading wraps at 1/scale of the usual width and reserves
+  -- `scale - 1` rows under each of its lines for the taller glyphs.
+  local scale, level, content_width
+  if heading_content then
+    scale, level, content_width = heading_scale_plan(text, indent, max_width)
+  end
+  local line_gap = scale and (scale - 1) or 0
+
+  -- `add_wrapped_markdown` sizes the text alone while the test below sizes
+  -- indent + text. Only the scaled path needs the two to agree exactly, so the
+  -- plain path keeps passing `max_width` to both as it always has.
+  local indent_w = vim.api.nvim_strwidth(indent)
+  local wrap_threshold = content_width and (indent_w + content_width) or max_width
+  local wrap_max = content_width or max_width
+
   local lines_before_fn = #self.lines
-  if vim.api.nvim_strwidth(indent) + vim.api.nvim_strwidth(rendered_text) > max_width then
-    self:add_wrapped_markdown(rendered_text, md_highlights, md_links, indent, max_width, quote_prefix, list_marker)
+  if indent_w + vim.api.nvim_strwidth(rendered_text) > wrap_threshold then
+    self:add_wrapped_markdown(
+      rendered_text,
+      md_highlights,
+      md_links,
+      indent,
+      wrap_max,
+      quote_prefix,
+      list_marker,
+      line_gap
+    )
   else
     self:add_simple_markdown(rendered_text, md_highlights, md_links, indent)
+    for _ = 1, line_gap do
+      self:add_line ""
+    end
   end
 
   -- Register heading anchor (slug → rendered line)
   if heading_content then
     local slug = markdown.heading_slug(heading_content)
     if slug ~= "" then self.heading_anchors[slug] = lines_before_fn end
+    if scale then self:add_heading_text_scale(lines_before_fn, indent, scale, level) end
   end
 
   -- Register footnote ref anchors (first occurrence per label)

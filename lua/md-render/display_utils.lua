@@ -600,7 +600,7 @@ end
 ---@param win integer
 ---@param content MdRender.Content
 ---@param ns integer?
----@param opts? { buf?: integer, build_content?: fun(): MdRender.Content }
+---@param opts? { buf?: integer, build_content?: fun(): MdRender.Content, on_content_applied?: fun(content: MdRender.Content) }
 ---@return MdRender.ImageState?
 function M.setup_images(win, content, ns, opts)
   if not content.image_placements or #content.image_placements == 0 then return nil end
@@ -643,6 +643,10 @@ function M.setup_images(win, content, ns, opts)
         M.apply_content_to_buffer(buf, ns, new_content)
         vim.bo[buf].modifiable = was_modifiable
         M.update_images(state, win, new_content)
+        -- A download changes how many rows an image occupies, so every line
+        -- below it moves. Anything else anchored to rendered line numbers has
+        -- to be told, or it keeps pointing at the pre-rebuild layout.
+        if opts.on_content_applied then opts.on_content_applied(new_content) end
       end, 150)
     end
   end

@@ -170,10 +170,11 @@ The plugin exposes a single `:MdRender` command with subcommands:
 | `:MdRender toggle` | Toggle the current window between source and render mode in place |
 | `:MdRender split` | Open a split showing source and rendered Markdown (honours `:vert`, `:tab`, `:topleft`, `:botright`) |
 | `:MdRender auto [on\|off\|toggle]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
+| `:MdRender textsize [on\|off\|toggle]` | **[experimental]** Scale `#` / `##` headings via the Kitty text sizing protocol |
 | `:MdRender pager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRender demo` | Show a demo window with all supported Markdown notations |
 
-Tab completion lists the subcommands for the first arg, and `on` / `off` / `toggle` after `auto`.
+Tab completion lists the subcommands for the first arg, and `on` / `off` / `toggle` after `auto` and `textsize`.
 
 > **Backwards compatibility.** The legacy top-level commands (`:MdRenderTab`, `:MdRenderToggle`, `:MdRenderSplit`, `:MdRenderAuto`, `:MdRenderPager`, `:MdRenderDemo`) still work and forward to the new dispatcher. They print a one-shot deprecation warning per Neovim session and will be removed in a future major version.
 
@@ -205,6 +206,32 @@ autocmd FileType markdown silent! MdRender auto on
 ```
 
 See `:help :MdRender-auto` for behavior details — the `i` / `I` / `a` / `A` / `o` / `O` remaps, `:w` forwarding, and the editing operations that are blocked on the read-only render buffer.
+
+### Scaled headings (experimental, Kitty only)
+
+> **Experimental.** New, opt-in, and Kitty-only. The UX may change or the feature may be withdrawn. Please report issues or rough edges.
+
+Kitty 0.40 added the [text sizing protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/) (OSC 66), which draws text at a multiple of the base font size. md-render can use it to render `#` and `##` headings at double size:
+
+```lua
+require("md-render.text_size").setup { enabled = true }
+```
+
+Or toggle it at runtime with `:MdRender textsize`.
+
+Which headings scale is fixed — `#` and `##` at `s=2`, everything else plain. `s=2` doubles the width as well as the height, so deeper levels stop fitting into a preview window. Long headings wrap at half the usual width so every `#` / `##` scales, each wrapped line getting its own two-row block.
+
+The scaled text is written straight to the terminal, the same way inline images are, so Neovim knows nothing about it. The plain-size heading stays in the buffer underneath and the scaled text is painted over it — every terminal repaint degrades to the normal heading rather than to a blank line, and `y` / `/` / `:w` still see the real text.
+
+Known limitations:
+
+- **Kitty >= 0.40 only.** Support is detected by asking the terminal to identify itself (XTVERSION) and requires a positive answer. This is deliberately strict: some terminals swallow an OSC 66 sequence *together with its payload text*, which would delete the heading rather than fall back to unscaled text.
+- Inline formatting inside a heading (inline code, links, `==highlight==`) loses its colors while scaled.
+- A heading whose second row would fall outside the window stays plain until scrolled into view.
+- A repaint md-render cannot observe (another plugin forcing a redraw, a message or popup overlapping the window) leaves the heading plain until the next scroll or cursor movement.
+- Each layout change costs a full-screen repaint to clear the previous scaled run, so scrolling is more expensive than usual.
+
+See `:help md-render-text-size` for the full rationale.
 
 ### Source/render split
 

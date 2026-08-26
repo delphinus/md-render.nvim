@@ -207,11 +207,28 @@ end
 ---@field content MdRender.Content    -- current rendered content
 ---@field win? integer                -- bound render window (if any)
 ---@field image_state? MdRender.ImageState
+---@field text_size_state? MdRender.TextSizeState
 ---@field dirty boolean               -- true when source changed while render was hidden
 ---@field _debounce_timer? table      -- libuv timer handle for live-update debounce
 ---@field _update_footer? fun()       -- redraws the float footer (set by install_footer)
 local Session = {}
 Session.__index = Session
+
+--- Every live session, keyed by render buffer. Weak values so a session that
+--- nothing else references is collected normally.
+MdPreview._sessions = setmetatable({}, { __mode = "v" })
+
+--- Rebuild and repaint every session currently shown in a window. Used by
+--- settings that change how content is *built* (e.g. `:MdRender textsize`),
+--- where re-applying highlights alone is not enough.
+function MdPreview.rebuild_visible()
+  for buf, session in pairs(MdPreview._sessions) do
+    if vim.api.nvim_buf_is_valid(buf) and #vim.fn.win_findbuf(buf) > 0 then
+      session:rebuild()
+      session:refresh_images()
+    end
+  end
+end
 
 --- Build a fresh Session from a source buffer.
 ---@param source_bufnr integer
@@ -272,6 +289,10 @@ function Session.new(source_bufnr, ns_name, opts)
   for _, fold in ipairs(self.content.callout_folds) do
     self.fold_state[fold.source_line] = fold.collapsed
   end
+
+  -- Weakly registered so `MdPreview.rebuild_visible()` can reach every live
+  -- session regardless of how it was opened (float / tab / split / toggle).
+  MdPreview._sessions[self.buf] = self
 
   return self
 end
@@ -473,7 +494,11 @@ function Session:bind_window(win)
       self.content = MdPreview.build_content(self.source_lines, self.opts)
       return self.content
     end,
+    on_content_applied = function(new_content)
+      self.text_size_state = require("md-render.text_size").refresh(self.text_size_state, self.win, new_content)
+    end,
   })
+  self.text_size_state = require("md-render.text_size").attach(win, self.content)
 end
 
 --- True when the render buffer is displayed in at least one window.
@@ -486,6 +511,7 @@ end
 function Session:refresh_images()
   if self.win and vim.api.nvim_win_is_valid(self.win) then
     self.image_state = display_utils.update_images(self.image_state, self.win, self.content)
+    self.text_size_state = require("md-render.text_size").refresh(self.text_size_state, self.win, self.content)
   end
 end
 
@@ -494,6 +520,10 @@ function Session:cleanup_images()
   if self.image_state then
     display_utils.cleanup_images(self.image_state)
     self.image_state = nil
+  end
+  if self.text_size_state then
+    require("md-render.text_size").detach(self.text_size_state)
+    self.text_size_state = nil
   end
 end
 

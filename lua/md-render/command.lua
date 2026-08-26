@@ -3,8 +3,9 @@
 
 local M = {}
 
-local SUBCOMMANDS = { "float", "tab", "pager", "toggle", "split", "auto", "demo" }
+local SUBCOMMANDS = { "float", "tab", "pager", "toggle", "split", "auto", "demo", "textsize" }
 local AUTO_ARGS = { "on", "off", "toggle" }
+local TEXTSIZE_ARGS = { "on", "off", "toggle" }
 
 local function preview()
   return require("md-render").preview
@@ -29,6 +30,32 @@ function M.dispatch(args)
     p.split { mods = args.smods }
   elseif sub == "demo" then
     p.show_demo()
+  elseif sub == "textsize" then
+    local text_size = require "md-render.text_size"
+    local a = (fargs[2] or "toggle"):lower()
+    local cur = text_size.config().enabled
+    local want
+    if a == "on" then
+      want = true
+    elseif a == "off" then
+      want = false
+    elseif a == "toggle" then
+      want = not cur
+    else
+      vim.notify("MdRender textsize: unknown argument '" .. a .. "' (expected on|off|toggle)", vim.log.levels.WARN)
+      return
+    end
+    if want and not text_size.supports() then
+      vim.notify(
+        "MdRender textsize: this terminal does not implement OSC 66 (needs Kitty >= 0.40)",
+        vim.log.levels.WARN
+      )
+      return
+    end
+    text_size.setup { enabled = want }
+    vim.notify("MdRender textsize: " .. (want and "on" or "off"))
+    -- Heading rows are reserved at build time, so the content has to be rebuilt.
+    p.rebuild_visible()
   elseif sub == "auto" then
     local a = (fargs[2] or "toggle"):lower()
     if a == "on" then
@@ -65,6 +92,8 @@ function M.complete(arglead, cmdline, _cursorpos)
     list = SUBCOMMANDS
   elseif n == 1 and before:match "^%s*auto%s+$" then
     list = AUTO_ARGS
+  elseif n == 1 and before:match "^%s*textsize%s+$" then
+    list = TEXTSIZE_ARGS
   else
     return {}
   end

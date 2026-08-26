@@ -208,16 +208,16 @@ test("complete first arg empty -> all subcommands", function()
   -- Order matches the SUBCOMMANDS table
   assert_eq(
     out,
-    { "float", "tab", "pager", "toggle", "split", "auto", "demo" },
+    { "float", "tab", "pager", "toggle", "split", "auto", "demo", "textsize" },
     "all subcommands returned for empty arglead"
   )
   restore()
 end)
 
-test("complete first arg 't' -> tab, toggle", function()
+test("complete first arg 't' -> tab, toggle, textsize", function()
   local cmd, _, restore = with_preview_stub()
   local out = cmd.complete("t", "MdRender t", #"MdRender t")
-  assert_eq(out, { "tab", "toggle" }, "t-prefix narrows to tab,toggle")
+  assert_eq(out, { "tab", "toggle", "textsize" }, "t-prefix narrows to tab,toggle,textsize")
   restore()
 end)
 
@@ -240,7 +240,7 @@ test("complete tolerates :vert mod prefix", function()
   local out = cmd.complete("", "vert MdRender ", #"vert MdRender ")
   assert_eq(
     out,
-    { "float", "tab", "pager", "toggle", "split", "auto", "demo" },
+    { "float", "tab", "pager", "toggle", "split", "auto", "demo", "textsize" },
     "leading :vert mod still yields full subcommand list"
   )
   restore()

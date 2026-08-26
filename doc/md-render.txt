@@ -10,6 +10,7 @@ Requirements						|md-render-requirements|
 Installation						|md-render-installation|
 Mappings						    |md-render-mappings|
 Commands						    |md-render-commands|
+  Scaled headings (experimental)			 |md-render-text-size|
 Telescope Integration					   |md-render-telescope|
 Snacks.nvim Integration					      |md-render-snacks|
 Usage							       |md-render-usage|
@@ -184,10 +185,13 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	  auto        - [EXPERIMENTAL] auto-toggle around Insert mode;
 	                takes a second arg `on` / `off` / `toggle`
 	                (defaults to `toggle`)
+	  textsize    - [EXPERIMENTAL] scale `#` / `##` headings with the
+	                Kitty text sizing protocol; takes a second arg
+	                `on` / `off` / `toggle` (defaults to `toggle`)
 	  demo        - show a demo window with every supported notation
 
 	Tab completion lists the subcommands for the first arg, and
-	`on` / `off` / `toggle` after `auto`.
+	`on` / `off` / `toggle` after `auto` and `textsize`.
 
 	The per-subcommand sections below describe behaviour in detail.
 
@@ -340,9 +344,79 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	  mdless README.md
 <
 
+							  *:MdRender-textsize*
+:MdRender textsize [on|off|toggle] ~
+	[EXPERIMENTAL] Draw `#` and `##` headings at twice the base font
+	size using the Kitty text sizing protocol.  Off by default; see
+	|md-render-text-size| for what the feature does and does not do.
+
+	With no argument this toggles.  Turning it on when the terminal does
+	not implement the protocol prints a warning and changes nothing.
+
+	Because the extra rows a scaled heading needs are reserved while the
+	content is built, switching this rebuilds every preview currently on
+	screen.
+
 							      *:MdRender-demo*
 :MdRender demo ~
 	Show a demo window with all supported Markdown notations.
+
+------------------------------------------------------------------------------
+Scaled headings (experimental)				*md-render-text-size*
+
+[EXPERIMENTAL] This is new, opt-in, and Kitty-only.  The UX may change or the
+feature may be withdrawn.  Please report issues or rough edges.
+
+Kitty 0.40 added the text sizing protocol (OSC 66), which draws a run of text
+at a multiple of the base font size.  md-render can use it to render `#` and
+`##` headings at double size: >lua
+
+	require("md-render.text_size").setup { enabled = true }
+<
+Or toggle it at runtime with |:MdRender-textsize|.
+
+Which headings scale is fixed: `#` and `##` at `s=2`, everything else plain.
+`s=2` doubles the width as well as the height, so deeper levels stop fitting
+into a preview window.
+
+How it works: ~
+
+The scaled text is written straight to the terminal with `nvim_ui_send`, the
+same channel |md-render-image| uses for Kitty graphics.  Neovim knows nothing
+about it, which drives most of the design:
+
+- The plain-size heading stays in the buffer and the scaled text is painted
+  over it.  Every terminal repaint therefore degrades to the normal heading
+  rather than to a blank line, and `y` / `/` / `:w` see the real text.
+- A scaled heading reserves one extra rendered line for the taller glyphs,
+  the way an image placement reserves rows.
+- Long headings wrap at half the usual width so that every `#` / `##` scales,
+  each wrapped line getting its own two-row block.
+- The level icon is left at normal size.  Kitty gives a scaled run exactly
+  `scale` cells per source cell, and these Nerd Font glyphs report as one
+  cell wide while being drawn wider, so inside a scaled run the icon would be
+  clipped (`󰉬` would render as a bare "H").
+- Repainting happens on scroll, resize and cursor movement, debounced.  While
+  a scroll is in flight the delay is stretched so a held `<C-e>` costs one
+  repaint instead of one per step.
+
+Limitations: ~
+
+- Kitty >= 0.40 only.  Support is detected by asking the terminal to identify
+  itself (XTVERSION) and requires a positive answer; a silent or non-Kitty
+  terminal disables the feature.  This is deliberately strict because some
+  terminals swallow an OSC 66 sequence together with its payload text, which
+  would delete the heading rather than fall back to unscaled text.
+- Inline formatting inside a heading (inline code, links, `==highlight==`)
+  loses its colors while scaled — the whole run is drawn in the heading
+  highlight.
+- A heading whose second row would fall outside the window stays plain until
+  it is scrolled into view.
+- A repaint that md-render cannot observe (another plugin forcing a redraw, a
+  message or popup overlapping the window) leaves the heading plain until the
+  next scroll or cursor movement.
+- Each layout change costs a full-screen repaint to clear the previous scaled
+  run, so scrolling is more expensive than usual.
 
 ------------------------------------------------------------------------------
 Deprecated commands				 *md-render-deprecated-commands*
