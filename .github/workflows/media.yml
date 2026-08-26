@@ -1,0 +1,98 @@
+name: Media tools
+
+# The unit tests check the bytes md-render emits. This job checks that the
+# commands it runs still work, against several FFmpeg majors.
+#
+# It exists because of a silent breakage: FFmpeg 9 removed `-vsync`, frame
+# extraction started failing for every video and animated GIF, and nothing
+# caught it — the emitted escape sequences were still correct, and no commit
+# had touched the code. Hence the schedule: the failure mode is the toolchain
+# moving, not the repo changing.
+#
+# The matrix must span majors rather than track one version. Ubuntu 24.04 still
+# ships FFmpeg 6.1, so a job that just runs `apt-get install ffmpeg` would have
+# stayed green through the entire incident.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Mondays 03:00 UTC. Catches toolchain drift with no commit involved.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  ffmpeg-matrix:
+    name: ffmpeg ${{ matrix.ffmpeg.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ffmpeg:
+          # 6.x and 7.x come from a pinned old autobuild: BtbN drops branches
+          # from its rolling `latest` release once they go EOL, but release
+          # assets themselves persist, so these URLs stay valid.
+          - name: "6.1"
+            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2024-09-30-15-36/ffmpeg-n6.1.2-8-gf00f71f590-linux64-gpl-6.1.tar.xz
+          - name: "7.1"
+            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2024-09-30-15-36/ffmpeg-n7.1-linux64-gpl-7.1.tar.xz
+          # 8.x, 9.x and master are rolling: the assets are rebuilt in place,
+          # so the scheduled run picks up new point releases automatically.
+          # This is the part that actually detects drift.
+          - name: "8.1"
+            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
+          - name: "9.0"
+            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz
+          - name: master
+            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+
+      - name: Install FFmpeg ${{ matrix.ffmpeg.name }}
+        run: |
+          set -euxo pipefail
+          curl -fsSL -o /tmp/ffmpeg.tar.xz "${{ matrix.ffmpeg.url }}"
+          mkdir -p /tmp/ffmpeg && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
+          echo "/tmp/ffmpeg/bin" >> "$GITHUB_PATH"
+
+      - name: Install ImageMagick
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends imagemagick
+
+      # MD_RENDER_REQUIRE_MEDIA_TOOLS turns "tool missing, skipping" into a
+      # failure. Without it a broken install step would look like a pass.
+      - name: Run media tests
+        env:
+          MD_RENDER_REQUIRE_MEDIA_TOOLS: "1"
+        run: nvim --headless -u NONE --noplugin -l tests/media_test.lua
+
+  # The scheduled run is only meaningful if someone hears about it. A failing
+  # cron job on a repo nobody is watching is the same as no test at all.
+  notify:
+    name: Open an issue on scheduled failure
+    needs: ffmpeg-matrix
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Scheduled media-tool test failed";
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo, state: "open", labels: "toolchain",
+            });
+            const existing = open.find(i => i.title === title);
+            const body = `The weekly FFmpeg matrix failed. An external tool most likely changed under us.\n\n${url}`;
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body, labels: ["toolchain"] });
+            }

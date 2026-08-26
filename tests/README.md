@@ -2,10 +2,13 @@
 
 ## Overview
 
-| Layer | What | Where | How |
-|-------|------|-------|-----|
-| 1. Unit tests | Escape sequence verification | CI (push/PR) | `nvim --headless -l tests/image_test.lua` |
-| 2. Visual regression | Screenshot comparison across terminals | Local only | `./tests/run_visual_test.sh` |
+| Layer | What | Catches | Where | How |
+|-------|------|---------|-------|-----|
+| 1. Unit tests | The bytes md-render *emits* | Protocol regressions | CI (push/PR) | `make test` |
+| 2. Media tools | The commands md-render *runs* | An external tool changing under us | CI (push/PR **and weekly**) | `nvim --headless -u NONE --noplugin -l tests/media_test.lua` |
+| 3. Visual regression | What the terminal actually *draws* | Clipped glyphs, images that never paint | Local only | `./tests/run_visual_test.sh` |
+
+Layer 2 exists because of a silent breakage: FFmpeg 9 removed `-vsync`, frame extraction failed for every video and animated GIF, and nothing noticed — the emitted escape sequences were still correct and no commit had touched the code. The failure mode was the toolchain moving, so the test runs on a schedule, not just on push.
 
 ## Running all CI tests locally
 
@@ -28,7 +31,24 @@ Mock-based tests that verify Kitty Graphics Protocol escape sequences without re
 
 Tests monkey-patch `vim.api.nvim_ui_send` to capture the bytes the image module would emit (mirrors Neovim's own `test/functional/ui/img_spec.lua`). The image module also exposes `_set_kitty_supported` and `_reset_image_id` for state control.
 
-## Layer 2: Visual regression tests
+## Layer 2: Media tool tests
+
+`media_test.lua` runs the real external tools (ffmpeg, ffprobe, ImageMagick, sips) against the bundled assets in `assets/demo/` and asserts that frames and PNGs actually come out.
+
+Two details make it meaningful rather than decorative:
+
+- **It forces a cache miss.** Both the frame cache and the converted-PNG cache are keyed on a hash of the source path, so testing a bundled path directly would hit a cache from an earlier run and never invoke the tool. The test copies each asset to a unique temporary path first.
+- **It refuses to pass by not testing.** A missing tool is reported as `skip` so contributors without ffmpeg can still run `make test`, but CI sets `MD_RENDER_REQUIRE_MEDIA_TOOLS=1`, which turns every skip into a failure.
+
+The test prints the version of each tool it found; when the matrix goes red the first useful question is which toolchain it went red on.
+
+### FFmpeg matrix
+
+`.github/workflows/media.yml` runs the suite against FFmpeg 6.1, 7.1, 8.1, 9.0 and master, plus a weekly `schedule`.
+
+Spanning majors is the point. Ubuntu 24.04 still ships FFmpeg 6.1, so a job that ran `apt-get install ffmpeg` would have stayed green through the entire `-vsync` incident. The 8.x/9.x/master entries point at BtbN's rolling `latest` release, so the scheduled run picks up new point releases and reports drift; 6.1 and 7.1 come from a pinned older autobuild, because BtbN drops EOL branches from `latest` while keeping the release assets reachable.
+
+## Layer 3: Visual regression tests
 
 Screenshot-based tests that launch real terminal emulators and compare rendered output against reference images.
 
@@ -37,7 +57,10 @@ Screenshot-based tests that launch real terminal emulators and compare rendered 
 - macOS (uses `screencapture` and Quartz for window capture)
 - At least one of: WezTerm, Kitty, Ghostty
 - ImageMagick (`magick`) for SSIM comparison
-- Screen Recording permission granted to the terminal running the script
+- **PyObjC**: `pip install pyobjc-framework-Quartz`. Without it the capture cannot be scoped to one window and the script aborts.
+- **Screen Recording permission** for whatever runs the script (System Settings > Privacy & Security > Screen Recording)
+
+This layer is a deliberate gate, not something to run on every save: it opens GUI windows and takes over the screen while it runs, and a whole-window SSIM is sensitive to font, colorscheme and OS updates.
 
 ### Usage
 
@@ -87,7 +110,9 @@ tests/screenshots/
 
 - The test Markdown (`tests/fixtures/visual_test.md`) avoids using the same image file in multiple places to prevent WezTerm image ID conflicts.
 - Animated GIF tests are included -- the animation timer affects image placement timing on WezTerm.
-- `tests/capture_window.py` uses the macOS Quartz API to find window IDs by PID.
+- `tests/capture_window.py` finds the window by **title**, not PID: terminals re-exec, so the PID the shell holds often does not own the window. `tests/visual_test_init.lua` sets the title from Neovim via `'title'` (OSC 2), which every supported terminal honours — unlike the per-terminal command line flags, which differ and do not all set the name macOS reports.
+- The script **never falls back to a full-screen capture**. An earlier version did, and with PyObjC missing it silently photographed the whole desktop and wrote it out as a reference image.
+- Much of what a screenshot is reached for can be answered without pixels: `kitty @ get-text` reports the actual cell grid, which is enough to check things like whether a heading occupies a two-row multicell group. Reserve this layer for questions that genuinely need pixels.
 
 ## Adding new tests
 
@@ -116,4 +141,4 @@ print(string.format("\n%d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
 ```
 
-Then add it to `.github/workflows/test.yml`.
+`make test` globs `tests/*_test.lua`, so a new file is picked up automatically — no workflow change needed.

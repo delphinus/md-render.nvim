@@ -28,6 +28,7 @@ MODE="${1:-capture}"  # capture, --update, --compare
 SSIM_THRESHOLD="0.95"  # minimum acceptable similarity (0-1)
 
 # Terminal window geometry (in cells)
+WINDOW_TITLE="md-render-visual-test"
 WIN_COLS=120
 WIN_ROWS=40
 
@@ -71,28 +72,28 @@ wait_for_ready() {
   return 0
 }
 
-# Capture screenshot of a window owned by the given PID (macOS, via Quartz)
+# Capture a single terminal window by its title (macOS, via Quartz).
+#
+# Title, not PID: terminals re-exec, so the PID this script holds is often not
+# the one owning the window. Every launcher below passes WINDOW_TITLE.
+#
+# There is deliberately no full-screen fallback. The previous one fired
+# whenever PyObjC was missing and wrote a photograph of the whole desktop out
+# as a reference image.
 capture_screenshot() {
   local output_path="$1"
-  local term_pid="$2"
 
-  if python3 "$SCRIPT_DIR/capture_window.py" "$term_pid" "$output_path" 2>/dev/null; then
-    if [ -f "$output_path" ] && [ -s "$output_path" ]; then
-      return 0
-    fi
+  if ! python3 "$SCRIPT_DIR/capture_window.py" --title "$WINDOW_TITLE" "$output_path"; then
+    err "Could not capture the terminal window. Both of these are required:"
+    err "  pip install pyobjc-framework-Quartz"
+    err "  System Settings > Privacy & Security > Screen Recording"
+    return 1
   fi
-
-  # Fallback: try screencapture with accessibility permissions prompt
-  log "Trying screencapture (may require screen recording permission)..."
-  if screencapture -x "$output_path" 2>/dev/null; then
-    if [ -f "$output_path" ] && [ -s "$output_path" ]; then
-      return 0
-    fi
+  if [ ! -s "$output_path" ]; then
+    err "Capture produced an empty file: $output_path"
+    return 1
   fi
-
-  err "Could not capture screenshot. Grant screen recording permission in:"
-  err "  System Settings > Privacy & Security > Screen Recording"
-  return 1
+  return 0
 }
 
 # Compare two images using ImageMagick SSIM
@@ -131,7 +132,7 @@ run_wezterm() {
   rm -f "$SIGNAL_FILE"
   : > "$SIGNAL_FILE"  # Ensure it exists but is empty
 
-  VISUAL_TEST_SIGNAL="$SIGNAL_FILE" wezterm start \
+  VISUAL_TEST_SIGNAL="$SIGNAL_FILE" VISUAL_TEST_TITLE="$WINDOW_TITLE" wezterm start \
     --always-new-process \
     --cwd "$PLUGIN_ROOT" \
     -- nvim -u "$PLUGIN_ROOT/tests/visual_test_init.lua" &
@@ -143,7 +144,7 @@ run_wezterm() {
   gui_pid=$(pgrep -f "wezterm-gui" | head -1 || echo "$term_pid")
 
   if wait_for_ready 20; then
-    capture_screenshot "$SCREENSHOT_DIR/wezterm.png" "$gui_pid"
+    capture_screenshot "$SCREENSHOT_DIR/wezterm.png"
     log "WezTerm screenshot saved: $SCREENSHOT_DIR/wezterm.png"
   else
     err "WezTerm test timed out"
@@ -159,7 +160,7 @@ run_kitty() {
   rm -f "$SIGNAL_FILE"
   : > "$SIGNAL_FILE"
 
-  VISUAL_TEST_SIGNAL="$SIGNAL_FILE" kitty \
+  VISUAL_TEST_SIGNAL="$SIGNAL_FILE" VISUAL_TEST_TITLE="$WINDOW_TITLE" kitty \
     --override "initial_window_width=${WIN_COLS}c" \
     --override "initial_window_height=${WIN_ROWS}c" \
     --override "allow_remote_control=yes" \
@@ -168,7 +169,7 @@ run_kitty() {
   local term_pid=$!
 
   if wait_for_ready 20; then
-    capture_screenshot "$SCREENSHOT_DIR/kitty.png" "$term_pid"
+    capture_screenshot "$SCREENSHOT_DIR/kitty.png"
     log "Kitty screenshot saved: $SCREENSHOT_DIR/kitty.png"
   else
     err "Kitty test timed out"
@@ -182,12 +183,12 @@ run_ghostty() {
   rm -f "$SIGNAL_FILE"
   : > "$SIGNAL_FILE"
 
-  VISUAL_TEST_SIGNAL="$SIGNAL_FILE" ghostty \
+  VISUAL_TEST_SIGNAL="$SIGNAL_FILE" VISUAL_TEST_TITLE="$WINDOW_TITLE" ghostty \
     -e nvim -u "$PLUGIN_ROOT/tests/visual_test_init.lua" &
   local term_pid=$!
 
   if wait_for_ready 20; then
-    capture_screenshot "$SCREENSHOT_DIR/ghostty.png" "$term_pid"
+    capture_screenshot "$SCREENSHOT_DIR/ghostty.png"
     log "Ghostty screenshot saved: $SCREENSHOT_DIR/ghostty.png"
   else
     err "Ghostty test timed out"

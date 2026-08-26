@@ -2,6 +2,15 @@
 -- Loads md-render.nvim from the current working directory,
 -- opens the test markdown file, and triggers preview after images load.
 
+-- Name the terminal window so capture_window.py can find exactly this one.
+--
+-- Done from Neovim (OSC 2 via 'title') rather than with per-terminal flags:
+-- every supported terminal honours it, whereas the flags differ and some do
+-- not set the name macOS reports (WezTerm's --class is the window class, not
+-- the title). VISUAL_TEST_TITLE is set by run_visual_test.sh.
+vim.opt.title = true
+vim.opt.titlestring = vim.env.VISUAL_TEST_TITLE or "md-render-visual-test"
+
 -- Add plugin to runtimepath
 local plugin_root = vim.fn.getcwd()
 vim.opt.runtimepath:prepend(plugin_root)
