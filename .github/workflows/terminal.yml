@@ -46,16 +46,20 @@ jobs:
           neovim: true
           version: ${{ matrix.nvim }}
 
-      # Kitty needs fontconfig and at least one font or it aborts at startup
-      # with "Failed to find and load fontconfig"; Noto CJK covers the CJK
-      # heading in the fixture. Ubuntu's own kitty package is 0.32, far below
-      # the 0.40 the text sizing protocol needs, so take the release tarball.
+      # Kitty is dynamically linked against the usual X client libraries and
+      # dlopens its GLFW backend, so a missing one is a startup failure rather
+      # than a link error: without libXcursor it dies with
+      #   Failed to dlopen .../kitty.glfw-x11.so: libXcursor.so.1: cannot open
+      # It also needs fontconfig and at least one font, and Noto CJK covers the
+      # CJK heading in the fixture. Ubuntu's own kitty package is 0.32, far
+      # below the 0.40 the text sizing protocol needs, so take the tarball.
       - name: Install Kitty ${{ matrix.kitty }} and Xvfb
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            xvfb libgl1-mesa-dri xauth fontconfig fonts-dejavu-core fonts-noto-cjk
+            xvfb libgl1-mesa-dri xauth fontconfig fonts-dejavu-core fonts-noto-cjk \
+            libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon-x11-0 libdbus-1-3
           version='${{ matrix.kitty }}'
           if [ "$version" = latest ]; then
             version="$(curl -fsSL https://api.github.com/repos/kovidgoyal/kitty/releases/latest \

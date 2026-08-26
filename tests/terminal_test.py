@@ -88,25 +88,38 @@ def run_kitty(kitty, enabled, workdir):
     if shutil.which("xvfb-run"):
         cmd = ["xvfb-run", "-a", "--server-args=-screen 0 2400x1400x24"] + cmd
 
+    # Keep the terminal's own output: when kitty refuses to start (a missing
+    # shared library, no fonts) it says so there, and discarding it turns a
+    # one-line diagnosis into a blind hunt.
+    termlog = workdir / f"kitty-{int(enabled)}.log"
+    logf = termlog.open("wb")
     # New session so the whole tree can be signalled: under xvfb-run the
     # process here is the wrapper, and killing it leaves kitty running.
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, start_new_session=True
-    )
+    proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, env=env, start_new_session=True)
     try:
         deadline = time.time() + 90
         while time.time() < deadline and not signal.exists():
             if proc.poll() is not None:
-                raise RuntimeError(f"kitty exited early with code {proc.returncode}")
+                logf.close()
+                raise RuntimeError(
+                    f"kitty exited early with code {proc.returncode}:\n"
+                    + (termlog.read_text(errors="replace").strip() or "(no output)")
+                )
             time.sleep(0.5)
         if not signal.exists():
-            raise RuntimeError("timed out waiting for the preview to settle")
+            logf.close()
+            raise RuntimeError(
+                "timed out waiting for the preview to settle:\n"
+                + (termlog.read_text(errors="replace").strip() or "(no output)")
+            )
 
         out = subprocess.run(
             [kitty, "@", "--to", f"unix:{sock}", "get-text", "--extent", "screen", "--ansi"],
             capture_output=True, check=True, env=env,
         ).stdout
     finally:
+        if not logf.closed:
+            logf.close()
         try:
             os.killpg(os.getpgid(proc.pid), signal_mod.SIGKILL)
         except (ProcessLookupError, PermissionError):

@@ -63,7 +63,7 @@ So "is this heading drawn at double size" is an exact string match — no screen
 
 `.github/workflows/terminal.yml` runs it against Kitty **0.40.0** (the version that introduced the protocol, so the floor this can work on) and **latest**, crossed with Neovim **v0.12.0** and **nightly**, plus a weekly schedule.
 
-Ubuntu's own kitty package is 0.32 — below the 0.40 the protocol needs — so the workflow takes the release tarball. Kitty also needs `fontconfig` and at least one font installed or it aborts at startup.
+Ubuntu's own kitty package is 0.32 — below the 0.40 the protocol needs — so the workflow takes the release tarball. Kitty then needs its runtime dependencies installed by hand: `fontconfig` plus a font, and the X client libraries it `dlopen`s (`libxcursor1`, `libxrandr2`, `libxi6`, `libxinerama1`, `libxkbcommon-x11-0`). A missing one is a startup failure, not a link error — without libXcursor kitty dies with `Failed to dlopen .../kitty.glfw-x11.so`.
 
 ## Layer 4: Visual regression tests
 
