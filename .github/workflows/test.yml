@@ -2,16 +2,28 @@ name: Tests
 on: [push, pull_request]
 jobs:
   test:
+    name: nvim ${{ matrix.nvim }} / ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # v0.12.0 is the minimum this plugin claims to support and is not the
+        # same as stable: `vim.tty.request` only appeared in 0.13, and a probe
+        # that depended on it silently disabled scaled headings on every 0.12.
+        # Testing only `stable` hid that for an entire release.
+        nvim: [v0.12.0, stable, nightly]
     runs-on: ${{ matrix.os }}
+    # A broken nightly is Neovim's problem, not this repo's; keep it visible
+    # without blocking merges.
+    continue-on-error: ${{ matrix.nvim == 'nightly' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Neovim
         uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
-          version: stable
+          version: ${{ matrix.nvim }}
+      - name: Report version
+        run: nvim --version | head -1
       - name: Run tests
         run: make test

@@ -1,0 +1,101 @@
+name: Terminal
+
+# Drives a real Kitty under Xvfb and asserts on what the terminal actually
+# holds, using `kitty @ get-text --ansi` — which round-trips OSC 66 verbatim,
+# so "is this heading drawn at double size" is an exact string match rather
+# than a screenshot comparison.
+#
+# This is the layer between the unit tests (the bytes md-render emits) and the
+# visual regression tests (pixels, macOS-local only). It catches the two things
+# that actually went wrong with scaled headings: the level icon leaking into a
+# scaled run and being clipped, and the terminal probe silently failing.
+#
+# Same shape as the FFmpeg matrix: a pinned floor plus a version that follows
+# upstream, so both "we broke the oldest supported setup" and "upstream moved
+# under us" are visible. The schedule is for the second kind, which no push
+# would ever trigger.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Mondays 03:30 UTC, half an hour after the media matrix.
+    - cron: "30 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  kitty-matrix:
+    name: kitty ${{ matrix.kitty }} / nvim ${{ matrix.nvim }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 0.40.0 introduced the text sizing protocol, so it is the floor this
+        # feature can possibly work on. `latest` is resolved at run time.
+        kitty: ["0.40.0", "latest"]
+        # v0.12.0 is the declared minimum and differs from stable in ways that
+        # matter here; nightly is the early warning.
+        nvim: [v0.12.0, nightly]
+    continue-on-error: ${{ matrix.nvim == 'nightly' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.nvim }}
+
+      # Kitty needs fontconfig and at least one font or it aborts at startup
+      # with "Failed to find and load fontconfig"; Noto CJK covers the CJK
+      # heading in the fixture. Ubuntu's own kitty package is 0.32, far below
+      # the 0.40 the text sizing protocol needs, so take the release tarball.
+      - name: Install Kitty ${{ matrix.kitty }} and Xvfb
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libgl1-mesa-dri xauth fontconfig fonts-dejavu-core fonts-noto-cjk
+          version='${{ matrix.kitty }}'
+          if [ "$version" = latest ]; then
+            version="$(curl -fsSL https://api.github.com/repos/kovidgoyal/kitty/releases/latest \
+              | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1)"
+          fi
+          echo "Using kitty $version"
+          curl -fsSL -o /tmp/kitty.txz \
+            "https://github.com/kovidgoyal/kitty/releases/download/v${version}/kitty-${version}-x86_64.txz"
+          sudo mkdir -p /opt/kitty
+          sudo tar -xJf /tmp/kitty.txz -C /opt/kitty
+          echo "/opt/kitty/bin" >> "$GITHUB_PATH"
+
+      - name: Report versions
+        run: |
+          kitty --version
+          nvim --version | head -1
+
+      - name: Run terminal tests
+        run: python3 tests/terminal_test.py
+
+  notify:
+    name: Open an issue on scheduled failure
+    needs: kitty-matrix
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Scheduled terminal test failed";
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo, state: "open", labels: "toolchain",
+            });
+            const existing = open.find(i => i.title === title);
+            const body = `The weekly Kitty matrix failed. The terminal or Neovim most likely changed under us.\n\n${url}`;
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body, labels: ["toolchain"] });
+            }

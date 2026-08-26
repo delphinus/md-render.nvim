@@ -6,7 +6,8 @@
 |-------|------|---------|-------|-----|
 | 1. Unit tests | The bytes md-render *emits* | Protocol regressions | CI (push/PR) | `make test` |
 | 2. Media tools | The commands md-render *runs* | An external tool changing under us | CI (push/PR **and weekly**) | `nvim --headless -u NONE --noplugin -l tests/media_test.lua` |
-| 3. Visual regression | What the terminal actually *draws* | Clipped glyphs, images that never paint | Local only | `./tests/run_visual_test.sh` |
+| 3. Terminal | What the terminal actually *holds* | Scaled text drawn wrong, or not at all | CI (push/PR **and weekly**) | `tests/terminal_test.py` |
+| 4. Visual regression | What the terminal actually *draws* | Clipped glyphs, images that never paint | Local only | `./tests/run_visual_test.sh` |
 
 Layer 2 exists because of a silent breakage: FFmpeg 9 removed `-vsync`, frame extraction failed for every video and animated GIF, and nothing noticed — the emitted escape sequences were still correct and no commit had touched the code. The failure mode was the toolchain moving, so the test runs on a schedule, not just on push.
 
@@ -48,7 +49,23 @@ The test prints the version of each tool it found; when the matrix goes red the 
 
 Spanning majors is the point. Ubuntu 24.04 still ships FFmpeg 6.1, so a job that ran `apt-get install ffmpeg` would have stayed green through the entire `-vsync` incident. The 8.x/9.x/master entries point at BtbN's rolling `latest` release, so the scheduled run picks up new point releases and reports drift; 6.1 and 7.1 come from a pinned older autobuild, because BtbN drops EOL branches from `latest` while keeping the release assets reachable.
 
-## Layer 3: Visual regression tests
+## Layer 3: Terminal tests
+
+`terminal_test.py` launches a real Kitty (under `xvfb-run` when present), runs Neovim with the plugin, and asserts on what the terminal ended up holding.
+
+The trick that makes this cheap is that `kitty @ get-text --ansi` **round-trips OSC 66 verbatim**:
+
+```
+ESC ] 66 ; s=2 ; Short Heading ESC \
+```
+
+So "is this heading drawn at double size" is an exact string match — no screenshot, no SSIM, and none of the font or timing sensitivity of comparing images. It asserts that `#`/`##` scale and `###` does not, that a long CJK heading wraps into several scaled blocks instead of falling back to plain size, that the level icon stays out of the payload (it gets clipped inside a scaled run), and that nothing is scaled when the feature is off.
+
+`.github/workflows/terminal.yml` runs it against Kitty **0.40.0** (the version that introduced the protocol, so the floor this can work on) and **latest**, crossed with Neovim **v0.12.0** and **nightly**, plus a weekly schedule.
+
+Ubuntu's own kitty package is 0.32 — below the 0.40 the protocol needs — so the workflow takes the release tarball. Kitty also needs `fontconfig` and at least one font installed or it aborts at startup.
+
+## Layer 4: Visual regression tests
 
 Screenshot-based tests that launch real terminal emulators and compare rendered output against reference images.
 
@@ -60,7 +77,7 @@ Screenshot-based tests that launch real terminal emulators and compare rendered 
 - **PyObjC**: `pip install pyobjc-framework-Quartz`. Without it the capture cannot be scoped to one window and the script aborts.
 - **Screen Recording permission** for whatever runs the script (System Settings > Privacy & Security > Screen Recording)
 
-This layer is a deliberate gate, not something to run on every save: it opens GUI windows and takes over the screen while it runs, and a whole-window SSIM is sensitive to font, colorscheme and OS updates.
+This layer is a deliberate gate, not something to run on every save. Most questions people reach for a screenshot to answer are cheaper in layer 3: it opens GUI windows and takes over the screen while it runs, and a whole-window SSIM is sensitive to font, colorscheme and OS updates.
 
 ### Usage
 
