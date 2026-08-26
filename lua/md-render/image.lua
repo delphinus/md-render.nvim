@@ -1228,7 +1228,18 @@ end
 ---@param tool string
 ---@param result vim.SystemCompleted
 local function warn_extract_failed(tool, result)
-  local detail = (result.stderr or ""):match "[^\r\n]+$" or ("exit code " .. tostring(result.code))
+  -- Keep the last couple of non-empty stderr lines. FFmpeg prints its banner
+  -- and build configuration first, and splits the reason across two lines
+  -- ("Unrecognized option 'vsync'." / "Error splitting the argument list: ..."),
+  -- so one line is rarely the whole story. Anchoring a `$` match on the raw
+  -- output silently matches nothing, because stderr ends with a newline.
+  local lines = {}
+  for line in (result.stderr or ""):gmatch "[^\r\n]+" do
+    local trimmed = vim.trim(line)
+    if trimmed ~= "" then table.insert(lines, trimmed) end
+  end
+  local detail = table.concat(vim.list_slice(lines, math.max(1, #lines - 1)), " / ")
+  if detail == "" then detail = "exit code " .. tostring(result.code) end
   vim.notify_once(
     string.format("md-render: %s could not extract video/animation frames: %s", tool, detail),
     vim.log.levels.WARN
