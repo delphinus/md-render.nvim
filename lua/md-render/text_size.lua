@@ -56,28 +56,57 @@ end
 
 local _supported = nil
 
+--- How long to wait for the terminal to identify itself.
+---
+--- Only paid in full by a terminal that never answers; a reply short-circuits
+--- the wait. Kitty answers in ~120 ms on a warm desktop but was measured at
+--- ~260 ms inside a container under Xvfb, so a tight bound silently disables
+--- the feature on slow machines — which is indistinguishable, from the user's
+--- side, from the terminal not supporting it.
+local PROBE_TIMEOUT_MS = 1000
+
 --- Ask the terminal to identify itself (XTVERSION) and accept only Kitty >= 0.40.
 --- Returns nil when the terminal stays silent, which is treated as "no".
+---
+--- Implemented directly on `TermResponse` + `nvim_ui_send` rather than through
+--- `vim.tty.request`, which does not exist before Neovim 0.13 — on 0.12
+--- `vim.tty` only carries `query`. Depending on it made the whole feature a
+--- silent no-op on the oldest Neovim this plugin supports.
 ---@return boolean?
 local function probe_xtversion()
-  local ok, tty = pcall(require, "vim.tty")
-  if not ok or type(tty) ~= "table" or type(tty.request) ~= "function" then return nil end
+  if type(vim.api.nvim_ui_send) ~= "function" then return nil end
+
   local result = nil
-  pcall(tty.request, "\x1b[>0q", { timeout = 200 }, function(resp)
-    if type(resp) ~= "string" then return end
-    local major, minor = resp:match "kitty%((%d+)%.(%d+)"
-    if not major then
-      -- Some other terminal answered. Do not retry, do not guess.
-      result = false
-      return true
-    end
-    major, minor = tonumber(major), tonumber(minor)
-    result = (major > 0) or (minor >= 40)
-    return true
-  end)
-  vim.wait(250, function()
+  local ok_au, id = pcall(vim.api.nvim_create_autocmd, "TermResponse", {
+    nested = true,
+    callback = function(ev)
+      -- `ev.data` is a table carrying `sequence` on 0.12 and 0.13; accept a
+      -- bare string too in case that ever changes back.
+      local resp = ev.data
+      if type(resp) == "table" then resp = resp.sequence end
+      if type(resp) ~= "string" then return end
+
+      local major, minor = resp:match "kitty%((%d+)%.(%d+)"
+      if major then
+        result = (tonumber(major) > 0) or (tonumber(minor) >= 40)
+        return true
+      end
+      -- Some other terminal answered XTVERSION. Do not retry, do not guess.
+      if resp:match "^\27P>|" then
+        result = false
+        return true
+      end
+      -- Anything else is an unrelated response (cursor position, colours, the
+      -- primary device attributes that follow); keep listening.
+    end,
+  })
+  if not ok_au then return nil end
+
+  vim.api.nvim_ui_send "\27[>0q"
+  vim.wait(PROBE_TIMEOUT_MS, function()
     return result ~= nil
   end, 10)
+  pcall(vim.api.nvim_del_autocmd, id)
   return result
 end
 
