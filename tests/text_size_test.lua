@@ -338,5 +338,49 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 14: a full-screen repaint by another module is a hand-off, not a loss.
+-- Kitty graphics placements and these OSC 66 runs both live outside Neovim's
+-- grid and are both destroyed by a repaint neither module can observe, so
+-- whoever repaints announces it and the other puts itself back.
+do
+  local display_utils = require "md-render.display_utils"
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local painted = 0
+    local real_paint = text_size.paint
+    text_size.paint = function()
+      painted = painted + 1
+    end
+
+    local state = text_size.attach(win, out)
+    assert_true(state ~= nil, "attaches when there are placements")
+    -- Repaints nobody announces still happen (other plugins, the terminal
+    -- shifting cells on a mouse scroll), so the runs are re-asserted on a tick.
+    assert_true(state.keepalive_timer ~= nil, "a keep-alive tick is running")
+
+    painted = 0
+    display_utils.announce_repaint "image"
+    assert_eq(painted, 1, "an image repaint makes the scaled text repaint")
+
+    painted = 0
+    display_utils.announce_repaint "text_size"
+    assert_eq(painted, 0, "our own repaint does not bounce back at us")
+
+    text_size.paint = real_paint
+    text_size.detach(state)
+    assert_eq(state.keepalive_timer, nil, "detaching stops the keep-alive tick")
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

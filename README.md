@@ -237,8 +237,8 @@ Known limitations:
 - Inline formatting inside a heading (inline code, links, `==highlight==`) loses its colors while scaled.
 - The level icon stays at normal size. Kitty gives a scaled run exactly `s` cells per source cell, and these Nerd Font glyphs report as one cell wide while being drawn wider, so an icon inside a run gets clipped — `󰉬` would render as a bare "H".
 - A heading whose second row would fall outside the window stays plain until scrolled into view.
-- A repaint md-render cannot observe (another plugin forcing a redraw, a message or popup overlapping the window) leaves the heading plain until the next scroll or cursor movement.
-- Each layout change costs a full-screen repaint to clear the previous scaled run, so scrolling is more expensive than usual.
+- A repaint md-render cannot observe (another plugin forcing a redraw, a message or popup overlapping the window, the terminal shifting cells for a mouse scroll) drops the heading back to plain size. There is no way to be told this happened, so md-render re-asserts the scaled runs on `SafeState` — the moment Neovim settles back to waiting for input, which is exactly once a repaint has finished, whoever caused it. Recovery is rate-limited to 80 ms, fast enough not to be seen, with a 500 ms timer behind it for a repaint that never settles. md-render's own repaints are handled properly rather than waited out — inline images and scaled headings both draw outside Neovim's grid and are both destroyed by a full repaint, so whichever of the two repaints announces it and the other puts itself back at once.
+- Each layout change costs a full-screen repaint to clear the previous scaled run, so scrolling is more expensive than usual. When the window also holds images the image redraw does that clearing, and the scaled text is simply written after it.
 - The Telescope and Snacks previewers opt out. They redraw on every cursor step, and a full-screen repaint per step is not something a picker can afford.
 
 See `:help md-render-text-size` for the full rationale.

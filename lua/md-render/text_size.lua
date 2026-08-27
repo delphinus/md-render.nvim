@@ -393,6 +393,7 @@ end
 ---@field placements MdRender.TextPlacement[]
 ---@field win integer
 ---@field redraw_timer any?
+---@field keepalive_timer any? re-asserts the runs against repaints we cannot see
 ---@field autocmd_ids integer[]
 ---@field augroup integer?
 ---@field last_layout string? screen positions of the previous paint
@@ -410,8 +411,13 @@ end
 --- still believing it had already drawn the heading there, would never restore
 --- it. `:mode` clears and re-sends the whole screen, which is heavy, so callers
 --- must only reach for it when the layout actually moved.
+--- Anything else painting straight to the terminal — Kitty graphics
+--- placements, above all — is cleared by that repaint too, and cannot see it
+--- happen any more than we can see theirs. Say so, so they can put themselves
+--- back; see `display_utils.REPAINT_EVENT`.
 local function invalidate()
   vim.cmd "mode"
+  require("md-render.display_utils").announce_repaint "text_size"
 end
 
 --- Screen bounds (1-indexed, inclusive) of a window's text area.
@@ -515,7 +521,34 @@ end
 
 --- Repaint counters, for measuring how costly a given navigation pattern is.
 --- `invalidations` is the one that matters: each is a full-screen repaint.
-M._stats = { paints = 0, invalidations = 0, skipped = 0 }
+M._stats = { paints = 0, invalidations = 0, skipped = 0, keepalives = 0 }
+
+--- Write the runs for `drawn` where they currently sit.
+---@param drawn { p: MdRender.TextPlacement, row: integer, col: integer }[]
+local function write_runs(drawn)
+  if #drawn == 0 then return end
+  local out = {}
+  for _, d in ipairs(drawn) do
+    local sgr = sgr_for(d.p.hl)
+    -- One escape code per run, each positioned explicitly. A fractionally
+    -- scaled heading is several runs (see `split_run`) and the cursor is not
+    -- a reliable way to chain them: `w=` decides how wide a run lands, not
+    -- the text in it.
+    local col = d.col
+    for _, run in ipairs(d.p.runs) do
+      local meta = "s=" .. d.p.scale
+      if d.p.num then meta = meta .. string.format(":n=%d:d=%d:w=%d", d.p.num, d.p.den, run.w) end
+      table.insert(out, string.format("\x1b[%d;%dH", d.row, col))
+      table.insert(out, sgr)
+      table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, run.text))
+      col = col + d.p.scale * (run.w > 0 and run.w or vim.api.nvim_strwidth(run.text))
+    end
+  end
+  -- DECSC/DECRC rather than CSI s/u: the cursor *and* the pending SGR state
+  -- have to survive, since we change colors in between.
+  vim.api.nvim_ui_send("\x1b7" .. table.concat(out) .. "\x1b[0m\x1b8")
+  M._stats.paints = M._stats.paints + 1
+end
 
 --- Paint all visible placements now.
 ---
@@ -556,29 +589,7 @@ function M.paint(state)
     end
     if moved then state.last_layout = layout_key(drawn) end
     state.last_drawn = #drawn
-    if #drawn == 0 then return end
-
-    local out = {}
-    for _, d in ipairs(drawn) do
-      local sgr = sgr_for(d.p.hl)
-      -- One escape code per run, each positioned explicitly. A fractionally
-      -- scaled heading is several runs (see `split_run`) and the cursor is not
-      -- a reliable way to chain them: `w=` decides how wide a run lands, not
-      -- the text in it.
-      local col = d.col
-      for _, run in ipairs(d.p.runs) do
-        local meta = "s=" .. d.p.scale
-        if d.p.num then meta = meta .. string.format(":n=%d:d=%d:w=%d", d.p.num, d.p.den, run.w) end
-        table.insert(out, string.format("\x1b[%d;%dH", d.row, col))
-        table.insert(out, sgr)
-        table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, run.text))
-        col = col + d.p.scale * (run.w > 0 and run.w or vim.api.nvim_strwidth(run.text))
-      end
-    end
-    -- DECSC/DECRC rather than CSI s/u: the cursor *and* the pending SGR state
-    -- have to survive, since we change colors in between.
-    vim.api.nvim_ui_send("\x1b7" .. table.concat(out) .. "\x1b[0m\x1b8")
-    M._stats.paints = M._stats.paints + 1
+    write_runs(drawn)
   end)
   -- Never leave synchronized output open: the terminal would freeze the frame
   -- until its own timeout.
@@ -586,9 +597,13 @@ function M.paint(state)
   if not ok then error(err) end
 end
 
---- Repaint delay for an isolated movement. Matches the 50 ms the image redraw
---- uses, so both land in the same frame after a single scroll.
-local SETTLED_MS = 50
+--- Repaint delay for an isolated movement. Deliberately longer than the 50 ms
+--- the image redraw waits: both debounce off the same scroll, and going second
+--- means the `redraw!` over there has already cleared the screen, so this paint
+--- is a plain write instead of a second full-screen repaint. Correctness does
+--- not depend on the order — whoever repaints announces it — only the cost of
+--- a scroll does.
+local SETTLED_MS = 90
 --- Repaint delay while events keep arriving (a held `<C-e>`, a mouse wheel
 --- spin). Each layout change costs a full-screen repaint, so waiting for the
 --- scroll to stop turns a burst into one repaint instead of one per step. The
@@ -597,6 +612,32 @@ local SETTLED_MS = 50
 local BURST_MS = 180
 --- Two events closer together than this count as one burst.
 local BURST_WINDOW_MS = 130
+
+--- Backstop interval for re-asserting runs that are already on screen.
+---
+--- Nothing tells us when they are destroyed. Neovim repaints for reasons this
+--- module cannot see — another plugin calling `redraw!`, a message, a popup
+--- closing, diagnostics arriving — and every one of them drops the heading
+--- back to plain size until an event we *do* see comes along. Chasing each
+--- source is a losing game; re-sending the same bytes is idempotent and costs
+--- a few hundred, so saying it again is both cheaper and more reliable.
+--- `md-render.image` re-places its placements on a 200 ms tick for exactly the
+--- same reason.
+---
+--- Recovery normally comes from `SafeState` rather than from this timer, which
+--- only covers a repaint that never hands control back — see `REASSERT_GAP_MS`.
+local KEEPALIVE_MS = 500
+
+--- Shortest gap between two re-assertions.
+---
+--- `SafeState` fires as Neovim settles down to wait for input, which is
+--- precisely once a repaint has finished, whoever caused it. That makes it the
+--- one signal that covers repaints this module cannot otherwise observe — but
+--- it also fires on every keystroke, so re-asserting is rate-limited. 80 ms is
+--- short enough that a heading dropping to plain size and coming back is not
+--- something the eye resolves, and long enough that typing does not turn into
+--- a stream of writes.
+local REASSERT_GAP_MS = 80
 
 --- Schedule a debounced repaint, backing off while a scroll is in flight.
 ---@param state MdRender.TextSizeState
@@ -610,6 +651,31 @@ local function schedule_paint(state)
     state.redraw_timer = nil
     M.paint(state)
   end, streaming and BURST_MS or SETTLED_MS)
+end
+
+--- Re-send what we believe is already on screen.
+---@param state MdRender.TextSizeState
+local function reassert(state)
+  -- A real paint is already queued, and it knows more than this does.
+  if state.redraw_timer then return end
+  if not vim.api.nvim_win_is_valid(state.win) then return end
+  local now = vim.uv.now()
+  if state.last_reassert_at and (now - state.last_reassert_at) < REASSERT_GAP_MS then return end
+  state.last_reassert_at = now
+
+  local drawn = visible_placements(state)
+  if layout_key(drawn) == state.last_layout then
+    -- Same layout: nothing can be stale, so just say it again.
+    write_runs(drawn)
+    M._stats.keepalives = M._stats.keepalives + 1
+  elseif #drawn > 0 or (state.last_drawn or 0) > 0 then
+    -- The layout moved without any event this module saw. Runs may be sitting
+    -- where they no longer belong — the terminal shifts them bodily when
+    -- Neovim scrolls with a scroll region — and clearing those needs the full
+    -- repaint `M.paint` does. Go through the debounce so a burst of these
+    -- collapses into one.
+    schedule_paint(state)
+  end
 end
 
 -- ============================================================================
@@ -657,6 +723,24 @@ function M.attach(win, content)
     table.insert(state.autocmd_ids, id)
   end
 
+  -- Somebody else repainted the screen and took our runs with it. Repaint at
+  -- once rather than on the debounce — the heading is plain-size right now —
+  -- and skip the invalidate path: their repaint already cleared every stale
+  -- glyph, and running `:mode` here would wipe what they have just redrawn.
+  table.insert(
+    state.autocmd_ids,
+    vim.api.nvim_create_autocmd("User", {
+      group = augroup,
+      pattern = require("md-render.display_utils").REPAINT_EVENT,
+      callback = function(ev)
+        if type(ev.data) == "table" and ev.data.source == "text_size" then return end
+        state.last_layout = nil
+        state.last_drawn = 0
+        M.paint(state)
+      end,
+    })
+  )
+
   -- Colors can change under us; drop the SGR cache and repaint.
   table.insert(
     state.autocmd_ids,
@@ -677,6 +761,31 @@ function M.attach(win, content)
       M.detach(state)
     end,
   })
+
+  -- The main recovery path. Anything that repaints the screen hands control
+  -- back to the main loop afterwards, and that is what `SafeState` reports, so
+  -- this catches repaints no autocmd above would have told us about — another
+  -- plugin's `redraw!`, a popup closing, the terminal shifting cells for a
+  -- mouse scroll. Rate-limited inside `reassert`.
+  table.insert(
+    state.autocmd_ids,
+    vim.api.nvim_create_autocmd("SafeState", {
+      group = augroup,
+      callback = function()
+        reassert(state)
+      end,
+    })
+  )
+
+  -- Backstop for a repaint that never settles into a safe state.
+  state.keepalive_timer = (vim.uv or vim.loop).new_timer()
+  state.keepalive_timer:start(
+    KEEPALIVE_MS,
+    KEEPALIVE_MS,
+    vim.schedule_wrap(function()
+      reassert(state)
+    end)
+  )
 
   schedule_paint(state)
   return state
@@ -709,6 +818,11 @@ function M.detach(state)
   if state.redraw_timer then
     state.redraw_timer:stop()
     state.redraw_timer = nil
+  end
+  if state.keepalive_timer then
+    state.keepalive_timer:stop()
+    if not state.keepalive_timer:is_closing() then state.keepalive_timer:close() end
+    state.keepalive_timer = nil
   end
   for _, id in ipairs(state.autocmd_ids or {}) do
     pcall(vim.api.nvim_del_autocmd, id)

@@ -597,6 +597,26 @@ end
 ---@field autocmd_ids integer[]
 
 --- Transmit all images and display them. Returns state for re-display and cleanup.
+--- `User` event fired after a full-screen repaint, so that everything else
+--- drawing straight to the terminal can put itself back.
+---
+--- Kitty graphics placements and the OSC 66 runs |md-render-text-size| paints
+--- both live outside Neovim's grid, and both are destroyed by a full repaint —
+--- `redraw!` here, `:mode` there. Whichever module repaints last used to erase
+--- the other's work and leave it erased, because neither can observe a repaint
+--- it did not perform. Announcing it turns that into a hand-off.
+M.REPAINT_EVENT = "MdRenderRepaint"
+
+--- Tell the other terminal-drawing modules that the screen was just repainted.
+---@param source string who repainted, so the sender can ignore its own event
+function M.announce_repaint(source)
+  pcall(vim.api.nvim_exec_autocmds, "User", {
+    pattern = M.REPAINT_EVENT,
+    modeline = false,
+    data = { source = source },
+  })
+end
+
 ---@param win integer
 ---@param content MdRender.Content
 ---@param ns integer?
@@ -868,6 +888,7 @@ function M.setup_images(win, content, ns, opts)
       vim.schedule(function()
         place_images()
         resume_anim_timers()
+        M.announce_repaint "image"
       end)
     end
   end
@@ -1154,6 +1175,21 @@ function M.setup_images(win, content, ns, opts)
     })
     table.insert(state.autocmd_ids, id)
   end
+
+  -- Somebody else repainted the screen, which dropped our placements with it.
+  -- Not filtered by window: a full repaint clears the whole screen, so every
+  -- image state has to put itself back, not just the one that was scrolled.
+  table.insert(
+    state.autocmd_ids,
+    vim.api.nvim_create_autocmd("User", {
+      group = augroup,
+      pattern = M.REPAINT_EVENT,
+      callback = function(ev)
+        if type(ev.data) == "table" and ev.data.source == "image" then return end
+        place_images()
+      end,
+    })
+  )
 
   vim.api.nvim_create_autocmd("WinClosed", {
     group = augroup,
