@@ -184,6 +184,7 @@ MdPreview.build_content = function(lines, opts)
     autolinks = opts.autolinks,
     source_line_offset = body_start - 1,
     buf_dir = opts.buf_dir,
+    text_scale = opts.text_scale,
   })
 
   return b:result()
@@ -228,6 +229,9 @@ function MdPreview.rebuild_visible()
       session:refresh_images()
     end
   end
+  -- `show_demo` builds its own window rather than a Session; it registers a
+  -- rebuild hook here so it is not left behind.
+  if MdPreview._demo_rebuild then pcall(MdPreview._demo_rebuild) end
 end
 
 --- Build a fresh Session from a source buffer.
@@ -2335,6 +2339,9 @@ MdPreview.show_demo = function()
   local expand_state = {}
   local opts = { buf_dir = plugin_root }
   local image_state = nil
+  local text_size = require "md-render.text_size"
+  ---@type MdRender.TextSizeState?
+  local text_size_state = nil
 
   local buf = vim.api.nvim_create_buf(false, true)
   local ns = vim.api.nvim_create_namespace "md_render_demo"
@@ -2365,6 +2372,7 @@ MdPreview.show_demo = function()
     vim.api.nvim_set_option_value("wrap", not any_expanded, { win = win })
     content = new_content
     image_state = display_utils.update_images(image_state, win, content)
+    text_size_state = text_size.refresh(text_size_state, win, content)
   end
 
   opts.autolinks = {
@@ -2393,7 +2401,18 @@ MdPreview.show_demo = function()
       content = MdPreview.build_content(demo_lines, opts)
       return content
     end,
+    on_content_applied = function(new_content)
+      text_size_state = text_size.refresh(text_size_state, win, new_content)
+    end,
   })
+  text_size_state = text_size.attach(win, content)
+
+  -- The demo is not a Session, so `rebuild_visible` cannot find it the way it
+  -- finds previews. Hand it a way in, or `:MdRender textsize` would leave the
+  -- demo showing rows reserved for a scale it no longer uses.
+  MdPreview._demo_rebuild = function()
+    if win and vim.api.nvim_win_is_valid(win) then rebuild() end
+  end
 
   display_utils.setup_float_keymaps(buf, ns, win, content, demo_float_win, {
     get_content = function()

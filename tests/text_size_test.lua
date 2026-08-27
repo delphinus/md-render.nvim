@@ -49,7 +49,13 @@ end
 -- Gating
 -- ---------------------------------------------------------------------------
 
--- Test 1: disabled by default — no placements, no reserved rows
+-- Test 0: on by default. Asserted before anything calls setup(), since every
+-- later test sets `enabled` explicitly.
+do
+  assert_eq(text_size.config().enabled, true, "enabled by default")
+end
+
+-- Test 1: turning it off leaves no placements and no reserved rows
 do
   text_size.setup { enabled = false }
   with_support(true, function()
@@ -70,16 +76,73 @@ do
   end)
 end
 
--- Test 3: only h1 and h2 scale
+-- Test 3: every level scales, on a ladder that only ever descends. `s` stays
+-- at 2 throughout so that no level reserves more than one extra row.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local prev
+    for level = 1, 6 do
+      local spec = text_size.spec_for(level)
+      assert_true(spec ~= nil, "level " .. level .. " scales")
+      if spec then
+        assert_eq(spec.s, 2, "level " .. level .. " reserves exactly one extra row")
+        assert_true(spec.ratio > 1, "level " .. level .. " is larger than plain text")
+        if prev then assert_true(spec.ratio < prev, "level " .. level .. " is smaller than level " .. (level - 1)) end
+        prev = spec.ratio
+      end
+    end
+    assert_eq(text_size.spec_for(7), nil, "there is no level 7")
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 3b: the protocol bounds every value we send. `d` is capped at 15 and
+-- `w` at 7, and exceeding either makes Kitty reject or mis-size the run.
 do
   text_size.setup { enabled = true }
   with_support(true, function()
     for level = 1, 6 do
-      local scale = text_size.scale_for(level)
-      if level <= 2 then
-        assert_eq(scale, 2, "level " .. level .. " scales at s=2")
-      else
-        assert_eq(scale, nil, "level " .. level .. " stays plain")
+      local spec = text_size.spec_for(level)
+      assert_true(spec.s >= 1 and spec.s <= 7, "level " .. level .. ": s within 1..7")
+      if spec.n then
+        assert_true(spec.d <= 15, "level " .. level .. ": d within the protocol's limit")
+        assert_true(spec.n < spec.d, "level " .. level .. ": n < d")
+        local runs = text_size.split_run(string.rep("x", 200), spec)
+        for _, run in ipairs(runs) do
+          assert_true(run.w >= 1 and run.w <= 7, "level " .. level .. ": w within 1..7")
+        end
+      end
+    end
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 3c: a run's advertised width matches what it actually draws. The
+-- terminal is told `w` cells per run, so the painted width is the sum of
+-- those, not `strwidth(text) * ratio` — which is what the fit check relies on.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    for level = 1, 6 do
+      local spec = text_size.spec_for(level)
+      for _, text in ipairs {
+        "The quick brown fox jumps over the lazy dog",
+        "あいうえおかきくけこさしすせそ",
+      } do
+        local runs, width = text_size.split_run(text, spec)
+        local sum, joined = 0, {}
+        for _, run in ipairs(runs) do
+          sum = sum + (run.w > 0 and run.w * spec.s or vim.api.nvim_strwidth(run.text) * spec.s)
+          table.insert(joined, run.text)
+        end
+        assert_eq(width, sum, "level " .. level .. ": reported width is the sum of the runs")
+        assert_eq(table.concat(joined), text, "level " .. level .. ": splitting loses no text")
+        -- Rounding `w` up can only ever add cells, and never more than one
+        -- `s`-block's worth in total (see `heading_scale_plan`).
+        local exact = vim.api.nvim_strwidth(text) * spec.ratio
+        assert_true(width >= exact - 0.001, "level " .. level .. ": never narrower than the exact size")
+        assert_true(width < exact + spec.s, "level " .. level .. ": no more than one block of slack")
       end
     end
   end)
@@ -99,6 +162,10 @@ do
     local p = out.text_placements[1]
     assert_eq(p.line, 0, "placement anchored to the heading line")
     assert_eq(p.scale, 2, "placement scale")
+    assert_eq(p.num, nil, "h1 needs no fractional scale")
+    assert_eq(#p.runs, 1, "h1 goes out as a single run")
+    assert_eq(p.runs[1].w, 0, "h1 lets the terminal work out the width")
+    assert_eq(p.width, vim.api.nvim_strwidth(p.text) * 2, "h1 covers twice its plain width")
     assert_eq(p.hl, "MdRenderH1", "placement highlight group")
     assert_eq(out.lines[2], "", "one blank row reserved for the taller glyphs")
     assert_eq(out.lines[3], "  Body.", "body follows the reserved row")
@@ -133,7 +200,7 @@ do
     local out = render({ "## " .. string.rep("word ", 20) }, { max_width = max_width, indent = "  " })
     assert_true(#out.text_placements > 1, "long heading wraps into several scaled blocks")
     for _, p in ipairs(out.text_placements) do
-      local scaled = p.col + vim.api.nvim_strwidth(p.text) * p.scale
+      local scaled = p.col + p.width
       assert_true(scaled <= max_width, string.format("scaled block fits (%d <= %d)", scaled, max_width))
       local line = out.lines[p.line + 1]
       assert_eq(line:sub(p.col + 1, p.col + #p.text), p.text, "wrapped placement anchored correctly")
@@ -167,6 +234,106 @@ do
       local line = out.lines[l.line + 1] or ""
       assert_true(line ~= "", "link " .. l.url .. " does not land on a reserved blank row")
     end
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 9: a deeper heading scales too, and carries the fractional metadata
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render({ "#### Fourth Level" }, { max_width = 80, indent = "  " })
+    assert_eq(#out.text_placements, 1, "h4 registers a placement")
+    local p = out.text_placements[1]
+    assert_eq(p.text, "Fourth Level", "icon stays out of the h4 payload")
+    assert_eq(p.hl, "MdRenderH4", "h4 uses its own highlight group")
+    assert_eq(p.num, 7, "h4 numerator")
+    assert_eq(p.den, 10, "h4 denominator")
+    assert_true(#p.runs >= 2, "h4 splits into several runs")
+    assert_eq(out.lines[2], "", "h4 still reserves exactly one row")
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 10: a two-cell CJK character never straddles a run boundary, which
+-- would leave the run a fraction of a cell wide and shift the rest of the
+-- heading. Chunk sizes are even for exactly this reason.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    for level = 2, 6 do
+      local spec = text_size.spec_for(level)
+      local runs = text_size.split_run(string.rep("あ", 40), spec)
+      for i, run in ipairs(runs) do
+        local w = vim.api.nvim_strwidth(run.text)
+        assert_eq(w % 2, 0, string.format("level %d run %d ends on a whole CJK character", level, i))
+        -- Only the trailing run is allowed to round its width up: it holds
+        -- whatever is left over, which need not be a whole chunk.
+        if i < #runs then
+          assert_eq(run.w, w * spec.n / spec.d, string.format("level %d run %d asks for an exact width", level, i))
+        end
+      end
+    end
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 11: rounding slack is pushed onto a word boundary. `w` is rounded up
+-- because Kitty drops characters that do not fit, and the leftover cells paint
+-- as background — a gap in mid-word if the run ends there, an unremarkably
+-- wider space if it ends after one.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    for level = 2, 6 do
+      local spec = text_size.spec_for(level)
+      -- CJK words separated by spaces: the chunk boundary lands mid-word
+      -- unless the split goes looking for the space.
+      local runs = text_size.split_run("あいうえお かきくけこ さしすせそ たちつてと", spec)
+      for i, run in ipairs(runs) do
+        local cw = vim.api.nvim_strwidth(run.text)
+        local exact = (cw * spec.n) % spec.d == 0
+        local at_word_end = run.text:sub(-1) == " "
+        if i < #runs then
+          assert_true(exact or at_word_end, string.format("level %d run %d hides its slack (%q)", level, i, run.text))
+        end
+      end
+    end
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 12: hiding the slack costs cells, so a caller that cannot spare them
+-- gets the compact split back instead.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local spec = text_size.spec_for(2)
+    -- Short words: cutting after every one of them wastes more on rounding
+    -- than filling each run to the chunk would.
+    local text = "あい うえ おか きく けこ さし すせ"
+    local _, pretty = text_size.split_run(text, spec)
+    local compact_runs, compact = text_size.split_run(text, spec, pretty - 1)
+    assert_true(compact < pretty, "the compact split is narrower than the pretty one")
+    local joined = {}
+    for _, run in ipairs(compact_runs) do
+      table.insert(joined, run.text)
+    end
+    assert_eq(table.concat(joined), text, "the compact split loses no text either")
+    local _, unchanged = text_size.split_run(text, spec, pretty)
+    assert_eq(unchanged, pretty, "a budget that fits keeps the pretty split")
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 13: a caller that will never paint the runs (a picker previewer) opts
+-- out at build time, so it does not get rows reserved for text nobody draws.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render({ "# Heading", "", "Body." }, { max_width = 80, indent = "  ", text_scale = false })
+    assert_eq(#out.text_placements, 0, "text_scale = false: no placements")
+    assert_eq(out.lines[2], "  Body.", "text_scale = false: no row reserved")
   end)
   text_size.setup { enabled = false }
 end

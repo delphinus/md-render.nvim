@@ -170,7 +170,7 @@ The plugin exposes a single `:MdRender` command with subcommands:
 | `:MdRender toggle` | Toggle the current window between source and render mode in place |
 | `:MdRender split` | Open a split showing source and rendered Markdown (honours `:vert`, `:tab`, `:topleft`, `:botright`) |
 | `:MdRender auto [on\|off\|toggle]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
-| `:MdRender textsize [on\|off\|toggle]` | **[experimental]** Scale `#` / `##` headings via the Kitty text sizing protocol |
+| `:MdRender textsize [on\|off\|toggle]` | **[experimental]** Scale headings via the Kitty text sizing protocol (on by default) |
 | `:MdRender pager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRender demo` | Show a demo window with all supported Markdown notations |
 
@@ -209,27 +209,37 @@ See `:help :MdRender-auto` for behavior details — the `i` / `I` / `a` / `A` / 
 
 ### Scaled headings (experimental, Kitty only)
 
-> **Experimental.** New, opt-in, and Kitty-only. The UX may change or the feature may be withdrawn. Please report issues or rough edges.
+> **Experimental.** New and Kitty-only. The UX may change or the feature may be withdrawn. Please report issues or rough edges.
 
-Kitty 0.40 added the [text sizing protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/) (OSC 66), which draws text at a multiple of the base font size. md-render can use it to render `#` and `##` headings at double size:
+Kitty 0.40 added the [text sizing protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/) (OSC 66), which draws text at a multiple of the base font size. md-render uses it to give every heading level its own size:
+
+| Level | `#` | `##` | `###` | `####` | `#####` | `######` |
+|---|---|---|---|---|---|---|
+| Size | 2.00x | 1.75x | 1.50x | 1.40x | 1.25x | 1.17x |
+
+This is on whenever the terminal supports it — no configuration needed. Turn it off with `:MdRender textsize off`, or permanently with:
 
 ```lua
-require("md-render.text_size").setup { enabled = true }
+require("md-render.text_size").setup { enabled = false }
 ```
 
-Or toggle it at runtime with `:MdRender textsize`.
+The ladder is fixed. Kitty's `s=` scale multiplies the *cells* a run occupies, not just the font, so every level stays at `s=2` — one extra rendered row, never more — and the sizes below 2x come from the protocol's fractional scale plus a `w=` width per run. The protocol caps `d` at 15 and `w` at 7, which is why the deepest level lands on 1.17x rather than something closer to plain.
 
-Which headings scale is fixed — `#` and `##` at `s=2`, everything else plain. `s=2` doubles the width as well as the height, so deeper levels stop fitting into a preview window. Long headings wrap at half the usual width so every `#` / `##` scales, each wrapped line getting its own two-row block.
+Headings wrap at `1 / size` of the usual width so that every level scales rather than only the ones that happen to fit, and each wrapped line gets its own two-row block.
+
+A fractionally scaled heading goes out as several runs, because each has to declare its width in whole cells while its text does not measure a whole number of them. That width is rounded up — Kitty drops characters that do not fit — and the runs are cut where the leftover cell disappears: at a boundary that comes out exact where there is one, and otherwise after a space, so the slack reads as a slightly wider word gap instead of a hole in a word.
 
 The scaled text is written straight to the terminal, the same way inline images are, so Neovim knows nothing about it. The plain-size heading stays in the buffer underneath and the scaled text is painted over it — every terminal repaint degrades to the normal heading rather than to a blank line, and `y` / `/` / `:w` still see the real text.
 
 Known limitations:
 
-- **Kitty >= 0.40 only.** Support is detected by asking the terminal to identify itself (XTVERSION) and requires a positive answer. This is deliberately strict: some terminals swallow an OSC 66 sequence *together with its payload text*, which would delete the heading rather than fall back to unscaled text.
+- **Kitty >= 0.40 only.** Support is detected by asking the terminal to identify itself (XTVERSION) and requires a positive answer. This is deliberately strict: some terminals swallow an OSC 66 sequence *together with its payload text*, which would delete the heading rather than fall back to unscaled text. Everywhere else the feature costs nothing and headings render as they always did.
 - Inline formatting inside a heading (inline code, links, `==highlight==`) loses its colors while scaled.
+- The level icon stays at normal size. Kitty gives a scaled run exactly `s` cells per source cell, and these Nerd Font glyphs report as one cell wide while being drawn wider, so an icon inside a run gets clipped — `󰉬` would render as a bare "H".
 - A heading whose second row would fall outside the window stays plain until scrolled into view.
 - A repaint md-render cannot observe (another plugin forcing a redraw, a message or popup overlapping the window) leaves the heading plain until the next scroll or cursor movement.
 - Each layout change costs a full-screen repaint to clear the previous scaled run, so scrolling is more expensive than usual.
+- The Telescope and Snacks previewers opt out. They redraw on every cursor step, and a full-screen repaint per step is not something a picker can afford.
 
 See `:help md-render-text-size` for the full rationale.
 

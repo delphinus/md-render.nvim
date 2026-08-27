@@ -88,6 +88,7 @@ function ContentBuilder.new()
     footnote_anchors = {},
     heading_anchors = {},
     source_line_map = {},
+    text_scale = true,
     _current_source_line = 0,
   }, { __index = ContentBuilder })
 end
@@ -549,12 +550,12 @@ end
 --- than leaving it at plain size.
 local MIN_SCALED_HEADING_WIDTH = 12
 
---- Scale to draw a source line's heading at, and the width its text has to wrap
---- to in order to fit once doubled. Returns nil when the heading must stay plain.
+--- How to draw a source line's heading, and the width its text has to wrap to
+--- in order to fit once scaled. Returns nil when the heading must stay plain.
 ---@param source_text string raw source line (still carrying the `#` markers)
 ---@param indent string
 ---@param max_width integer
----@return integer? scale
+---@return MdRender.TextSize.Spec? spec
 ---@return integer? level
 ---@return integer? content_width width for the text alone, indent excluded
 local function heading_scale_plan(source_text, indent, max_width)
@@ -562,16 +563,18 @@ local function heading_scale_plan(source_text, indent, max_width)
   if not markers then return nil end
   local level = math.min(#markers, 6)
 
-  local scale = require("md-render.text_size").scale_for(level)
-  if not scale then return nil end
+  local spec = require("md-render.text_size").spec_for(level)
+  if not spec then return nil end
 
-  -- `s=N` multiplies the width as well as the height, so the text has to wrap
-  -- at 1/N of the space it would normally get. The indent is not scaled (the
-  -- block starts after it), so take it off the top before dividing.
-  local avail = math.floor((max_width - vim.api.nvim_strwidth(indent)) / scale)
+  -- Scaling multiplies the width as well as the height, so the text has to wrap
+  -- at 1/ratio of the space it would normally get. The indent is not scaled
+  -- (the block starts after it), so take it off the top before dividing. One
+  -- `s`-worth of cells comes off as well: `split_run` rounds each run's `w` up,
+  -- so a line can land a fraction of a cell wider than `width * ratio`.
+  local avail = math.floor((max_width - vim.api.nvim_strwidth(indent) - spec.s) / spec.ratio)
   if avail < MIN_SCALED_HEADING_WIDTH then return nil end
 
-  return scale, level, avail
+  return spec, level, avail
 end
 
 --- Register one scaled-text placement per rendered line of a heading.
@@ -584,9 +587,12 @@ end
 ---@param self MdRender.ContentBuilder
 ---@param heading_line integer 0-indexed rendered line holding the heading
 ---@param indent string
----@param scale integer
+---@param spec MdRender.TextSize.Spec
 ---@param level integer
-function ContentBuilder:add_heading_text_scale(heading_line, indent, scale, level)
+---@param max_width integer window width the scaled runs have to stay inside
+function ContentBuilder:add_heading_text_scale(heading_line, indent, spec, level, max_width)
+  local text_size = require "md-render.text_size"
+  local scale = spec.s
   -- The level icon is left out of the scaled run and stays as Neovim drew it.
   -- Kitty gives a scaled run exactly `scale` cells per source cell, and it
   -- reports these Nerd Font glyphs as one cell wide even though they are drawn
@@ -610,11 +616,19 @@ function ContentBuilder:add_heading_text_scale(heading_line, indent, scale, leve
       content = content:sub(#prefix + 1)
     end
     if content ~= "" then
+      -- The runs start after the indent and, on the first line, after the
+      -- unscaled level icon; both come out of what they have to fit into.
+      local budget = max_width - vim.api.nvim_strwidth((self.lines[line + 1] or ""):sub(1, col))
+      local runs, width = text_size.split_run(content, spec, budget)
       table.insert(self.text_placements, {
         line = line,
         col = col,
         text = content,
+        runs = runs,
+        width = width,
         scale = scale,
+        num = spec.n,
+        den = spec.d,
         hl = "MdRenderH" .. level,
       })
     end
@@ -646,13 +660,13 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
     quote_prefix = rendered_text:sub(1, pos - 1)
   end
 
-  -- A scaled heading wraps at 1/scale of the usual width and reserves
-  -- `scale - 1` rows under each of its lines for the taller glyphs.
-  local scale, level, content_width
-  if heading_content then
-    scale, level, content_width = heading_scale_plan(text, indent, max_width)
+  -- A scaled heading wraps at 1/ratio of the usual width and reserves
+  -- `s - 1` rows under each of its lines for the taller glyphs.
+  local spec, level, content_width
+  if heading_content and self.text_scale then
+    spec, level, content_width = heading_scale_plan(text, indent, max_width)
   end
-  local line_gap = scale and (scale - 1) or 0
+  local line_gap = spec and (spec.s - 1) or 0
 
   -- `add_wrapped_markdown` sizes the text alone while the test below sizes
   -- indent + text. Only the scaled path needs the two to agree exactly, so the
@@ -684,7 +698,7 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
   if heading_content then
     local slug = markdown.heading_slug(heading_content)
     if slug ~= "" then self.heading_anchors[slug] = lines_before_fn end
-    if scale then self:add_heading_text_scale(lines_before_fn, indent, scale, level) end
+    if spec then self:add_heading_text_scale(lines_before_fn, indent, spec, level, max_width) end
   end
 
   -- Register footnote ref anchors (first occurrence per label)
@@ -1321,6 +1335,10 @@ function ContentBuilder:render_document(lines, opts)
   local expand_state = opts.expand_state or {}
   local source_line_offset = opts.source_line_offset or 0
   local buf_dir = opts.buf_dir or vim.fn.expand "%:p:h"
+  -- Scaled headings reserve rendered rows, so a caller that will never paint
+  -- them (a picker preview, say) has to say so before the content is built or
+  -- it gets a stray blank line under every heading.
+  self.text_scale = opts.text_scale ~= false
 
   local in_code_block = false
   local code_block_lang = nil

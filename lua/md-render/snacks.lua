@@ -183,7 +183,10 @@ function M.preview(opts)
       require("md-render").setup_highlights()
       local preview_mod = require "md-render.preview"
       local max_width = math.max(40, vim.api.nvim_win_get_width(ctx.win) - 4)
-      local content = preview_mod.build_content(lines, { max_width = max_width })
+      -- text_scale = false: nothing here paints OSC 66 runs, and a scaled
+      -- heading reserves a rendered row whether or not it is ever painted.
+      local build_opts = { max_width = max_width, text_scale = false }
+      local content = preview_mod.build_content(lines, build_opts)
       last_source_line_map = content.source_line_map
 
       vim.bo[ctx.buf].modifiable = true
@@ -194,7 +197,7 @@ function M.preview(opts)
       image_state = display_utils.setup_images(ctx.win, content, ns, {
         buf = ctx.buf,
         build_content = function()
-          return preview_mod.build_content(lines, { max_width = max_width })
+          return preview_mod.build_content(lines, build_opts)
         end,
       })
     end

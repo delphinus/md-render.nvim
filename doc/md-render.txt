@@ -185,8 +185,8 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	  auto        - [EXPERIMENTAL] auto-toggle around Insert mode;
 	                takes a second arg `on` / `off` / `toggle`
 	                (defaults to `toggle`)
-	  textsize    - [EXPERIMENTAL] scale `#` / `##` headings with the
-	                Kitty text sizing protocol; takes a second arg
+	  textsize    - [EXPERIMENTAL] scale headings with the Kitty text
+	                sizing protocol (on by default); takes a second arg
 	                `on` / `off` / `toggle` (defaults to `toggle`)
 	  demo        - show a demo window with every supported notation
 
@@ -346,9 +346,10 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 
 							  *:MdRender-textsize*
 :MdRender textsize [on|off|toggle] ~
-	[EXPERIMENTAL] Draw `#` and `##` headings at twice the base font
-	size using the Kitty text sizing protocol.  Off by default; see
-	|md-render-text-size| for what the feature does and does not do.
+	[EXPERIMENTAL] Draw headings larger than the base font size using the
+	Kitty text sizing protocol.  On by default wherever the terminal
+	supports it; see |md-render-text-size| for what the feature does and
+	does not do.
 
 	With no argument this toggles.  Turning it on when the terminal does
 	not implement the protocol prints a warning and changes nothing.
@@ -364,20 +365,31 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 ------------------------------------------------------------------------------
 Scaled headings (experimental)				*md-render-text-size*
 
-[EXPERIMENTAL] This is new, opt-in, and Kitty-only.  The UX may change or the
-feature may be withdrawn.  Please report issues or rough edges.
+[EXPERIMENTAL] This is new and Kitty-only.  The UX may change or the feature
+may be withdrawn.  Please report issues or rough edges.
 
 Kitty 0.40 added the text sizing protocol (OSC 66), which draws a run of text
-at a multiple of the base font size.  md-render can use it to render `#` and
-`##` headings at double size: >lua
+at a multiple of the base font size.  md-render uses it to give every heading
+level its own size:
 
-	require("md-render.text_size").setup { enabled = true }
+	#	2.00x
+	##	1.75x
+	###	1.50x
+	####	1.40x
+	#####	1.25x
+	######	1.17x
+
+This is on whenever the terminal supports it, with no configuration.  Turn it
+off for the session with `:MdRender textsize off`, or permanently with: >lua
+
+	require("md-render.text_size").setup { enabled = false }
 <
-Or toggle it at runtime with |:MdRender-textsize|.
-
-Which headings scale is fixed: `#` and `##` at `s=2`, everything else plain.
-`s=2` doubles the width as well as the height, so deeper levels stop fitting
-into a preview window.
+The ladder is fixed.  Kitty's `s=` multiplies the *cells* a run occupies and
+not only the font, so every level stays at `s=2` — one extra rendered row,
+never more — and the sizes below 2x come from the protocol's fractional scale
+(`n=` / `d=`) together with a per-run width (`w=`).  The protocol caps `d` at
+15 and `w` at 7, which is why the deepest level lands on 1.17x rather than on
+something closer to plain size.
 
 How it works: ~
 
@@ -390,11 +402,24 @@ about it, which drives most of the design:
   rather than to a blank line, and `y` / `/` / `:w` see the real text.
 - A scaled heading reserves one extra rendered line for the taller glyphs,
   the way an image placement reserves rows.
-- Long headings wrap at half the usual width so that every `#` / `##` scales,
-  each wrapped line getting its own two-row block.
+- Headings wrap at `1 / size` of the usual width so that every level scales
+  rather than only the ones that happen to fit, each wrapped line getting its
+  own two-row block.
+- A fractionally scaled heading goes out as several runs rather than one.
+  `n=` / `d=` shrink the font without shrinking the cells, so each run has to
+  state the width it wants in `w=`, and `w` is capped at 7 cells.
+- That width is a whole number of cells while the text in it is not, so `w`
+  is rounded up — never to nearest.  Given less room than its text needs
+  Kitty drops the overflowing characters, which is far worse than the cost
+  of rounding up: a cell or so of slack at the right-hand end of the run.
+  Runs are cut where that slack disappears, preferring a boundary that comes
+  out exact and otherwise ending the run after a space, so the leftover
+  paints as a slightly wider word gap rather than as a hole in a word.  Text
+  of one uniform character width — plain ASCII, or plain CJK — always lands
+  exactly and never needs either.
 - The level icon is left at normal size.  Kitty gives a scaled run exactly
-  `scale` cells per source cell, and these Nerd Font glyphs report as one
-  cell wide while being drawn wider, so inside a scaled run the icon would be
+  `s` cells per source cell, and these Nerd Font glyphs report as one cell
+  wide while being drawn wider, so inside a scaled run the icon would be
   clipped (`󰉬` would render as a bare "H").
 - Repainting happens on scroll, resize and cursor movement, debounced.  While
   a scroll is in flight the delay is stretched so a held `<C-e>` costs one
@@ -406,7 +431,8 @@ Limitations: ~
   itself (XTVERSION) and requires a positive answer; a silent or non-Kitty
   terminal disables the feature.  This is deliberately strict because some
   terminals swallow an OSC 66 sequence together with its payload text, which
-  would delete the heading rather than fall back to unscaled text.
+  would delete the heading rather than fall back to unscaled text.  Anywhere
+  else the feature costs nothing and headings render as they always did.
 - Inline formatting inside a heading (inline code, links, `==highlight==`)
   loses its colors while scaled — the whole run is drawn in the heading
   highlight.
@@ -417,6 +443,9 @@ Limitations: ~
   next scroll or cursor movement.
 - Each layout change costs a full-screen repaint to clear the previous scaled
   run, so scrolling is more expensive than usual.
+- |md-render-telescope| and |md-render-snacks| previews opt out.  They redraw
+  on every cursor step, and a full-screen repaint per step is not something a
+  picker can afford.
 
 ------------------------------------------------------------------------------
 Deprecated commands				 *md-render-deprecated-commands*

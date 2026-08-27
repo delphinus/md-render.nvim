@@ -56,10 +56,13 @@ Spanning majors is the point. Ubuntu 24.04 still ships FFmpeg 6.1, so a job that
 The trick that makes this cheap is that `kitty @ get-text --ansi` **round-trips OSC 66 verbatim**:
 
 ```
-ESC ] 66 ; s=2 ; Short Heading ESC \
+ESC ] 66 ; s=2 ; Level One Heading ESC \
+ESC ] 66 ; s=2:n=3:d=4:w=6 ; Level Th ESC \
 ```
 
-So "is this heading drawn at double size" is an exact string match — no screenshot, no SSIM, and none of the font or timing sensitivity of comparing images. It asserts that `#`/`##` scale and `###` does not, that a long CJK heading wraps into several scaled blocks instead of falling back to plain size, that the level icon stays out of the payload (it gets clipped inside a scaled run), and that nothing is scaled when the feature is off.
+So "is this heading drawn at 1.5x" is an exact string match — no screenshot, no SSIM, and none of the font or timing sensitivity of comparing images. It asserts that each of `#` … `######` scales at the metadata its level is supposed to use, that no run asks for more than the 7 cells `w=` allows, that a long CJK heading is scaled end to end rather than only as far as it happened to fit, that the level icon stays out of the payload (it gets clipped inside a scaled run), and that nothing is scaled when the feature is off.
+
+A fractionally scaled heading goes out as several runs — `n=` / `d=` shrink the font but not the cells, so each run states its own width — which is why the assertions join a level's payloads back together before matching.
 
 `.github/workflows/terminal.yml` runs it against Kitty **0.40.0** (the version that introduced the protocol, so the floor this can work on) and **latest**, crossed with Neovim **v0.12.0** and **nightly**, plus a weekly schedule.
 

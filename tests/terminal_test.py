@@ -6,11 +6,12 @@ Sits between the unit tests (which check the bytes md-render emits) and the
 visual regression tests (which compare pixels). The trick that makes this layer
 cheap is that `kitty @ get-text --ansi` round-trips OSC 66 verbatim:
 
-    ESC ] 66 ; s=2 ; Short Heading ESC \\
+    ESC ] 66 ; s=2 ; Level One Heading ESC \\
+    ESC ] 66 ; s=2:n=3:d=4:w=6 ; Level Th ESC \\
 
-So "is this heading drawn at double size" is answerable as an exact string
-match, with no screenshot, no SSIM, and none of the font or timing sensitivity
-that comes with comparing images.
+So "is this heading drawn at 1.5x" is answerable as an exact string match, with
+no screenshot, no SSIM, and none of the font or timing sensitivity that comes
+with comparing images.
 
 Usage:
     tests/terminal_test.py                 # auto-detect kitty, use xvfb if present
@@ -32,12 +33,61 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# nf-md-format_header_1 .. _3. Kitty gives a scaled run exactly `scale` cells
-# per source cell while reporting these as one cell wide, so an icon inside a
-# run gets clipped and renders as a bare "H". They must stay out of the payload.
-HEADING_ICONS = ["\U000f026b", "\U000f026c", "\U000f026d"]
+# nf-md-format_header_1 .. _6. Kitty gives a scaled run exactly `s` cells per
+# source cell while reporting these as one cell wide, so an icon inside a run
+# gets clipped and renders as a bare "H". They must stay out of the payload.
+HEADING_ICONS = [chr(cp) for cp in range(0xF026B, 0xF026B + 6)]
 
 OSC66 = re.compile(rb"\x1b\]66;([^;]*);(.*?)(?:\x1b\\|\x07)", re.S)
+
+# Heading level → the scale md-render is supposed to send for it, as
+# `(s, n, d)`. Level 1 scales by whole cells and needs no fraction; the rest
+# shrink the font inside those cells with `n` / `d`, which means they also have
+# to state a per-run width in `w`.
+#
+# Compared key by key rather than as a string: Kitty stores the metadata as
+# parsed values and `get-text` re-emits them in its own order, so what comes
+# back for `s=2:n=3:d=4:w=6` is `w=6:s=2:n=3:d=4`.
+LEVEL_SCALE = {
+    1: (2, None, None),
+    2: (2, 7, 8),
+    3: (2, 3, 4),
+    4: (2, 7, 10),
+    5: (2, 5, 8),
+    6: (2, 7, 12),
+}
+
+# The text each level's heading carries in the fixture. A fractionally scaled
+# heading goes out as several runs, so these are matched against the level's
+# payloads joined back together rather than against a single run.
+LEVEL_TEXT = {
+    1: "Level One Heading",
+    2: "Level Two Heading",
+    3: "Level Three Heading",
+    4: "Level Four Heading",
+    5: "Level Five Heading",
+    6: "Level Six Heading",
+}
+
+
+def parse_meta(meta):
+    """`w=6:s=2:n=3:d=4` -> {'w': 6, 's': 2, 'n': 3, 'd': 4}."""
+    out = {}
+    for pair in meta.split(":"):
+        key, _, value = pair.partition("=")
+        if value.isdigit():
+            out[key] = int(value)
+    return out
+
+
+def level_of(meta):
+    """Heading level a run's metadata belongs to, or None if unrecognised."""
+    kv = parse_meta(meta)
+    got = (kv.get("s"), kv.get("n"), kv.get("d"))
+    for level, expected in LEVEL_SCALE.items():
+        if got == expected:
+            return level
+    return None
 
 passed = failed = 0
 
@@ -161,33 +211,44 @@ def main():
 
         texts = [t for _, t in runs]
 
-        # Every run must be s=2: nothing else is supposed to emit OSC 66.
-        others = sorted({m for m, _ in runs if m != "s=2"})
-        if others:
-            bad("every scaled run is s=2", f"also saw {others}")
+        # Nothing else in the plugin emits OSC 66, so every run has to be one
+        # of the six heading levels — and at the exact metadata for that level.
+        unknown = sorted({m for m, _ in runs if level_of(m) is None})
+        if unknown:
+            bad("every scaled run matches a heading level", f"also saw {unknown}")
         else:
-            ok("every scaled run is s=2")
+            ok("every scaled run matches a heading level")
 
-        # h1 and h2 scale.
-        for want in ("Short Heading", "Second Level"):
-            if any(want == t for t in texts):
-                ok(f"{want!r} is scaled")
+        # `w` is capped at 7 by the protocol; past that Kitty is free to
+        # truncate or resize the run.
+        over = sorted({m for m, _ in runs if not 1 <= parse_meta(m).get("w", 1) <= 7})
+        if over:
+            bad("every run asks for 1..7 cells", f"saw {over}")
+        else:
+            ok("every run asks for 1..7 cells")
+
+        # Each level's runs, joined back into the heading they came from.
+        joined = {}
+        for meta, text in runs:
+            level = level_of(meta)
+            if level:
+                joined[level] = joined.get(level, "") + text
+
+        for level, want in LEVEL_TEXT.items():
+            got = joined.get(level, "")
+            if want in got:
+                ok(f"h{level} is scaled")
             else:
-                bad(f"{want!r} is scaled", f"payloads: {texts}")
-
-        # h3 never scales.
-        if any("Third Level" in t for t in texts):
-            bad("h3 is not scaled", f"payloads: {texts}")
-        else:
-            ok("h3 is not scaled")
+                bad(f"h{level} is scaled", f"level {level} payload: {got!r}")
 
         # A long CJK heading wraps into several scaled blocks instead of
-        # falling back to plain size.
-        cjk = [t for t in texts if "あいうえお" in t or "まみむめも" in t]
-        if len(cjk) >= 2:
-            ok(f"long CJK heading wrapped into {len(cjk)} scaled blocks")
+        # falling back to plain size. Both ends have to survive: a heading that
+        # only scaled as far as it happened to fit would keep the first.
+        cjk = joined.get(2, "")
+        if "あいうえお" in cjk and "まみむめも" in cjk:
+            ok("long CJK heading is scaled end to end")
         else:
-            bad("long CJK heading wraps into >= 2 scaled blocks", f"got {cjk}")
+            bad("long CJK heading is scaled end to end", f"level 2 payload: {cjk!r}")
 
         # The regression that shipped once: the level icon inside a scaled run
         # is clipped by Kitty and renders as a bare "H".

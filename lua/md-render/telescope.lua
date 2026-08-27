@@ -189,7 +189,15 @@ function M.previewer(opts)
         -- buf_dir is required to resolve relative image paths and Obsidian
         -- wiki-links (e.g. ![[IMG.jpeg]]); without it the vault root cannot
         -- be located and images render only as their placeholder header text.
-        local build_opts = { max_width = max_width, buf_dir = vim.fn.fnamemodify(filepath, ":h") }
+        -- text_scale = false: nothing here paints OSC 66 runs, and a scaled
+        -- heading reserves a rendered row whether or not it is ever painted.
+        -- Clearing the previous run also costs a full-screen repaint, which a
+        -- previewer redrawing on every cursor step cannot afford.
+        local build_opts = {
+          max_width = max_width,
+          buf_dir = vim.fn.fnamemodify(filepath, ":h"),
+          text_scale = false,
+        }
 
         -- Stage 1: build markdown content (~25 ms for 9-image files).
         local content = preview.build_content(lines, build_opts)
