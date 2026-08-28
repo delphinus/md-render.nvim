@@ -657,5 +657,63 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 21: after a scroll, `reassert` still recognises the layout.
+--
+-- This is what made the two changes above look like they had done nothing.
+-- `restore_runs_now` used to leave `state.last_layout` pointing at where the
+-- runs were *before* the scroll, so every later `reassert` saw a mismatch and
+-- declined to re-send. A wheel being turned re-arms the debounce at BURST_MS
+-- for as long as it keeps turning, so that mismatch could stand for the whole
+-- scroll, and recovery fell to whatever else happened to repaint.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local writes = {}
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function(s)
+      table.insert(writes, s)
+    end
+
+    local state = text_size.attach(win, out)
+    vim.wait(300, function()
+      return #writes > 0
+    end, 5)
+
+    vim.api.nvim_exec_autocmds("WinScrolled", { modeline = false })
+    vim.wait(60, function()
+      return state.owes_invalidate == true
+    end, 5)
+    assert_true(state.owes_invalidate == true, "the immediate write records that a clear is still owed")
+
+    -- The re-assert must now take the cheap path even though a paint is queued.
+    local keepalives = text_size._stats.keepalives
+    state.last_reassert_at = nil
+    vim.api.nvim_exec_autocmds("SafeState", { modeline = false })
+    assert_true(
+      text_size._stats.keepalives > keepalives,
+      "and the layout it wrote is the one reassert compares against"
+    )
+
+    -- The clear itself is not lost: the debounced paint still performs it.
+    text_size._stats.invalidations = 0
+    text_size.paint(state)
+    assert_eq(text_size._stats.invalidations, 1, "the owed full-screen repaint still happens")
+    assert_true(state.owes_invalidate == false, "and is only owed once")
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

@@ -413,6 +413,7 @@ end
 ---@field augroup integer?
 ---@field last_layout string? screen positions of the previous paint
 ---@field last_drawn integer? how many placements the previous paint drew
+---@field owes_invalidate boolean? a write went out without clearing what it replaced
 ---@field last_event_at integer? loop time of the last repaint request
 
 --- Force the TUI to physically repaint the screen, erasing any scaled text
@@ -651,7 +652,14 @@ function M.paint(state)
 
   -- Only worth cleaning up after a paint that actually drew something; there
   -- can be no stale glyphs otherwise.
-  local cleanup = moved and (state.last_drawn or 0) > 0
+  --
+  -- `owes_invalidate` is how `restore_runs_now` hands the job over. That write
+  -- puts the runs back at their new positions without clearing the old ones,
+  -- and it records the layout it wrote so that `reassert` can keep the runs
+  -- alive against foreign repaints in the meantime — which leaves `moved`
+  -- false here even though a clear is still owed.
+  local cleanup = (moved or state.owes_invalidate) and (state.last_drawn or 0) > 0
+  state.owes_invalidate = false
 
   if cleanup then vim.api.nvim_ui_send "\x1b[?2026h" end
   local ok, err = pcall(function()
@@ -661,7 +669,7 @@ function M.paint(state)
       -- Positions can shift while Neovim repaints, so recompute afterwards.
       drawn = visible_placements(state)
     end
-    if moved then state.last_layout = layout_key(drawn) end
+    state.last_layout = layout_key(drawn)
     state.last_drawn = #drawn
     write_runs(drawn)
   end)
@@ -789,10 +797,15 @@ end
 --- Saying the same thing again costs a few hundred bytes and needs no `:mode`,
 --- so it can happen on the scroll itself. Two things are deliberate here:
 ---
----   * `state.last_layout` is left alone, so the debounced `M.paint` still
----     runs and still invalidates. That is what clears a stale glyph this
----     write cannot see, and it keeps the cost identical to before — one
----     full-screen repaint per scroll, plus this write.
+---   * The layout it wrote is recorded, and `state.owes_invalidate` carries
+---     the clear over to the debounced `M.paint` instead. Leaving
+---     `last_layout` stale was the obvious thing and it was wrong: `reassert`
+---     only re-sends when the layout matches, so a stale key disabled the
+---     one path that keeps the runs alive against a repaint by somebody else
+---     — for the whole debounce, and a wheel being turned re-arms that
+---     debounce at `BURST_MS` for as long as it keeps turning. Recovery then
+---     fell to whatever else happened to repaint, which measured as a flat
+---     50 ms: `md-render.image`'s own debounce, not ours.
 ---   * The write is scheduled rather than immediate. `WinScrolled` fires
 ---     before Neovim has flushed its own redraw for the rows it moved, and
 ---     that flush would paint straight over anything written here.
@@ -803,7 +816,11 @@ end
 local function restore_runs_now(state)
   vim.schedule(function()
     if not vim.api.nvim_win_is_valid(state.win) then return end
-    write_runs(visible_placements(state))
+    local drawn = visible_placements(state)
+    write_runs(drawn)
+    state.owes_invalidate = true
+    state.last_layout = layout_key(drawn)
+    state.last_drawn = #drawn
   end)
 end
 
