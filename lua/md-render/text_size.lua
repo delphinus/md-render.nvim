@@ -688,7 +688,7 @@ local BURST_MS = 180
 --- median 233, over a ten-second spin, so twenty-seven of thirty landed
 --- outside the window and took the isolated path. Coalescing is the exception
 --- rather than the rule while scrolling by wheel, which means the runs have to
---- survive each individual step — see `restore_after_scroll`.
+--- survive each individual step — see `restore_runs_now`.
 local BURST_WINDOW_MS = 130
 
 --- Backstop interval for re-asserting runs that are already on screen.
@@ -711,11 +711,20 @@ local KEEPALIVE_MS = 500
 --- `SafeState` fires as Neovim settles down to wait for input, which is
 --- precisely once a repaint has finished, whoever caused it. That makes it the
 --- one signal that covers repaints this module cannot otherwise observe — but
---- it also fires on every keystroke, so re-asserting is rate-limited. 80 ms is
---- short enough that a heading dropping to plain size and coming back is not
---- something the eye resolves, and long enough that typing does not turn into
---- a stream of writes.
-local REASSERT_GAP_MS = 80
+--- it also fires on every keystroke, so re-asserting is rate-limited.
+---
+--- This was 80 ms, on the reasoning that a heading dropping to plain size and
+--- coming back inside that is not something the eye resolves. A screen
+--- recording says otherwise. Under a configuration where something repaints on
+--- every pointer movement, the runs were being destroyed about four times a
+--- second and each drop measured 17-83 ms — the shape of this limit exactly —
+--- which reads as a pronounced flicker rather than as nothing at all.
+---
+--- 20 ms is close enough to a frame that a single drop is at most one, and the
+--- writes it admits are cheap: a few hundred bytes, and only when `SafeState`
+--- says a repaint has just finished. Even a plugin polling at 50 ms cannot
+--- provoke more than one write per poll.
+local REASSERT_GAP_MS = 20
 
 --- Schedule a debounced repaint, backing off while a scroll is in flight.
 ---@param state MdRender.TextSizeState
@@ -734,8 +743,6 @@ end
 --- Re-send what we believe is already on screen.
 ---@param state MdRender.TextSizeState
 local function reassert(state)
-  -- A real paint is already queued, and it knows more than this does.
-  if state.redraw_timer then return end
   if not vim.api.nvim_win_is_valid(state.win) then return end
   local now = vim.uv.now()
   if state.last_reassert_at and (now - state.last_reassert_at) < REASSERT_GAP_MS then return end
@@ -744,8 +751,19 @@ local function reassert(state)
   local drawn = visible_placements(state)
   if layout_key(drawn) == state.last_layout then
     -- Same layout: nothing can be stale, so just say it again.
+    --
+    -- Deliberately not skipped when a paint is already queued. That guard used
+    -- to sit at the top of this function and was the wrong shape: a paint is
+    -- queued for up to `BURST_MS` after any scroll or cursor movement, which
+    -- is exactly when a repaint by somebody else is most likely, and for that
+    -- whole window nothing was putting the runs back. Re-sending bytes that
+    -- are already correct cannot make anything worse.
     write_runs(drawn)
     M._stats.keepalives = M._stats.keepalives + 1
+  elseif state.redraw_timer then
+    -- The layout moved and a real paint is already queued. That one knows how
+    -- to clear what is stale; this does not.
+    return
   elseif #drawn > 0 or (state.last_drawn or 0) > 0 then
     -- The layout moved without any event this module saw. Runs may be sitting
     -- where they no longer belong — the terminal shifts them bodily when
@@ -778,8 +796,11 @@ end
 ---   * The write is scheduled rather than immediate. `WinScrolled` fires
 ---     before Neovim has flushed its own redraw for the rows it moved, and
 ---     that flush would paint straight over anything written here.
+---
+--- The same applies to a window opening or closing, which is why this is also
+--- reached from `WinNew` and `WinClosed` rather than only from a scroll.
 ---@param state MdRender.TextSizeState
-local function restore_after_scroll(state)
+local function restore_runs_now(state)
   vim.schedule(function()
     if not vim.api.nvim_win_is_valid(state.win) then return end
     write_runs(visible_placements(state))
@@ -821,16 +842,27 @@ function M.attach(win, content)
   --     concerns us.
   -- `M.paint` is a single debounced write that no-ops when nothing is visible,
   -- so reacting to every event is cheaper than getting the filter wrong.
-  for _, event in ipairs { "WinScrolled", "WinResized", "CursorMoved", "CursorMovedI" } do
-    -- A scroll or a resize moves every run on screen and destroys them all on
-    -- the way, so those two put the runs back at once instead of leaving the
-    -- headings plain until the debounce elapses. Cursor movement leaves the
-    -- runs where they are and needs no such thing.
-    local destroys_runs = event == "WinScrolled" or event == "WinResized"
+  local DESTROYS_RUNS = {
+    -- Both move every run on screen and destroy them all on the way.
+    WinScrolled = true,
+    WinResized = true,
+    -- A window appearing or disappearing recomposes the screen, and anything
+    -- overlapping this one takes the runs with it. Plugins that follow the
+    -- pointer — hover hints, diagnostic bubbles, peek windows — churn these
+    -- constantly, and a recording of one such configuration had the runs
+    -- destroyed about four times a second with no scrolling involved at all.
+    -- `SafeState` would still recover, but only after the rate limit; these
+    -- two are the events that say so at once.
+    WinNew = true,
+    WinClosed = true,
+  }
+  for _, event in ipairs { "WinScrolled", "WinResized", "WinNew", "WinClosed", "CursorMoved", "CursorMovedI" } do
+    -- Cursor movement leaves the runs where they are and needs no such thing.
+    local destroys_runs = DESTROYS_RUNS[event]
     local id = vim.api.nvim_create_autocmd(event, {
       group = augroup,
       callback = function()
-        if destroys_runs then restore_after_scroll(state) end
+        if destroys_runs then restore_runs_now(state) end
         schedule_paint(state)
       end,
     })

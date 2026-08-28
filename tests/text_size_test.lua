@@ -569,5 +569,93 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 19: a window appearing or disappearing recomposes the screen and takes
+-- the runs with it, the same way a scroll does. Plugins that follow the mouse
+-- pointer churn floats constantly — one recording had the runs destroyed about
+-- four times a second with no scrolling at all — so these two events put them
+-- back at once rather than waiting for the `SafeState` rate limit.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local writes = {}
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function(s)
+      table.insert(writes, s)
+    end
+
+    local state = text_size.attach(win, out)
+    vim.wait(300, function()
+      return #writes > 0
+    end, 5)
+
+    for _, event in ipairs { "WinNew", "WinClosed" } do
+      local before = #writes
+      text_size._stats.invalidations = 0
+      vim.api.nvim_exec_autocmds(event, { modeline = false })
+      -- Shorter than SETTLED_MS on purpose: the point is that it does not wait.
+      vim.wait(60, function()
+        return #writes > before
+      end, 5)
+      assert_true(#writes > before, event .. " puts the runs back without waiting for the debounce")
+      assert_eq(text_size._stats.invalidations, 0, event .. " costs no full-screen repaint")
+    end
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 20: a queued paint no longer blocks re-asserting an unchanged layout.
+-- The old guard sat at the top of `reassert` and returned whenever a paint was
+-- pending — which is for up to `BURST_MS` after any scroll or cursor movement,
+-- exactly when somebody else's repaint is most likely. Re-sending bytes that
+-- are already correct cannot make anything worse.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local writes = {}
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function(s)
+      table.insert(writes, s)
+    end
+
+    local state = text_size.attach(win, out)
+    vim.wait(300, function()
+      return #writes > 0
+    end, 5)
+
+    -- Queue a paint, then ask for a re-assert before it can fire.
+    vim.api.nvim_exec_autocmds("CursorMoved", { modeline = false })
+    assert_true(state.redraw_timer ~= nil, "a paint is queued")
+    local keepalives = text_size._stats.keepalives
+    state.last_reassert_at = nil -- past the rate limit
+    vim.api.nvim_exec_autocmds("SafeState", { modeline = false })
+    assert_true(text_size._stats.keepalives > keepalives, "an unchanged layout is re-asserted even with a paint queued")
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
