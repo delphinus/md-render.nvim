@@ -443,5 +443,131 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 16: the level icon is carried on the placement so it can be repainted
+-- at plain size alongside the scaled text. It is kept out of `text` — the
+-- anchor check compares that against the buffer — and points at its own
+-- column, which is where the indent ends.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "## Heading", "", "Body." }
+    local p = out.text_placements[1]
+    assert_eq(p.icon, markdown.heading_icon(2), "the placement carries the level glyph")
+    assert_eq(p.icon_col, 2, "and the column it sits at, right after the indent")
+    assert_true(p.icon_col < p.col, "the icon comes before the scaled text")
+    assert_true(not p.text:find(p.icon, 1, true), "the glyph is still absent from the scaled payload")
+
+    -- A wrapped heading only carries the icon on its first line.
+    local wrapped = render({ "### " .. string.rep("word ", 40) }, { max_width = 40, indent = "  " })
+    assert_true(#wrapped.text_placements > 1, "the long heading wraps into several placements")
+    assert_eq(wrapped.text_placements[1].icon, markdown.heading_icon(3), "first line carries the icon")
+    assert_eq(wrapped.text_placements[2].icon, nil, "continuation lines do not")
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 17: what actually goes to the terminal. Every level reserves a block
+-- `s` rows tall while only `#` fills it, so the fractional levels are centered
+-- inside it with `v=`, and the icon goes out as a run of its own at plain size
+-- so that it lands in the same place as the text it labels.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "## Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local writes = {}
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function(s)
+      table.insert(writes, s)
+    end
+
+    local state = text_size.attach(win, out)
+    vim.wait(300, function()
+      return #writes > 0
+    end, 5)
+    local sent = table.concat(writes)
+
+    local spec = text_size.spec_for(2)
+    assert_true(
+      sent:find(string.format(":n=%d:d=%d:", spec.n, spec.d), 1, true) ~= nil,
+      "h2 goes out at its fractional scale"
+    )
+    assert_true(sent:find(":v=2;", 1, true) ~= nil, "and centered inside its block")
+    assert_true(
+      sent:find("s=2:n=1:d=2:w=1:v=2;" .. markdown.heading_icon(2), 1, true) ~= nil,
+      "the icon is its own run: plain size, one cell, same alignment"
+    )
+
+    -- The separator between the icon's block and the text's is covered by
+    -- neither, and a block is always an even number of cells wide, so neither
+    -- can be widened to reach it. Left alone it shows the heading's background
+    -- on the reserved row's neighbour and the window's on the reserved row
+    -- itself — a seam. Plain spaces in the heading's colours close it.
+    -- In cells, not bytes: the icon is a four-byte glyph one cell wide, and
+    -- what has to be covered is the screen column between the two blocks.
+    local p = out.text_placements[1]
+    local prefix_w = vim.api.nvim_strwidth(markdown.heading_icon_prefix(2))
+    local gap = prefix_w - p.scale
+    assert_eq(gap, 1, "pad_icon's two cells plus one separator leave one cell over")
+    -- An SGR ends in `m`, and the heading text here has no spaces in it, so
+    -- "colours followed by exactly this many spaces" cannot match a run.
+    assert_true(
+      sent:find("m" .. string.rep(" ", gap) .. "\27", 1, true) ~= nil,
+      "the gap is filled with spaces in the heading's colours"
+    )
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 18: `#` is the one level with no fraction, and Kitty ignores `v` unless
+-- `n < d`. Sending it anyway would be noise, so the text run does without —
+-- but the icon run has a fraction of its own (`n=1:d=s`, which is plain size)
+-- and does carry it.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local writes = {}
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function(s)
+      table.insert(writes, s)
+    end
+
+    local state = text_size.attach(win, out)
+    vim.wait(300, function()
+      return #writes > 0
+    end, 5)
+    local sent = table.concat(writes)
+
+    assert_true(sent:find("\27]66;s=2;Heading", 1, true) ~= nil, "h1 goes out as a bare s=2 run")
+    assert_true(
+      sent:find("s=2:n=1:d=2:w=1:v=2;" .. markdown.heading_icon(1), 1, true) ~= nil,
+      "its icon still centers in the block"
+    )
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

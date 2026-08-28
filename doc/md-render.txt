@@ -417,10 +417,19 @@ about it, which drives most of the design:
   paints as a slightly wider word gap rather than as a hole in a word.  Text
   of one uniform character width — plain ASCII, or plain CJK — always lands
   exactly and never needs either.
-- The level icon is left at normal size.  Kitty gives a scaled run exactly
+- Every level reserves a two-row block while only `#` fills it, so the rest
+  are centered in theirs (`v=2`) rather than sitting against the top edge,
+  which is the protocol's default.  At `######`, 1.17x in a block twice as
+  tall, the top edge left almost a whole row empty underneath the heading.
+- The level icon is drawn at normal size, but as a run of its own rather than
+  as the plain text underneath, so that it is centered in the same block and
+  stays level with the heading it labels.  `n=1:d=2` against `s=2` cancels
+  the cell scale exactly, which is what keeps it at normal size.
+  Its own run is also what keeps it legible: Kitty gives a scaled run exactly
   `s` cells per source cell, and these Nerd Font glyphs report as one cell
-  wide while being drawn wider, so inside a scaled run the icon would be
-  clipped (`󰉬` would render as a bare "H").
+  wide while being drawn wider, so sharing the heading's run would clip the
+  icon (`󰉬` would render as a bare "H").  Alone, `w=1` gives it a two-cell
+  block — the width the icon already occupies — and it fits.
 - Repainting happens on scroll, resize and cursor movement, debounced.  While
   a scroll is in flight the delay is stretched so a held `<C-e>` costs one
   repaint instead of one per step.

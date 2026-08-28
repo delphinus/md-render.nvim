@@ -34,9 +34,21 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 # nf-md-format_header_1 .. _6. Kitty gives a scaled run exactly `s` cells per
-# source cell while reporting these as one cell wide, so an icon inside a run
-# gets clipped and renders as a bare "H". They must stay out of the payload.
+# source cell while reporting these as one cell wide, so an icon sharing a run
+# with the heading text gets clipped and renders as a bare "H". It goes out on
+# its own instead, in a block `w=1` wide — which is the two cells `pad_icon`
+# already reserves — so the glyph has the room it is actually drawn in.
 HEADING_ICONS = [chr(cp) for cp in range(0xF026B, 0xF026B + 6)]
+
+# The icon run's own scale. `n=1:d=s` cancels the cell scale exactly, so the
+# glyph stays at plain size; `v` is what it is there for, aligning it with the
+# heading text inside the same block.
+ICON_SCALE = (2, 1, 2)
+
+# Where a fractionally scaled run sits in its block: 0 top, 1 bottom, 2
+# centered. Kitty ignores it when there is no fraction, which is why level 1's
+# text run is exempt below.
+VERTICAL_ALIGN = 2
 
 OSC66 = re.compile(rb"\x1b\]66;([^;]*);(.*?)(?:\x1b\\|\x07)", re.S)
 
@@ -80,8 +92,20 @@ def parse_meta(meta):
     return out
 
 
+def is_icon_run(meta):
+    """True for the plain-size run a level icon goes out in."""
+    kv = parse_meta(meta)
+    return (kv.get("s"), kv.get("n"), kv.get("d")) == ICON_SCALE and kv.get("w") == 1
+
+
 def level_of(meta):
-    """Heading level a run's metadata belongs to, or None if unrecognised."""
+    """Heading level a run's metadata belongs to, or None if unrecognised.
+
+    Icon runs are not a level: they carry the glyph, not the heading text, and
+    every level sends the same metadata for them.
+    """
+    if is_icon_run(meta):
+        return None
     kv = parse_meta(meta)
     got = (kv.get("s"), kv.get("n"), kv.get("d"))
     for level, expected in LEVEL_SCALE.items():
@@ -223,11 +247,23 @@ def main():
 
         # Nothing else in the plugin emits OSC 66, so every run has to be one
         # of the six heading levels — and at the exact metadata for that level.
-        unknown = sorted({m for m, _ in runs if level_of(m) is None})
+        unknown = sorted({m for m, _ in runs if level_of(m) is None and not is_icon_run(m)})
         if unknown:
             bad("every scaled run matches a heading level", f"also saw {unknown}")
         else:
             ok("every scaled run matches a heading level")
+
+        # Every level reserves a block `s` rows tall while only level 1 fills
+        # it, so anything with a fraction has to say where in that block it
+        # sits. Level 1's text run is the exception: with no fraction Kitty
+        # ignores `v`, so it is not sent.
+        adrift = sorted(
+            {m for m, _ in runs if parse_meta(m).get("n") and parse_meta(m).get("v") != VERTICAL_ALIGN}
+        )
+        if adrift:
+            bad(f"every fractional run is aligned v={VERTICAL_ALIGN}", f"saw {adrift}")
+        else:
+            ok(f"every fractional run is aligned v={VERTICAL_ALIGN}")
 
         # `w` is capped at 7 by the protocol; past that Kitty is free to
         # truncate or resize the run.
@@ -260,13 +296,26 @@ def main():
         else:
             bad("long CJK heading is scaled end to end", f"level 2 payload: {cjk!r}")
 
-        # The regression that shipped once: the level icon inside a scaled run
-        # is clipped by Kitty and renders as a bare "H".
-        leaked = [t for t in texts if any(icon in t for icon in HEADING_ICONS)]
-        if leaked:
-            bad("the level icon stays out of scaled runs", f"leaked into {leaked}")
+        # The regression that shipped once: a level icon sharing a run with the
+        # heading text is clipped by Kitty and renders as a bare "H". It may
+        # appear, but only alone and only in an icon run.
+        shared = [
+            t for m, t in runs
+            if any(icon in t for icon in HEADING_ICONS) and not (is_icon_run(m) and t in HEADING_ICONS)
+        ]
+        if shared:
+            bad("the level icon only ever goes out in a run of its own", f"saw {shared}")
         else:
-            ok("the level icon stays out of scaled runs")
+            ok("the level icon only ever goes out in a run of its own")
+
+        # And it does go out: without this the check above passes just as
+        # happily on a build that stopped drawing icons altogether.
+        seen_icons = {t for m, t in runs if is_icon_run(m)}
+        missing = [icon for icon in HEADING_ICONS if icon not in seen_icons]
+        if missing:
+            bad("every level's icon is drawn", f"no run for {missing}")
+        else:
+            ok("every level's icon is drawn")
 
         print("\nscaled headings OFF:")
         runs_off, diag_off = run_kitty(args.kitty, False, workdir)

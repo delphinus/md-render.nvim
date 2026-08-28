@@ -610,8 +610,15 @@ function ContentBuilder:add_heading_text_scale(heading_line, indent, spec, level
     local col = #indent
     local content = (self.lines[line + 1] or ""):sub(col + 1)
     -- Only the first line of a wrapped heading carries the icon.
+    local icon, icon_col
     local prefix = content:match(icon_pat)
     if prefix then
+      -- Kept so `text_size` can repaint it at plain size in the same block as
+      -- the heading: the scaled run is aligned inside a two-row block, and an
+      -- icon left as Neovim drew it would stay on the block's first row while
+      -- the text moved. The glyph alone, not the padding after it.
+      icon = require("md-render.markdown").heading_icon(level)
+      icon_col = col
       col = col + #prefix
       content = content:sub(#prefix + 1)
     end
@@ -630,6 +637,8 @@ function ContentBuilder:add_heading_text_scale(heading_line, indent, spec, level
         num = spec.n,
         den = spec.d,
         hl = "MdRenderH" .. level,
+        icon = icon,
+        icon_col = icon_col,
       })
     end
   end

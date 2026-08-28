@@ -59,6 +59,19 @@ local LEVEL_SCALES = {
   [6] = { s = 2, n = 7, d = 12 }, -- 1.17x
 }
 
+--- Where a fractionally scaled run sits inside its `s`-row block (`v=`):
+--- 0 top, 1 bottom, 2 centered. Kitty ignores it unless `n < d`, so `#` — the
+--- one level with no fraction — is unaffected either way: it fills the block.
+---
+--- Centered rather than the protocol's default of top. Every level reserves a
+--- second row while only `#` fills it, so at the top the glyphs hug the upper
+--- edge and leave the rest of the block empty underneath — most obviously at
+--- `######`, which is 1.17x in a block twice as tall. Centering splits that
+--- slack in two: roughly 0.4 rows above and below at `######`, 0.25 at `###`.
+--- Bottom would close the gap under the heading entirely and push it against
+--- the body text that follows.
+local VERTICAL_ALIGN = 2
+
 ---@class MdRender.TextSize.Spec
 ---@field level integer heading level this spec belongs to
 ---@field s integer Kitty's cell scale (`s=`)
@@ -388,6 +401,8 @@ end
 ---@field num integer? fractional numerator passed as `n=`
 ---@field den integer? fractional denominator passed as `d=`
 ---@field hl string highlight group the SGR prefix is derived from
+---@field icon string? level icon glyph, on the first line of a heading only
+---@field icon_col integer? 0-indexed byte column the icon sits at
 
 ---@class MdRender.TextSizeState
 ---@field placements MdRender.TextPlacement[]
@@ -500,7 +515,20 @@ local function visible_placements(state)
       -- Partially visible placements are skipped rather than clipped: the
       -- plain-size text underneath stays on screen, which is the graceful
       -- fallback. OSC 66 has no source-rectangle crop like graphics do.
-      if fits_vertically and fits_horizontally then table.insert(out, { p = p, row = pos.row, col = pos.col }) end
+      if fits_vertically and fits_horizontally then
+        -- The icon sits to the left of the text on the same line, so it is
+        -- inside the window whenever the text is — unless the window is
+        -- scrolled horizontally, which `screenpos` reports by putting it on
+        -- another row or outside the text area. Dropping just the icon run
+        -- there leaves the plain glyph Neovim drew, which is the right
+        -- fallback.
+        local icon_col
+        if p.icon and p.icon_col then
+          local ipos = vim.fn.screenpos(win, p.line + 1, p.icon_col + 1)
+          if ipos.row == pos.row and ipos.col >= left then icon_col = ipos.col end
+        end
+        table.insert(out, { p = p, row = pos.row, col = pos.col, icon_col = icon_col })
+      end
     end
   end
   return out
@@ -524,12 +552,58 @@ end
 M._stats = { paints = 0, invalidations = 0, skipped = 0, keepalives = 0 }
 
 --- Write the runs for `drawn` where they currently sit.
----@param drawn { p: MdRender.TextPlacement, row: integer, col: integer }[]
+---@param drawn { p: MdRender.TextPlacement, row: integer, col: integer, icon_col: integer? }[]
 local function write_runs(drawn)
   if #drawn == 0 then return end
   local out = {}
   for _, d in ipairs(drawn) do
     local sgr = sgr_for(d.p.hl)
+    -- The level icon goes out as a run of its own, at plain size.
+    --
+    -- It has to be a run at all because `v=` moves the scaled text down inside
+    -- the block, and an icon left as the plain text Neovim drew would stay on
+    -- the block's first row while the heading it labels sat a row lower.
+    --
+    -- `n=1:d=s` cancels the cell scale exactly — `s * 1/s` is 1.0 — so the
+    -- glyph is drawn at the size it always was, only aligned with the text.
+    -- Its own run is also what keeps it legible: these Nerd Font glyphs report
+    -- one cell and are drawn wider, and inside the heading's run there is no
+    -- neighbouring cell to overflow into, so the glyph is clipped and `󰉬`
+    -- comes out as a bare "H". `w=1` gives it a block `s` cells wide — the two
+    -- cells `pad_icon` already reserves for it — and it fits.
+    if d.p.icon and d.icon_col then
+      local meta = string.format("s=%d:n=1:d=%d:w=1:v=%d", d.p.scale, d.p.scale, VERTICAL_ALIGN)
+      table.insert(out, string.format("\x1b[%d;%dH", d.row, d.icon_col))
+      table.insert(out, sgr)
+      table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, d.p.icon))
+
+      -- Fill the cells between the icon's block and the text's.
+      --
+      -- The heading highlight is applied to the heading *line*, so under a
+      -- colorscheme that gives headings a background only the block's first
+      -- row is painted; the rows this module reserved are blank line and get
+      -- nothing. Wherever a run covers them that does not show, because the
+      -- run carries the same background — but the separator between the icon
+      -- and the text is covered by neither, and a one-cell column with the
+      -- heading's background on top and the window's underneath reads as a
+      -- seam between two otherwise solid blocks.
+      --
+      -- Neither run can be widened to reach it: a block is `s * w` cells, so
+      -- with `s = 2` its width is always even, and the gap here is the odd
+      -- cell left over from `pad_icon`'s two plus one separating space. Plain
+      -- spaces in the heading's colours do the job and stay out of the
+      -- multicell bookkeeping entirely. The first row already has Neovim's
+      -- own, so only the reserved ones need it.
+      local gap = d.col - (d.icon_col + d.p.scale)
+      if gap > 0 then
+        local blanks = string.rep(" ", gap)
+        for row = d.row + 1, d.row + d.p.scale - 1 do
+          table.insert(out, string.format("\x1b[%d;%dH", row, d.icon_col + d.p.scale))
+          table.insert(out, sgr)
+          table.insert(out, blanks)
+        end
+      end
+    end
     -- One escape code per run, each positioned explicitly. A fractionally
     -- scaled heading is several runs (see `split_run`) and the cursor is not
     -- a reliable way to chain them: `w=` decides how wide a run lands, not
@@ -537,7 +611,7 @@ local function write_runs(drawn)
     local col = d.col
     for _, run in ipairs(d.p.runs) do
       local meta = "s=" .. d.p.scale
-      if d.p.num then meta = meta .. string.format(":n=%d:d=%d:w=%d", d.p.num, d.p.den, run.w) end
+      if d.p.num then meta = meta .. string.format(":n=%d:d=%d:w=%d:v=%d", d.p.num, d.p.den, run.w, VERTICAL_ALIGN) end
       table.insert(out, string.format("\x1b[%d;%dH", d.row, col))
       table.insert(out, sgr)
       table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, run.text))
