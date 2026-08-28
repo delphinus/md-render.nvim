@@ -382,5 +382,66 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 15: a scroll destroys the runs in the same frame it happens, long
+-- before any debounce could fire, so they are written again on the event
+-- itself. Waiting left the headings plain-size for a measured 50 ms per wheel
+-- notch, which is what the pulsing while scrolling was.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local writes = {}
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function(s)
+      table.insert(writes, s)
+    end
+
+    local state = text_size.attach(win, out)
+    assert_true(state ~= nil, "attaches when there are placements")
+
+    -- Let the paint scheduled by attach() land, so what follows is only the
+    -- scroll's doing.
+    vim.wait(200, function()
+      return #writes > 0
+    end, 5)
+
+    local before = #writes
+    text_size._stats.invalidations = 0
+    vim.api.nvim_exec_autocmds("WinScrolled", { modeline = false })
+    -- Deliberately shorter than SETTLED_MS: the point is that the runs are
+    -- back before the debounced paint has even been considered.
+    vim.wait(60, function()
+      return #writes > before
+    end, 5)
+
+    assert_true(#writes > before, "a scroll rewrites the runs without waiting for the debounce")
+    assert_true(
+      writes[#writes] ~= nil and writes[#writes]:find("\27]66;", 1, true) ~= nil,
+      "and what it writes is the OSC 66 runs"
+    )
+    assert_eq(text_size._stats.invalidations, 0, "the immediate rewrite costs no full-screen repaint")
+
+    -- Cursor movement does not destroy anything, so it stays on the debounce.
+    local settled = #writes
+    vim.api.nvim_exec_autocmds("CursorMoved", { modeline = false })
+    vim.wait(40, function()
+      return #writes > settled
+    end, 5)
+    assert_eq(#writes, settled, "a cursor move does not trigger the immediate path")
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

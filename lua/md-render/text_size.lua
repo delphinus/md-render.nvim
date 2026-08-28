@@ -606,11 +606,15 @@ end
 local SETTLED_MS = 90
 --- Repaint delay while events keep arriving (a held `<C-e>`, a mouse wheel
 --- spin). Each layout change costs a full-screen repaint, so waiting for the
---- scroll to stop turns a burst into one repaint instead of one per step. The
---- headings stay plain-size while scrolling, which reads as scrolling normally
---- rather than as strobing.
+--- scroll to stop turns a burst into one repaint instead of one per step.
 local BURST_MS = 180
 --- Two events closer together than this count as one burst.
+---
+--- A real mouse wheel is slower than this. Notches measured 117-800 ms apart,
+--- median 233, over a ten-second spin, so twenty-seven of thirty landed
+--- outside the window and took the isolated path. Coalescing is the exception
+--- rather than the rule while scrolling by wheel, which means the runs have to
+--- survive each individual step — see `restore_after_scroll`.
 local BURST_WINDOW_MS = 130
 
 --- Backstop interval for re-asserting runs that are already on screen.
@@ -678,6 +682,36 @@ local function reassert(state)
   end
 end
 
+--- Put the runs back at their new positions, without a full repaint.
+---
+--- A scroll destroys them. Neovim redraws the rows it moved and our writes
+--- never went through its grid, so the scaled cells go with the scroll. A
+--- screen recording of `:MdRender demo` puts numbers on it: all thirty wheel
+--- notches dropped every heading to plain size in the same frame as the
+--- scroll, and none dropped without one. Recovery took a median of 50 ms,
+--- which is `md-render.image`'s debounce and not ours — the headings were
+--- coming back only once *it* had redrawn and announced. `schedule_paint`
+--- would not have arrived for another 40 ms on top. That window is what reads
+--- as a pulse once per notch while scrolling.
+---
+--- Saying the same thing again costs a few hundred bytes and needs no `:mode`,
+--- so it can happen on the scroll itself. Two things are deliberate here:
+---
+---   * `state.last_layout` is left alone, so the debounced `M.paint` still
+---     runs and still invalidates. That is what clears a stale glyph this
+---     write cannot see, and it keeps the cost identical to before — one
+---     full-screen repaint per scroll, plus this write.
+---   * The write is scheduled rather than immediate. `WinScrolled` fires
+---     before Neovim has flushed its own redraw for the rows it moved, and
+---     that flush would paint straight over anything written here.
+---@param state MdRender.TextSizeState
+local function restore_after_scroll(state)
+  vim.schedule(function()
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+    write_runs(visible_placements(state))
+  end)
+end
+
 -- ============================================================================
 -- Lifecycle
 -- ============================================================================
@@ -714,9 +748,15 @@ function M.attach(win, content)
   -- `M.paint` is a single debounced write that no-ops when nothing is visible,
   -- so reacting to every event is cheaper than getting the filter wrong.
   for _, event in ipairs { "WinScrolled", "WinResized", "CursorMoved", "CursorMovedI" } do
+    -- A scroll or a resize moves every run on screen and destroys them all on
+    -- the way, so those two put the runs back at once instead of leaving the
+    -- headings plain until the debounce elapses. Cursor movement leaves the
+    -- runs where they are and needs no such thing.
+    local destroys_runs = event == "WinScrolled" or event == "WinResized"
     local id = vim.api.nvim_create_autocmd(event, {
       group = augroup,
       callback = function()
+        if destroys_runs then restore_after_scroll(state) end
         schedule_paint(state)
       end,
     })
