@@ -42,7 +42,11 @@ vim.defer_fn(function()
     end
     table.insert(diag, "placements=" .. tostring(session and #session.content.text_placements))
     table.insert(diag, "drawn=" .. tostring(session and session.text_size_state and session.text_size_state.last_drawn))
+    -- `placements` minus `drawn` is the count that never reached the screen,
+    -- and a short terminal is the usual reason: the float scrolls the later
+    -- headings out of view. `lines` is here so that is visible at a glance.
     table.insert(diag, "columns=" .. vim.o.columns)
+    table.insert(diag, "lines=" .. vim.o.lines)
     table.insert(diag, "max_width=" .. tostring(session and session.opts.max_width))
 
     write(vim.env.MD_RENDER_E2E_DIAG, table.concat(diag, "\n") .. "\n")

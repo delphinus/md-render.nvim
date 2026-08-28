@@ -131,6 +131,16 @@ def run_kitty(kitty, enabled, workdir):
         # minimum-width guard declines to scale anything, which would look like
         # a failure. Ask for room.
         "-o", "font_size=10",
+        # And a window *short* enough scrolls the later headings out of the
+        # float, which reads the same way: the placements are built and simply
+        # never drawn. Kitty opens at 80x24 cells by default no matter how big
+        # the display is, which fits four of the fixture's seven headings —
+        # `placements=9 drawn=4` in the diagnostics below. Ask for the rows too.
+        # `remember_window_size` has to go first: while it is on, which is the
+        # default, kitty ignores both of these.
+        "-o", "remember_window_size=no",
+        "-o", "initial_window_width=120c",
+        "-o", "initial_window_height=60c",
         "--listen-on", f"unix:{sock}",
         "--directory", str(REPO),
         "nvim", "--clean", "-u", str(REPO / "tests/text_size_e2e_init.lua"),
