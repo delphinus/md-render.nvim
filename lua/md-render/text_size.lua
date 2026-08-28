@@ -750,10 +750,12 @@ end
 
 --- Re-send what we believe is already on screen.
 ---@param state MdRender.TextSizeState
-local function reassert(state)
+---@param state MdRender.TextSizeState
+---@param forced? boolean skip the rate limit; the caller has already coalesced
+local function reassert(state, forced)
   if not vim.api.nvim_win_is_valid(state.win) then return end
   local now = vim.uv.now()
-  if state.last_reassert_at and (now - state.last_reassert_at) < REASSERT_GAP_MS then return end
+  if not forced and state.last_reassert_at and (now - state.last_reassert_at) < REASSERT_GAP_MS then return end
   state.last_reassert_at = now
 
   local drawn = visible_placements(state)
@@ -822,6 +824,59 @@ local function restore_runs_now(state)
     state.last_layout = layout_key(drawn)
     state.last_drawn = #drawn
   end)
+end
+
+-- ============================================================================
+-- Redraw notification
+-- ============================================================================
+
+--- Every attached state, so one decoration provider can reach them all.
+---@type table<integer, MdRender.TextSizeState>
+local active = {}
+
+local decoration_ns = nil
+local decoration_pending = false
+
+--- Learn about a repaint that no autocmd will report.
+---
+--- `'eventignore'` is the hole every event-based recovery here falls into. A
+--- plugin that wraps its work in `eventignore = "all"` — nvim-scrollview does,
+--- around a refresh it runs about twenty times a second — silences `WinNew`,
+--- `WinClosed` and everything else while it opens, moves and closes windows.
+--- Measured against it: 308 calls to `nvim_open_win` produced one `WinNew`,
+--- and 295 to `nvim_win_close` produced two `WinClosed`. Every one of those
+--- recomposed the screen and took the runs with it, and this module was blind
+--- to all of them.
+---
+--- A decoration provider is not an autocmd, so `'eventignore'` does not reach
+--- it. Measured the same way, driving thirty rounds of that exact pattern:
+--- `WinNew` 0, `WinClosed` 0, `on_end` 32. It is the one signal that says "the
+--- screen was just redrawn" whoever did it and however they did it.
+---
+--- `on_end` runs inside the redraw, which is no place to write escape codes,
+--- so the write is scheduled — coalesced to one per redraw cycle, which is
+--- also why it may skip the rate limit `SafeState` needs.
+local function ensure_redraw_notification()
+  if decoration_ns then return end
+  decoration_ns = vim.api.nvim_create_namespace "md_render_text_size_redraw"
+  vim.api.nvim_set_decoration_provider(decoration_ns, {
+    on_end = function()
+      if decoration_pending or not next(active) then return end
+      decoration_pending = true
+      vim.schedule(function()
+        decoration_pending = false
+        for _, st in pairs(active) do
+          reassert(st, true)
+        end
+      end)
+    end,
+  })
+end
+
+local function stop_redraw_notification()
+  if not decoration_ns or next(active) then return end
+  vim.api.nvim_set_decoration_provider(decoration_ns, {})
+  decoration_ns = nil
 end
 
 -- ============================================================================
@@ -950,6 +1005,9 @@ function M.attach(win, content)
     end)
   )
 
+  active[win] = state
+  ensure_redraw_notification()
+
   schedule_paint(state)
   return state
 end
@@ -978,6 +1036,8 @@ end
 ---@param state MdRender.TextSizeState?
 function M.detach(state)
   if not state then return end
+  active[state.win] = nil
+  stop_redraw_notification()
   if state.redraw_timer then
     state.redraw_timer:stop()
     state.redraw_timer = nil

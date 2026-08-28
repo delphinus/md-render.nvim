@@ -715,5 +715,63 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 22: the redraw notification does not depend on autocmds.
+--
+-- `'eventignore'` is the hole every event-based recovery falls into. A plugin
+-- that wraps its work in `eventignore = "all"` — nvim-scrollview does, around
+-- a refresh it runs about twenty times a second — silences every autocmd
+-- while it opens, moves and closes windows, and each of those recomposes the
+-- screen and takes the runs with it. A decoration provider is not an autocmd.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+
+    local state = text_size.attach(win, out)
+    assert_true(state ~= nil, "attaches when there are placements")
+
+    -- The provider is registered against a namespace, not against a window.
+    local providers = 0
+    for name in pairs(vim.api.nvim_get_namespaces()) do
+      if name == "md_render_text_size_redraw" then providers = providers + 1 end
+    end
+    assert_eq(providers, 1, "attaching registers the redraw notification")
+
+    -- Under `eventignore=all` the events it used to rely on say nothing.
+    local seen = 0
+    local id = vim.api.nvim_create_autocmd({ "WinNew", "WinClosed" }, {
+      callback = function()
+        seen = seen + 1
+      end,
+    })
+    local saved = vim.o.eventignore
+    vim.o.eventignore = "all"
+    local scratch = vim.api.nvim_create_buf(false, true)
+    local w = vim.api.nvim_open_win(scratch, false, {
+      relative = "editor",
+      row = 0,
+      col = 0,
+      width = 10,
+      height = 3,
+      style = "minimal",
+    })
+    vim.api.nvim_win_close(w, true)
+    vim.o.eventignore = saved
+    assert_eq(seen, 0, "a window opening and closing under eventignore fires no autocmd")
+
+    vim.api.nvim_del_autocmd(id)
+    vim.api.nvim_buf_delete(scratch, { force = true })
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
