@@ -1686,5 +1686,30 @@ test("render shadow excludes multi-row image placements entirely", function()
   cleanup_buffer(source)
 end)
 
+-- `b:md_render` marks every buffer this plugin renders into, so a config can
+-- tell one apart without matching on a name or a filetype. Buffer-local, not
+-- window-local: toggle keeps the window and swaps the buffer under it, so the
+-- flag has to travel with the buffer to stay correct.
+test("b:md_render marks the render buffer, and only it", function()
+  local source = setup_md_buffer { "# Hello", "", "Some text" }
+  local win = vim.api.nvim_get_current_win()
+
+  assert_true(vim.b[source].md_render == nil, "the source buffer is not marked")
+
+  preview.toggle()
+  local render = vim.api.nvim_win_get_buf(win)
+  assert_true(render ~= source, "toggle swapped the buffer")
+  assert_true(vim.b[render].md_render == true, "the render buffer is marked")
+
+  -- Same window, buffer swapped back: the window has not changed, so anything
+  -- window-local would still be claiming this is a render view.
+  preview.toggle()
+  assert_eq(vim.api.nvim_win_get_buf(win), source, "toggle swapped back")
+  assert_true(vim.b[source].md_render == nil, "and the source is still unmarked")
+  assert_true(vim.b[render].md_render == true, "while the render buffer keeps its mark")
+
+  cleanup_buffer(source)
+end)
+
 print(string.format("toggle_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

@@ -251,6 +251,13 @@ function Session.new(source_bufnr, ns_name, opts)
   self.fold_state = {}
   self.expand_state = {}
   self.buf = vim.api.nvim_create_buf(false, true)
+  -- Marks every buffer this plugin renders into, so a configuration can tell
+  -- one apart without matching on a name or a filetype. Buffer-local rather
+  -- than window-local on purpose: `:MdRender toggle` swaps the buffer inside a
+  -- window it keeps, and a user splitting a preview with `<C-w>s` creates a
+  -- window this plugin never sees. The flag has to travel with the buffer for
+  -- either to work. See |md-render-b-md-render|.
+  vim.b[self.buf].md_render = true
   self.ns = vim.api.nvim_create_namespace(ns_name)
   self.dirty = false
   self._debounce_timer = nil
@@ -2378,6 +2385,9 @@ MdPreview.show_demo = function()
   local text_size_state = nil
 
   local buf = vim.api.nvim_create_buf(false, true)
+  -- The demo builds its own window rather than a Session, so it has to set
+  -- this itself. See |md-render-b-md-render|.
+  vim.b[buf].md_render = true
   local ns = vim.api.nvim_create_namespace "md_render_demo"
 
   require("md-render").setup_highlights()

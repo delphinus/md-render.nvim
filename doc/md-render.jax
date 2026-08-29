@@ -22,6 +22,7 @@ Snacks.nvim 連携					      |md-render-snacks|
   Display Utilities				       |md-render-display-utils|
   Image							       |md-render-image|
 使用例							     |md-render-example|
+バッファ変数					 |md-render-buffer-variables|
 ハイライトグループ					  |md-render-highlights|
 オプション依存						|md-render-dependencies|
 
@@ -445,16 +446,48 @@ Kitty graphics に使っているのと同じ経路です。Neovim はこの書�
   拡大中は色が失われ、見出し全体が同じハイライトで描かれます。
 - 2 行目がウィンドウの外にはみ出す見出しは、スクロールして見えるようになる
   まで等倍のままです。
-- md-render が観測できない再描画(他のプラグインによる強制再描画、メッセージ
-  やポップアップの重なり、マウススクロール時に端末がセルをずらす動作)が
-  起きると、見出しは一旦等倍に戻ります。これを知る手段が無いため、拡大
-  テキストを |SafeState| — Neovim が入力待ちに戻る瞬間、つまり誰が起こしたもの
-  であれ再描画が終わった直後 — で送り直します。80 ms でレート制限しているので
-  目に見える前に戻り、入力待ちに戻らない再描画のために 500 ms のタイマーも裏で
-  回しています。md-render 自身の再描画はこの経路ではなく、
+- 他の何かによる再描画(他のプラグインによる強制再描画、メッセージやポップ
+  アップの重なり、マウススクロール時に端末がセルをずらす動作)が起きると、
+  見出しは一旦等倍に戻ります。これを防ぐ手段はありません。復帰は 3 つの信号で
+  行っており、届くのが速い順に、スクロール・リサイズ・ウィンドウの開閉は即座に
+  描き直し、それ以外のあらゆる再描画はデコレーションプロバイダで次の tick に
+  拾い、残りを |SafeState| (レート制限あり) と、入力待ちに戻らない再描画のため
+  の 500 ms のタイマーが受け持ちます。md-render 自身の再描画はこの経路ではなく
   正しく処理されます。インライン画像と拡大見出しはどちらも Neovim のグリッドの
   外に描かれ、どちらも全画面の再描画で消えるため、再描画した側がそれを通知し、
   もう一方が即座に描き直します。
+						 *md-render-eventignore*
+- 'eventignore' `= "all"` で囲んで再描画するプラグインがいると、1 フレームだけ
+  取りこぼしが残ります。これは短縮できません。上に挙げた仕組みはどれも autocmd
+  で「何かが起きた」ことを知りますが、この設定はその autocmd を全部黙らせます。
+  デコレーションプロバイダは autocmd ではないので発火し続け、次の tick で見出し
+  は戻りますが、その 1 フレームだけは消えます。
+  既知の該当例は nvim-scrollview (https://github.com/dstein64/nvim-scrollview)
+  です。マウスを動かしている間、毎秒約 20 回、エディタ全面のフロートを開き、
+  小さなフロートを十数個動かし、また閉じる、という処理を 'eventignore'
+  `= "all"` で囲んで実行します。15 秒間の実測では `nvim_open_win` の呼び出し
+  308 回に対して |WinNew| の発火は 1 回でした。
+  プレビューが画面にある間だけ止めたい場合は、開閉イベントを対にするのではなく
+  |b:md_render| で判定してください。プレビューは複数開けますし手で分割もできる
+  ため、「今開いているか」を問うほうが数える必要が無く確実です: >lua
+
+    local off = false
+    vim.api.nvim_create_autocmd({ "WinNew", "WinClosed", "BufWinEnter" }, {
+      callback = vim.schedule_wrap(function()
+        local want = false
+        for _, w in ipairs(vim.api.nvim_list_wins()) do
+          if vim.b[vim.api.nvim_win_get_buf(w)].md_render then
+            want = true
+            break
+          end
+        end
+        if want ~= off then
+          off = want
+          vim.cmd(want and "ScrollViewDisable" or "ScrollViewEnable")
+        end
+      end),
+    })
+<
 - |md-render-telescope| と |md-render-snacks| のプレビューでは無効です。
   カーソル移動のたびに再描画されるため、そのたびに画面全体を描き直すのは
   割に合いません。
@@ -987,6 +1020,33 @@ Markdown をレンダリングしてバッファに表示する完全な例で�
   local win = vim.api.nvim_get_current_win()
   md.display_utils.setup_images(win, content, ns)
 <
+
+==============================================================================
+バッファ変数					 *md-render-buffer-variables*
+
+						       *md-render-b-md-render*
+							       *b:md_render*
+b:md_render ~
+	md-render が描画するすべてのバッファで `true` になります。フローティング
+	プレビュー、タブ・分割表示、ページャ、|:MdRender-toggle| が差し替える
+	バッファ、そして |:MdRender-demo| が対象です。他では設定しないため、
+	バッファ名やファイルタイプ (どちらも他のプラグインやユーザが自由に変更
+	できます) に頼らずに識別できます。
+
+	ウィンドウローカルではなくバッファローカルにしてあります。
+	|:MdRender-toggle| はウィンドウを保ったままバッファを入れ替えますし、
+	プレビューを手で分割すると md-render が関与しないウィンドウが増えます。
+	どちらでも正しく認識されるには、目印がバッファに付いて回る必要があります。
+	プレビューが画面にあるかを問うには、ウィンドウを走査します: >lua
+
+	  local function preview_visible()
+	    for _, w in ipairs(vim.api.nvim_list_wins()) do
+	      if vim.b[vim.api.nvim_win_get_buf(w)].md_render then return true end
+	    end
+	    return false
+	  end
+<
+	用途については |md-render-eventignore| を参照してください。
 
 ==============================================================================
 ハイライトグループ					  *md-render-highlights*

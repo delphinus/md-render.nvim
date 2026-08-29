@@ -238,7 +238,28 @@ Known limitations:
 - Every level reserves a two-row block while only `#` fills it, so the rest are centered in theirs (`v=2`) instead of sitting against the top edge, which is the protocol's default. At `######` — 1.17x in a block twice as tall — the top edge left almost a whole row empty under the heading.
 - The level icon stays at normal size, but goes out as a run of its own rather than as the plain text underneath, so it is centered in the same block and stays level with the heading it labels (`n=1:d=2` against `s=2` cancels the cell scale exactly). Its own run is also what keeps it legible: Kitty gives a scaled run exactly `s` cells per source cell, and these Nerd Font glyphs report as one cell wide while being drawn wider, so sharing the heading's run would clip the icon — `󰉬` would render as a bare "H". Alone, `w=1` gives it the two-cell block the icon already occupies, and it fits.
 - A heading whose second row would fall outside the window stays plain until scrolled into view.
-- A repaint md-render cannot observe (another plugin forcing a redraw, a message or popup overlapping the window, the terminal shifting cells for a mouse scroll) drops the heading back to plain size. There is no way to be told this happened, so md-render re-asserts the scaled runs on `SafeState` — the moment Neovim settles back to waiting for input, which is exactly once a repaint has finished, whoever caused it. Recovery is rate-limited to 80 ms, fast enough not to be seen, with a 500 ms timer behind it for a repaint that never settles. md-render's own repaints are handled properly rather than waited out — inline images and scaled headings both draw outside Neovim's grid and are both destroyed by a full repaint, so whichever of the two repaints announces it and the other puts itself back at once.
+- A repaint by anything else (another plugin forcing a redraw, a message or popup overlapping the window, the terminal shifting cells for a mouse scroll) drops the heading back to plain size, and there is no way to stop that happening. Recovery is on three signals, in order of how quickly they arrive: a scroll, resize, or window opening or closing repaints at once; any redraw at all is picked up from a decoration provider on the tick after it; and `SafeState` covers the rest, rate-limited, with a 500 ms timer behind it for a repaint that never settles. md-render's own repaints are handled properly rather than waited out — inline images and scaled headings both draw outside Neovim's grid and are both destroyed by a full repaint, so whichever of the two repaints announces it and the other puts itself back at once.
+- **A plugin that repaints inside `eventignore = "all"` costs a frame that cannot be recovered any sooner.** Autocmds are how everything above learns that anything happened, and that setting silences all of them. The decoration provider still fires — it is not an autocmd — so the heading comes back on the next tick, but it does go for that one frame. [nvim-scrollview](https://github.com/dstein64/nvim-scrollview) is the known case: it opens a float the size of the whole editor, moves a dozen small ones and closes them again, about twenty times a second while the mouse moves, all of it inside `eventignore = "all"`. Measured over fifteen seconds, 308 calls to `nvim_open_win` produced one `WinNew`. To turn it off while a preview is on screen, match on `b:md_render` (set on every buffer md-render renders into) rather than pairing open and close events — a preview can be opened more than once and split by hand, and asking "is one open" needs no bookkeeping:
+
+  ```lua
+  local off = false
+  vim.api.nvim_create_autocmd({ "WinNew", "WinClosed", "BufWinEnter" }, {
+    callback = vim.schedule_wrap(function()
+      local want = false
+      for _, w in ipairs(vim.api.nvim_list_wins()) do
+        if vim.b[vim.api.nvim_win_get_buf(w)].md_render then
+          want = true
+          break
+        end
+      end
+      if want ~= off then
+        off = want
+        vim.cmd(want and "ScrollViewDisable" or "ScrollViewEnable")
+      end
+    end),
+  })
+  ```
+
 - Each layout change costs a full-screen repaint to clear the previous scaled run, so scrolling is more expensive than usual. When the window also holds images the image redraw does that clearing, and the scaled text is simply written after it.
 - The Telescope and Snacks previewers opt out. They redraw on every cursor step, and a full-screen repaint per step is not something a picker can afford.
 

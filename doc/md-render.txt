@@ -21,6 +21,7 @@ Usage							       |md-render-usage|
   Display Utilities				       |md-render-display-utils|
   Image							       |md-render-image|
 Example							     |md-render-example|
+Buffer Variables				 |md-render-buffer-variables|
 Highlight Groups					  |md-render-highlights|
 Optional Dependencies					|md-render-dependencies|
 
@@ -447,17 +448,49 @@ Limitations: ~
   highlight.
 - A heading whose second row would fall outside the window stays plain until
   it is scrolled into view.
-- A repaint that md-render cannot observe (another plugin forcing a redraw, a
-  message or popup overlapping the window, the terminal shifting cells for a
-  mouse scroll) drops the heading back to plain size.  There is no way to be
-  told this happened, so the scaled runs are re-asserted on |SafeState| — the
-  moment Neovim settles back to waiting for input, which is exactly once a
-  repaint has finished, whoever caused it.  Rate-limited to 80 ms, fast enough
-  not to be seen, with a 500 ms timer behind it for a repaint that never
-  settles.  md-render's own repaints are handled properly
-  rather than waited out: inline images and scaled headings both draw outside
-  Neovim's grid and are both destroyed by a full repaint, so whichever of the
-  two repaints announces it and the other puts itself back at once.
+- A repaint by anything else (another plugin forcing a redraw, a message or
+  popup overlapping the window, the terminal shifting cells for a mouse
+  scroll) drops the heading back to plain size, and there is no way to stop
+  that happening.  Recovery is on three signals, in order of how quickly they
+  arrive: a scroll, resize, or window opening or closing repaints at once; any
+  redraw at all is picked up from a decoration provider on the tick after it;
+  and |SafeState| covers the rest, rate-limited, with a 500 ms timer behind it
+  for a repaint that never settles.  md-render's own repaints are handled
+  properly rather than waited out: inline images and scaled headings both draw
+  outside Neovim's grid and are both destroyed by a full repaint, so whichever
+  of the two repaints announces it and the other puts itself back at once.
+                                                 *md-render-eventignore*
+- A plugin that repaints inside 'eventignore' `= "all"` costs a frame that
+  cannot be recovered any sooner.  Autocmds are how everything above learns
+  that anything happened, and that setting silences all of them.  The
+  decoration provider still fires — it is not an autocmd — so the heading
+  comes back on the next tick, but it does go for that one frame.
+  nvim-scrollview (https://github.com/dstein64/nvim-scrollview) is the known
+  case: it opens a float the size of the whole editor, moves a dozen small
+  ones and closes them again, about twenty times a second while the mouse
+  moves, all of it inside 'eventignore' `= "all"`.  Measured over fifteen
+  seconds, 308 calls to `nvim_open_win` produced one |WinNew|.
+  To turn it off while a preview is on screen, match on |b:md_render| rather
+  than pairing open and close events — a preview can be opened more than once
+  and split by hand, and asking "is one open" needs no bookkeeping: >lua
+
+    local off = false
+    vim.api.nvim_create_autocmd({ "WinNew", "WinClosed", "BufWinEnter" }, {
+      callback = vim.schedule_wrap(function()
+        local want = false
+        for _, w in ipairs(vim.api.nvim_list_wins()) do
+          if vim.b[vim.api.nvim_win_get_buf(w)].md_render then
+            want = true
+            break
+          end
+        end
+        if want ~= off then
+          off = want
+          vim.cmd(want and "ScrollViewDisable" or "ScrollViewEnable")
+        end
+      end),
+    })
+<
 - Each layout change costs a full-screen repaint to clear the previous scaled
   run, so scrolling is more expensive than usual.  When the window also holds
   images the image redraw does that clearing, and the scaled text is written
@@ -993,6 +1026,33 @@ A complete example showing how to render Markdown and display it in a buffer:
   local win = vim.api.nvim_get_current_win()
   md.display_utils.setup_images(win, content, ns)
 <
+
+==============================================================================
+BUFFER VARIABLES				 *md-render-buffer-variables*
+
+						       *md-render-b-md-render*
+							       *b:md_render*
+b:md_render ~
+	`true` on every buffer md-render renders into — the floating preview,
+	the tab and split views, the pager, the buffer |:MdRender-toggle|
+	swaps in, and |:MdRender-demo|.  Set nowhere else, so a configuration
+	can recognise one without matching on a buffer name or a filetype,
+	both of which other plugins and the user are free to change.
+
+	Buffer-local rather than window-local deliberately.
+	|:MdRender-toggle| keeps its window and swaps the buffer inside it, and
+	splitting a preview by hand creates a window this plugin never sees;
+	the mark has to travel with the buffer for either to be recognised.
+	To ask whether a preview is on screen, walk the windows: >lua
+
+	  local function preview_visible()
+	    for _, w in ipairs(vim.api.nvim_list_wins()) do
+	      if vim.b[vim.api.nvim_win_get_buf(w)].md_render then return true end
+	    end
+	    return false
+	  end
+<
+	See |md-render-eventignore| for what this is useful for.
 
 ==============================================================================
 HIGHLIGHT GROUPS					  *md-render-highlights*
