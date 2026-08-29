@@ -322,6 +322,14 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	mirrors the other to the corresponding mapped line, with the
 	cursor placed at the same window row so the views stay aligned.
 
+	A cursor that already maps to its counterpart stays where it is.
+	Several source lines can share one rendered line — a collapsed
+	<details>, a table, a figure — and mapping that line back would
+	otherwise pull the cursor to the first line of the block.  A view
+	within a line of where the map points is likewise left alone, so
+	the other side is not scrolled back over the line it just
+	scrolled by itself.
+
 	Closing the split window with `:q` or `<C-w>c` does NOT destroy
 	the render buffer; it stays cached on the source for future
 	toggles or splits.

@@ -212,6 +212,9 @@ end
 ---@field dirty boolean               -- true when source changed while render was hidden
 ---@field _debounce_timer? table      -- libuv timer handle for live-update debounce
 ---@field _update_footer? fun()       -- redraws the float footer (set by install_footer)
+---@field _syncing? boolean           -- a scroll sync is in flight (see install_scroll_sync)
+---@field _sync_unlock_timer? table   -- timer that releases `_syncing`
+---@field _synced_views? table<integer, integer[]> -- per window, `{ topline, cursor_line, written_at }` of the last sync write
 local Session = {}
 Session.__index = Session
 
@@ -361,6 +364,9 @@ function Session:rebuild()
   end
   self.content = new_content
   self.dirty = false
+  -- Rendered line numbers have just moved, so "this window still shows what
+  -- the last sync wrote" no longer implies the two sides agree.
+  self._synced_views = nil
   -- Folding/expanding shifts the rendered line under the cursor without
   -- firing CursorMoved, so refresh the footer explicitly.
   if self._update_footer then self._update_footer() end
@@ -1044,10 +1050,27 @@ end
 --- call. Using `nvim_win_set_cursor` instead would re-apply 'scrolloff'
 --- and silently override the topline we just set.
 ---
---- Loop prevention: a single `_syncing` flag, released after 30 ms via
+--- Loop prevention, in two layers.
+---
+--- The first is a single `_syncing` flag, released after 30 ms via
 --- vim.defer_fn. Each sync action fires both CursorMoved and WinScrolled
 --- on the destination windows; the timer-based unlock suppresses the
 --- whole cascade without the brittleness of trying to count events.
+---
+--- The timer alone is not enough, because it is a guess about how long the
+--- cascade takes. Under a busy configuration — treesitter, diagnostics,
+--- another plugin's decoration provider — a destination window's
+--- `WinScrolled` lands well after 30 ms, and what comes back is then read
+--- as a fresh user scroll. So the second layer records the view each write
+--- produced and ignores an event whose window still holds it: same view
+--- means the two sides already agree, whoever put them there, and there is
+--- nothing to sync. See `is_echo`.
+---
+--- What made the missed echo *visible* rather than merely wasteful is that
+--- the map between the buffers is many-to-one: a collapsed `<details>`, a
+--- table or a figure renders as one line for a whole run of source lines.
+--- `fan_out` therefore only writes a destination cursor that is actually
+--- out of sync — see the `in_sync` predicates below.
 ---@param session MdRender.Session
 local function install_scroll_sync(session)
   local augroup = vim.api.nvim_create_augroup(scroll_sync_augroup(session.source_bufnr), { clear = true })
@@ -1063,6 +1086,63 @@ local function install_scroll_sync(session)
       session._sync_unlock_timer = nil
     end, SYNC_UNLOCK_MS)
     if not ok then error(err) end
+  end
+
+  --- How long a topline that has not settled yet is still attributable to our
+  --- own write. See `is_echo`.
+  local ECHO_SETTLE_MS = 250
+
+  --- How far a destination window may sit from the topline the map asks for
+  --- before it is scrolled there. One line: enough to absorb the rounding of
+  --- the map, small enough that the two views never visibly part company.
+  local TOPLINE_HYSTERESIS = 1
+
+  --- `{ topline, cursor_line }` of a window as it stands right now.
+  ---
+  --- Through `winsaveview()`, not `line('w0')`: `w0` *recomputes* the topline
+  --- as a side effect, and doing that anywhere near a write undoes the edge
+  --- snaps — after `zb` plus a cursor placement above the last line, the
+  --- recomputation scrolls the window down and leaves the file's final line
+  --- off the bottom. `winsaveview` reports the stored value and changes
+  --- nothing.
+  ---@param win integer
+  ---@return integer[]?
+  local function view_of(win)
+    if not vim.api.nvim_win_is_valid(win) then return nil end
+    local ok, view = pcall(vim.api.nvim_win_call, win, function()
+      local v = vim.fn.winsaveview()
+      return { v.topline, v.lnum }
+    end)
+    return ok and view or nil
+  end
+
+  --- True when `win` is still showing what the last sync wrote into it, i.e.
+  --- the event being handled is our own write coming back.
+  ---
+  --- The 30 ms lock covers the cascade that arrives promptly; this covers the
+  --- one that outran it, and unlike the lock it does not have to guess how
+  --- long that takes. An unchanged view cannot need syncing either way: it is
+  --- the view the other side was synced *to*, so the two already agree,
+  --- whether the window got there by our write or by the user landing on the
+  --- same spot.
+  ---
+  --- The cursor line is compared exactly. The topline gets a grace period,
+  --- because the value recorded at write time is the stored one and Vim
+  --- recomputes it at the next redraw — so our own write reads back with a
+  --- topline that is merely close. Bounding that by time is what keeps a real
+  --- scroll of the unfocused side (a mouse wheel over the preview, which
+  --- moves the view and not the cursor) from being swallowed as an echo: it
+  --- only takes 250 ms of quiet, and while the user is holding a key there is
+  --- no wheel in the other hand.
+  ---@param win integer
+  ---@return boolean
+  local function is_echo(win)
+    local written = session._synced_views and session._synced_views[win]
+    if not written then return false end
+    local view = view_of(win)
+    if not view or view[2] ~= written[2] then return false end
+    if view[1] == written[1] then return true end
+    return (vim.uv.now() - written[3]) < ECHO_SETTLE_MS
   end
 
   --- Apply a per-window scroll + cursor under the sync lock.
@@ -1086,14 +1166,48 @@ local function install_scroll_sync(session)
   --- image-occupied buffer lines (e.g. README with kitty image
   --- placeholders), causing the shadow highlight to disappear past
   --- the bottom of the window.
-  local function fan_out(wins, from_win, compute_action, target_cursor)
+  local function fan_out(wins, from_win, compute_action, target_cursor, in_sync)
     if #wins == 0 then return end
-    local cursor = math.max(1, math.floor(target_cursor + 0.5))
+    local mapped_cursor = math.max(1, math.floor(target_cursor + 0.5))
+    session._synced_views = session._synced_views or {}
     with_sync_lock(function()
       for _, w in ipairs(wins) do
         if w ~= from_win and vim.api.nvim_win_is_valid(w) then
           pcall(function()
-            local action = compute_action(w)
+            -- Where this window's cursor goes. Normally the mapped position,
+            -- but the map is many-to-one wherever the render collapses source
+            -- lines — a folded `<details>`, a table, a figure — and rounding
+            -- to a whole line throws away which line of the block the cursor
+            -- was on. Mapping that back picks the *first* source line of the
+            -- run, so writing it unprompted drags the cursor to the top of
+            -- the block, and a held `j` never escapes it. Leave a cursor that
+            -- already stands for the same place where the user put it.
+            local cursor = mapped_cursor
+            local before_view = view_of(w)
+            local current = vim.api.nvim_win_get_cursor(w)[1]
+            if in_sync and in_sync(current) then cursor = current end
+            local action = compute_action(w, cursor)
+
+            -- Hysteresis on the scroll, for the same reason as on the cursor.
+            --
+            -- An interior topline is derived from the *other* window's visible
+            -- range through a rounded map, so it trails what this window does
+            -- on its own by up to a line: placing the cursor scrolls the
+            -- window forward, the next sync computes a topline one line
+            -- behind, and writing it scrolls back. Held down, that is a
+            -- one-line shudder on every second keystroke — measured at 11 of
+            -- 59 writes on a `j` sweep through README.ja.md.
+            --
+            -- Skipping the write leaves the window where it scrolled itself,
+            -- which is what an unsynced window would have done anyway. Drift
+            -- cannot accumulate: every action is computed from the current
+            -- range rather than from the last one, so the two sides stay
+            -- within the tolerance of each other and anything larger is still
+            -- corrected.
+            local settled = type(action) == "number"
+              and before_view
+              and math.abs(action - before_view[1]) <= TOPLINE_HYSTERESIS
+
             vim.api.nvim_win_call(w, function()
               if action == "top" then
                 vim.fn.cursor(1, 1)
@@ -1102,7 +1216,7 @@ local function install_scroll_sync(session)
                 local last = vim.api.nvim_buf_line_count(0)
                 vim.fn.cursor(last, 1)
                 vim.cmd "normal! zb"
-              else
+              elseif not settled then
                 vim.fn.winrestview { topline = action, col = 0 }
               end
               -- Final cursor placement: vim.fn.cursor() respects
@@ -1112,6 +1226,14 @@ local function install_scroll_sync(session)
               -- placing the cursor would push it off-screen.
               vim.fn.cursor(cursor, 1)
             end)
+            -- Read the view back rather than record what we asked for:
+            -- 'scrolloff', 'wrap' and the cursor placement above all move it
+            -- after the fact, and a record that does not match the window
+            -- would never recognise its own echo. The timestamp is what lets
+            -- `is_echo` tell a topline that has not settled yet from one
+            -- somebody else changed.
+            local view = view_of(w)
+            if view then session._synced_views[w] = { view[1], view[2], vim.uv.now() } end
           end)
         end
       end
@@ -1224,7 +1346,15 @@ local function install_scroll_sync(session)
     if mapped_bot_end < mapped_top then mapped_bot_end = mapped_top end
     local target_cursor = clamp(session:source_to_rendered_f(source_cursor_line))
 
-    fan_out(render_wins, source_win, function(w)
+    -- A render cursor that maps back to the source line the user is on is
+    -- already pointing at the same place; only the rounding differs.
+    local function in_sync(render_line)
+      local back = session:rendered_to_source_f(render_line)
+      back = math.min(math.max(back, 1), source_lines)
+      return math.floor(back + 0.5) == source_cursor_line
+    end
+
+    fan_out(render_wins, source_win, function(w, cursor)
       local dest_height = vim.api.nvim_win_get_height(w)
       return pick_action(
         dest_height,
@@ -1234,9 +1364,9 @@ local function install_scroll_sync(session)
         mapped_bot_end,
         src_top_at_edge,
         src_bot_at_edge,
-        target_cursor
+        cursor
       )
-    end, target_cursor)
+    end, target_cursor, in_sync)
   end
 
   local function sync_from_render(render_win)
@@ -1265,7 +1395,19 @@ local function install_scroll_sync(session)
     if mapped_bot_end < mapped_top then mapped_bot_end = mapped_top end
     local target_cursor = clamp(session:rendered_to_source_f(render_cursor_line))
 
-    fan_out(source_wins, render_win, function(w)
+    -- The direction that used to trap the cursor. Every source line of a
+    -- collapsed block maps to the one rendered line the block occupies, so
+    -- the source cursor is already where it belongs whenever it maps
+    -- *forward* onto the render cursor — and moving it to the block's first
+    -- line, which is what the backward map returns, would be a regression
+    -- rather than a correction.
+    local function in_sync(source_line)
+      local fwd = session:source_to_rendered_f(source_line)
+      fwd = math.min(math.max(fwd, 1), render_lines)
+      return math.floor(fwd + 0.5) == render_cursor_line
+    end
+
+    fan_out(source_wins, render_win, function(w, cursor)
       local dest_height = vim.api.nvim_win_get_height(w)
       return pick_action(
         dest_height,
@@ -1275,9 +1417,9 @@ local function install_scroll_sync(session)
         mapped_bot_end,
         src_top_at_edge,
         src_bot_at_edge,
-        target_cursor
+        cursor
       )
-    end, target_cursor)
+    end, target_cursor, in_sync)
   end
 
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
@@ -1285,7 +1427,9 @@ local function install_scroll_sync(session)
     buffer = session.source_bufnr,
     callback = function()
       if session._syncing then return end
-      sync_from_source(vim.api.nvim_get_current_win())
+      local win = vim.api.nvim_get_current_win()
+      if is_echo(win) then return end
+      sync_from_source(win)
     end,
   })
 
@@ -1294,7 +1438,9 @@ local function install_scroll_sync(session)
     buffer = session.buf,
     callback = function()
       if session._syncing then return end
-      sync_from_render(vim.api.nvim_get_current_win())
+      local win = vim.api.nvim_get_current_win()
+      if is_echo(win) then return end
+      sync_from_render(win)
     end,
   })
 
@@ -1308,9 +1454,12 @@ local function install_scroll_sync(session)
       local event = vim.v.event
       if type(event) ~= "table" then return end
       for key in pairs(event) do
+        -- A window this sync just wrote to is skipped rather than returned
+        -- on: one tick can carry both sides, and stopping at the echo would
+        -- hide a genuine scroll reported alongside it.
         if key ~= "all" then
           local win = tonumber(key)
-          if win and vim.api.nvim_win_is_valid(win) then
+          if win and vim.api.nvim_win_is_valid(win) and not is_echo(win) then
             local buf = vim.api.nvim_win_get_buf(win)
             if buf == session.source_bufnr then
               sync_from_source(win)
