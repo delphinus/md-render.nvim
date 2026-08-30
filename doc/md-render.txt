@@ -47,6 +47,8 @@ Features: ~
   graphics protocol
 - Video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
 - Mermaid diagrams rendered as images inline
+- PlantUML diagrams rendered as images inline, by a local renderer or by a
+  server you name
 - CommonMark paragraphs (soft-wrapped source lines are joined into one
   paragraph, including a list item's continuation lines and a blockquote
   body; no extra space is inserted between CJK characters)
@@ -506,6 +508,29 @@ Limitations: ~
 - |md-render-telescope| and |md-render-snacks| previews opt out.  They redraw
   on every cursor step, and a full-screen repaint per step is not something a
   picker can afford.
+
+------------------------------------------------------------------------------
+PlantUML diagrams					 *md-render-plantuml*
+
+A fenced block tagged `plantuml` or `puml` is rendered as an image, the way a
+`mermaid` fence is.  Rendering is done by a `plantuml` on the PATH, or by
+`java -jar $PLANTUML_JAR` when that variable points at a readable jar.
+
+With neither, the fence stays a code block.  PlantUML renders on a server by
+design, and rendering on somebody else's means sending the diagram there, so
+that is not a fallback the plugin picks on its own.  Name a server and it will
+be used: >lua
+
+	require("md-render.image").setup {
+	  plantuml_server = "https://plantuml.example.com/plantuml",
+	}
+<
+"https://www.plantuml.com/plantuml" is the public instance, if that is the one
+you want.  Either way the diagram source is sent to it.
+
+A named server also needs `curl`.  Renders are cached under
+`stdpath("cache")/md-render/plantuml`, keyed by the diagram source, so a given
+diagram is sent once.
 
 ------------------------------------------------------------------------------
 Deprecated commands				 *md-render-deprecated-commands*
@@ -1163,6 +1188,10 @@ OPTIONAL DEPENDENCIES					*md-render-dependencies*
   Mermaid CLI          Render Mermaid diagrams as images.  Falls back to
   (mmdc)               `npx -y @mermaid-js/mermaid-cli`.
                        https://github.com/mermaid-js/mermaid-cli
+
+  PlantUML             Render PlantUML diagrams as images.  Falls back to a
+  (plantuml, or java   server only when one is named; see |md-render-plantuml|.
+  with $PLANTUML_JAR)  https://plantuml.com/
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:

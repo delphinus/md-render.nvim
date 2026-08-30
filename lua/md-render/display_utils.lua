@@ -625,7 +625,7 @@ end
 ---@param placement MdRender.ImagePlacement
 ---@return boolean
 local function has_async_source(placement)
-  return placement.mermaid_source ~= nil or placement.src_url ~= nil
+  return placement.mermaid_source ~= nil or placement.plantuml_source ~= nil or placement.src_url ~= nil
 end
 
 ---@param win integer
@@ -727,7 +727,7 @@ function M.setup_images(win, content, ns, opts)
         placement._retries = (placement._retries or 0) + 1
         process_placement(placement)
       elseif has_async_source(placement) and not placement._async_started and placement_near_viewport(placement) then
-        -- A Mermaid diagram or a remote image that was off-screen when the
+        -- A diagram or a remote image that was off-screen when the
         -- window opened has no `path` yet, so the branch above can never pick
         -- it up and it would sit on its placeholder forever. Scrolling it into
         -- view is what asks for it — the same laziness static images get,
@@ -1114,6 +1114,18 @@ function M.setup_images(win, content, ns, opts)
       image.render_mermaid_async(placement.mermaid_source, function(path)
         if path then
           placement.mermaid_source = nil
+          -- Rebuild content so placeholder rows match actual image dimensions
+          if on_download then
+            on_download()
+          else
+            on_path_ready(path)
+          end
+        end
+      end)
+    elseif placement.plantuml_source then
+      image.render_plantuml_async(placement.plantuml_source, function(path)
+        if path then
+          placement.plantuml_source = nil
           -- Rebuild content so placeholder rows match actual image dimensions
           if on_download then
             on_download()

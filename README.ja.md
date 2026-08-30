@@ -17,6 +17,7 @@ Neovim 用の Markdown レンダリングエンジンです。生の Markdown �
 - **画像** — ローカルおよび Web 画像（PNG, JPEG, WebP, GIF, アニメーション GIF）をターミナルグラフィクスプロトコルでインライン表示
 - **動画** — ローカルおよび Web 動画（MP4, WebM, MOV, AVI, MKV, M4V）をアニメーションフレームとしてインライン再生
 - **Mermaid ダイアグラム** — 画像としてインライン表示
+- **PlantUML ダイアグラム** — ローカルのレンダラ、または指定したサーバで画像としてインライン表示
 - **CommonMark の段落** — 原文で折り返された行はひとつの段落に連結。箇条書き項目の継続行や引用の本文も同様で、和字同士の連結では半角スペースを入れません
 - **入れ子のブロック構造** — 箇条書き項目の内容位置に揃えた引用・コールアウト・フェンスコードブロックも、リテラルではなくその場でレンダリング
 - **CJK 対応ワードラップ** — JIS X 4051 禁則処理 + [BudouX](https://github.com/google/budoux)（[budoux.lua](https://github.com/delphinus/budoux.lua) 経由）によるオプションのフレーズ分割
@@ -57,6 +58,7 @@ nvim +"MdRender pager" assets/showcase.md
 | [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG 変換、アニメーション GIF / 動画のフレーム展開 | ImageMagick にフォールバック（画像のみ。動画には ffmpeg が必要） |
 | [ImageMagick](https://imagemagick.org/) (`magick`) | JPEG/WebP → PNG、アニメーション GIF フレーム展開 | macOS では `sips` が静止画変換を処理。アニメーション GIF には ffmpeg か magick が必要 |
 | [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Mermaid ダイアグラムを画像として描画 | `npx -y @mermaid-js/mermaid-cli` にフォールバック |
+| [PlantUML](https://plantuml.com/) (`plantuml`、または `java` と `$PLANTUML_JAR`) | PlantUML ダイアグラムを画像として描画 | 指定した場合のみ PlantUML サーバ（curl が必要）。指定が無ければコードブロックのまま |
 | [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK フレーズ単位の改行（BudouX） | 1文字ずつ分割（禁則処理は維持） |
 | Treesitter パーサー | コードブロックのシンタックスハイライト | ハイライトなしで表示 |
 | [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) または [mini.icons](https://github.com/echasnovski/mini.icons) | コードブロックヘッダのファイルタイプアイコン | 内蔵アイコンテーブル |
@@ -392,6 +394,26 @@ require("snacks").setup({
 <summary><strong>Mermaid ダイアグラムが描画されない</strong></summary>
 
 Mermaid のレンダリングには [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli) の `mmdc` バイナリが必要です。グローバルに `mmdc` がない場合は `npx -y @mermaid-js/mermaid-cli` にフォールバックしますが、初回呼び出しが大幅に遅くなります。`npm install -g @mermaid-js/mermaid-cli` でグローバルインストールするのがおすすめです。
+
+</details>
+
+<details>
+<summary><strong>PlantUML ダイアグラムが描画されない</strong></summary>
+
+`plantuml` / `puml` のフェンスは、`plantuml` バイナリが `PATH` にあるか、`java` があって `$PLANTUML_JAR` が読み取れる `plantuml.jar` を指しているときにローカルで描画されます。どちらか一方を入れればフェンスがダイアグラムになります。
+
+明示的に指定しない限りフォールバックはしません。PlantUML はサーバ上で描画する設計であり、他人のサーバで描画するということはダイアグラムをそこへ送るということなので、このプラグインが勝手にそれを選ぶことはしません。ローカルのレンダラが無ければ、`plantuml` のフェンスはコードブロックのままになります。サーバを指定すればそちらを使います:
+
+```lua
+require("md-render.image").setup {
+  -- 自分のインスタンス、または公開サーバの
+  -- "https://www.plantuml.com/plantuml"。いずれにせよダイアグラムのソースは
+  -- そこへ送られるので、承知の上で指定してください。
+  plantuml_server = "https://plantuml.example.com/plantuml",
+}
+```
+
+サーバを使う場合は `curl` も必要です。描画したダイアグラムはソースをキーにして `stdpath("cache")/md-render/plantuml` にキャッシュされるので、送信は 1 回だけです。
 
 </details>
 
