@@ -617,6 +617,17 @@ function M.announce_repaint(source)
   })
 end
 
+--- Whether a placement's image still has to be produced — rendered from its
+--- source or downloaded — before there is a file to transmit.
+---
+--- These are the placements that reach `process_placement` without a `path`,
+--- and the reason the retry in `place_images` cannot be keyed on `path` alone.
+---@param placement MdRender.ImagePlacement
+---@return boolean
+local function has_async_source(placement)
+  return placement.mermaid_source ~= nil or placement.src_url ~= nil
+end
+
 ---@param win integer
 ---@param content MdRender.Content
 ---@param ns integer?
@@ -714,6 +725,13 @@ function M.setup_images(win, content, ns, opts)
         and placement_near_viewport(placement)
       then
         placement._retries = (placement._retries or 0) + 1
+        process_placement(placement)
+      elseif has_async_source(placement) and not placement._async_started and placement_near_viewport(placement) then
+        -- A Mermaid diagram or a remote image that was off-screen when the
+        -- window opened has no `path` yet, so the branch above can never pick
+        -- it up and it would sit on its placeholder forever. Scrolling it into
+        -- view is what asks for it — the same laziness static images get,
+        -- rather than rendering and downloading everything up front.
         process_placement(placement)
       end
     end
@@ -1085,6 +1103,11 @@ function M.setup_images(win, content, ns, opts)
       end
     end
 
+    -- Remember that the render or the download was asked for. `place_images`
+    -- runs on every scroll, and without this it would ask again — a second
+    -- mmdc, a second curl — for as long as the first one is in flight.
+    if not placement.path then placement._async_started = true end
+
     if placement.path then
       on_path_ready(placement.path)
     elseif placement.mermaid_source then
@@ -1276,7 +1299,7 @@ function M.update_images(state, win, content)
         -- New image: transmit, clear placeholder, and register in state
         state.process_placement(placement)
       end
-    elseif placement.mermaid_source or placement.src_url then
+    elseif has_async_source(placement) then
       state.process_placement(placement)
     end
   end

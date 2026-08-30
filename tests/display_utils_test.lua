@@ -150,5 +150,94 @@ test("build_footer_chunks clamps an out-of-range line", function()
   assert_eq(footer_text(chunks), " 40/40  ━━━━━━━━━━ ", "line beyond total clamps to total")
 end)
 
+-- ============================================================================
+-- setup_images: off-screen placements that have to be produced first
+-- ============================================================================
+
+--- Drive `setup_images` with one Mermaid placement on `line`, and report how
+--- many times the render was asked for after each step.
+---@param line integer 0-indexed buffer line to put the diagram on
+---@return { renders: integer, scroll: fun(topline: integer), settle: fun() }
+local function mermaid_harness(line)
+  local image = require "md-render.image"
+  local saved = {
+    supports_kitty = image.supports_kitty,
+    clear_all = image.clear_all,
+    render_mermaid_async = image.render_mermaid_async,
+  }
+  local calls = { renders = 0 }
+  image.supports_kitty = function()
+    return true
+  end
+  image.clear_all = function() end
+  -- Never answers: the placement stays pending, which is what makes a second
+  -- request observable.
+  image.render_mermaid_async = function()
+    calls.renders = calls.renders + 1
+  end
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  local lines = {}
+  for i = 1, line + 40 do
+    lines[i] = "line " .. i
+  end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  local win = vim.api.nvim_get_current_win()
+  local prev_buf = vim.api.nvim_win_get_buf(win)
+  vim.api.nvim_win_set_buf(win, buf)
+
+  local content = {
+    image_placements = {
+      { line = line, col = 0, rows = 5, cols = 20, mermaid_source = "graph LR\n  A --> B" },
+    },
+  }
+  local state = display_utils.setup_images(win, content, nil)
+
+  calls.settle = function()
+    -- `process_one` walks the placements over scheduled steps; the scroll path
+    -- then waits out the 50 ms redraw debounce.
+    vim.wait(200, function()
+      return false
+    end, 10)
+  end
+  calls.scroll = function(topline)
+    vim.api.nvim_win_call(win, function()
+      vim.fn.winrestview { topline = topline, lnum = topline }
+    end)
+    vim.api.nvim_exec_autocmds("WinScrolled", { modeline = false, pattern = tostring(win) })
+    calls.settle()
+  end
+  calls.finish = function()
+    display_utils.cleanup_images(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+    for name, fn in pairs(saved) do
+      image[name] = fn
+    end
+  end
+  return calls
+end
+
+test("setup_images renders an on-screen diagram straight away", function()
+  local h = mermaid_harness(0)
+  h.settle()
+  assert_eq(h.renders, 1, "a diagram in the viewport is rendered on the first pass")
+  h.finish()
+end)
+
+test("setup_images renders an off-screen diagram once it is scrolled to", function()
+  local h = mermaid_harness(400)
+  h.settle()
+  assert_eq(h.renders, 0, "a diagram far below the viewport is left alone at first")
+
+  h.scroll(395)
+  assert_eq(h.renders, 1, "scrolling to it asks for the render")
+
+  -- The retry runs on every scroll, and the render has not answered yet.
+  h.scroll(396)
+  assert_eq(h.renders, 1, "a render already in flight is not asked for twice")
+  h.finish()
+end)
+
 print(string.format("display_utils_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
