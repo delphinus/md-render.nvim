@@ -159,6 +159,48 @@ function M.get_cell_size()
 end
 
 -- ============================================================================
+-- Work already under way
+-- ============================================================================
+
+--- Renders and downloads in flight, keyed by the file they will produce.
+---
+--- The same image is asked for again long before the first request has
+--- answered. Rebuilding the content is what does it, and that happens for
+--- reasons that have nothing to do with the image: a resize reflows the text
+--- (`WinResized` → live rebuild), a fold or an expandable region toggles, and
+--- every burst of typing behind the live update in a split does too. Each ask
+--- used to start its own work — another JVM for a PlantUML diagram, another
+--- browser for a Mermaid one — and for a download, another curl writing over
+--- the file the first curl had not finished writing.
+---@type table<string, (fun(path: string?))[]>
+local _in_flight = {}
+
+--- Wait on the work already producing `key`, or claim it for this caller.
+---@param key string the file the work will produce
+---@param callback fun(path: string?)
+---@return boolean joined true when somebody is already on it and `callback` was queued
+local function join_work(key, callback)
+  local waiting = _in_flight[key]
+  if waiting then
+    table.insert(waiting, callback)
+    return true
+  end
+  _in_flight[key] = {}
+  return false
+end
+
+--- Hand the result to everyone who joined while the work was running.
+---@param key string
+---@param path string?
+local function finish_work(key, path)
+  local waiting = _in_flight[key]
+  _in_flight[key] = nil
+  for _, cb in ipairs(waiting or {}) do
+    cb(path)
+  end
+end
+
+-- ============================================================================
 -- Image dimension detection from file headers
 -- ============================================================================
 
@@ -503,10 +545,16 @@ function M.render_mermaid_async(source, callback)
     return
   end
 
+  if join_work(cache_path, callback) then return end
+  local function done(path)
+    callback(path)
+    finish_work(cache_path, path)
+  end
+
   local tmp_input = vim.fn.tempname() .. ".mmd"
   local f = io.open(tmp_input, "w")
   if not f then
-    callback(nil)
+    done(nil)
     return
   end
   f:write(source)
@@ -518,9 +566,9 @@ function M.render_mermaid_async(source, callback)
     vim.schedule(function()
       os.remove(tmp_input)
       if vim.fn.filereadable(cache_path) == 1 then
-        callback(cache_path)
+        done(cache_path)
       else
-        callback(nil)
+        done(nil)
       end
     end)
   end)
@@ -646,9 +694,15 @@ function M.render_plantuml_async(source, callback)
     return
   end
 
+  if join_work(cache_path, callback) then return end
+  local function done(path)
+    callback(path)
+    finish_work(cache_path, path)
+  end
+
   local cmd_prefix = find_plantuml()
   if not cmd_prefix then
-    render_plantuml_remote_async(source, cache_path, callback)
+    render_plantuml_remote_async(source, cache_path, done)
     return
   end
 
@@ -663,9 +717,9 @@ function M.render_plantuml_async(source, callback)
         end
       end
       if vim.fn.filereadable(cache_path) == 1 then
-        callback(cache_path)
+        done(cache_path)
       else
-        render_plantuml_remote_async(source, cache_path, callback)
+        render_plantuml_remote_async(source, cache_path, done)
       end
     end)
   end)
@@ -979,14 +1033,20 @@ function M.download_async(url, callback)
 
   local cache_path = url_to_cache_path(url)
 
+  if join_work(cache_path, callback) then return end
+  local function done(path)
+    callback(path)
+    finish_work(cache_path, path)
+  end
+
   -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
   if _custom_download_fn then
     local handled = _custom_download_fn(url, cache_path, function(ok)
       vim.schedule(function()
         if ok then
-          finalize_download(url, cache_path, callback)
+          finalize_download(url, cache_path, done)
         else
-          callback(nil)
+          done(nil)
         end
       end)
     end)
@@ -1000,10 +1060,10 @@ function M.download_async(url, callback)
     function(result)
       vim.schedule(function()
         if result.code == 0 then
-          finalize_download(url, cache_path, callback)
+          finalize_download(url, cache_path, done)
         else
           os.remove(cache_path)
-          callback(nil)
+          done(nil)
         end
       end)
     end
@@ -1037,16 +1097,22 @@ function M.download_video_async(url, callback)
 
   local cache_path = url_to_cache_path(url)
 
+  if join_work(cache_path, callback) then return end
+  local function done(path)
+    callback(path)
+    finish_work(cache_path, path)
+  end
+
   -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
   if _custom_download_fn then
     local handled = _custom_download_fn(url, cache_path, function(ok)
       vim.schedule(function()
         if ok and vim.fn.filereadable(cache_path) == 1 then
           _url_cache[url] = cache_path
-          callback(cache_path)
+          done(cache_path)
         else
           os.remove(cache_path)
-          callback(nil)
+          done(nil)
         end
       end)
     end)
@@ -1061,10 +1127,10 @@ function M.download_video_async(url, callback)
       vim.schedule(function()
         if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
           _url_cache[url] = cache_path
-          callback(cache_path)
+          done(cache_path)
         else
           os.remove(cache_path)
-          callback(nil)
+          done(nil)
         end
       end)
     end

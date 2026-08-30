@@ -861,8 +861,63 @@ test("frame extract cmd: no -vsync / -fps_mode", function()
 end)
 
 -- ============================================================================
--- Summary
+-- One process per file, however many times it is asked for
 -- ============================================================================
+
+--- Stand in for `vim.system`, recording each spawn and handing back the
+--- completion callback so the test decides when the work finishes.
+---@return { spawns: integer, finish: fun(code: integer) }
+local function stub_vim_system()
+  local rec = { spawns = 0 }
+  local pending = {}
+  local real = vim.system
+  vim.system = function(_, _, on_exit)
+    rec.spawns = rec.spawns + 1
+    table.insert(pending, on_exit)
+    return { pid = 0 }
+  end
+  rec.finish = function(code)
+    local queued = pending
+    pending = {}
+    for _, on_exit in ipairs(queued) do
+      on_exit { code = code, stdout = "", stderr = "" }
+    end
+    vim.wait(100, function()
+      return false
+    end, 10)
+  end
+  rec.restore = function()
+    vim.system = real
+  end
+  return rec
+end
+
+test("download_async: asking for the same URL twice runs one curl", function()
+  local sys = stub_vim_system()
+  local url = "https://example.invalid/md-render-test-dedupe.png"
+  local answers = {}
+
+  image.download_async(url, function(path)
+    table.insert(answers, path or false)
+  end)
+  image.download_async(url, function(path)
+    table.insert(answers, path or false)
+  end)
+  assert_eq(sys.spawns, 1, "the second request joins the first instead of spawning another curl")
+  assert_eq(#answers, 0, "and nothing has answered yet")
+
+  -- Fail the download: the file never appears, so both callers get nil, which
+  -- is what proves the second one was queued rather than dropped.
+  sys.finish(1)
+  assert_eq(#answers, 2, "both callers are answered when the one download finishes")
+  assert_eq(answers, { false, false }, "both get the same result")
+
+  -- The key is released, so a later attempt is allowed to try again.
+  image.download_async(url, function() end)
+  assert_eq(sys.spawns, 2, "a request after the first finished starts fresh work")
+  sys.finish(1)
+  sys.restore()
+end)
 
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
