@@ -773,5 +773,53 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 23: a heading that wraps keeps the icon's padding.
+--
+-- Wrapping reassembles segments with one space between them, so the second
+-- cell `heading_icon_prefix` puts after the glyph used to disappear as soon as
+-- a heading was long enough to wrap. Plain, that left the heading a column
+-- left of every heading that fitted; scaled, the icon's own two-cell run then
+-- ended exactly where the text began and the gap between them vanished.
+do
+  local indent = "  "
+  local long = "## Headings have a size now and this one is long enough to wrap"
+  local prefix = markdown.heading_icon_prefix(2)
+
+  -- Plain first: the width is restored whether or not anything scales it.
+  text_size.setup { enabled = false }
+  local plain = render({ long }, { max_width = 40, indent = indent })
+  assert_true(#plain.lines > 1, "the heading wraps at this width")
+  assert_eq(plain.lines[1]:sub(#indent + 1, #indent + #prefix), prefix, "plain: the icon keeps both of its cells")
+  -- The cell put back was held out of the wrap, so the line is no wider than
+  -- one that never lost it. (The plain path wraps the text alone, so the
+  -- indent sits outside the width it was given — as it always has.)
+  assert_true(
+    vim.api.nvim_strwidth(plain.lines[1]) <= vim.api.nvim_strwidth(indent) + 40,
+    "plain: and the cell put back was reserved, so the line is no wider for it"
+  )
+  local hl = plain.highlights[1]
+  assert_eq(hl.line, 0, "plain: the heading highlight is on the first line")
+  assert_eq(hl.groups[1].col, #indent, "plain: it still starts at the icon")
+  assert_eq(hl.groups[1].end_col, #plain.lines[1], "plain: and grew with the line")
+
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render({ long }, { max_width = 40, indent = indent })
+    local p = out.text_placements[1]
+    assert_true(#out.text_placements > 1, "scaled: the heading wraps into several placements")
+    assert_eq(out.lines[1]:sub(#indent + 1, #indent + #prefix), prefix, "scaled: the icon keeps both of its cells")
+    assert_eq(p.icon_col, #indent, "scaled: the icon run starts where the indent ends")
+    assert_eq(p.col, #indent + #prefix, "scaled: and the text run after the whole prefix")
+    -- Same gap Test 17 asserts for a heading that did not wrap: the icon's
+    -- block is `scale` cells wide, and one cell is left between the two.
+    assert_eq(vim.api.nvim_strwidth(prefix) - p.scale, 1, "scaled: one cell is left between the two blocks")
+    assert_true(
+      vim.api.nvim_strwidth(indent) + vim.api.nvim_strwidth(prefix) + p.width <= 40,
+      "scaled: the painted runs still fit beside the restored padding"
+    )
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

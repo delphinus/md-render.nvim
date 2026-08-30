@@ -550,18 +550,39 @@ end
 --- than leaving it at plain size.
 local MIN_SCALED_HEADING_WIDTH = 12
 
+--- The heading level a source line carries, or nil when it is not a heading.
+---@param source_text string raw source line (still carrying the `#` markers)
+---@return integer?
+local function heading_level_of(source_text)
+  local markers = source_text:match "^(#+)%s"
+  return markers and math.min(#markers, 6) or nil
+end
+
+--- How many cells of the level icon's padding wrapping would eat.
+---
+--- `heading_icon_prefix` puts the glyph in a two-cell box and one space after
+--- it, but `wrap_words` reassembles segments with a single space between them,
+--- so a heading long enough to wrap comes back with one space where it should
+--- have two. `restore_heading_icon_pad` puts them back; this is what the wrap
+--- has to hold in reserve so that the restored line is not a cell wider than
+--- the width it was wrapped for.
+---@param level integer 1-6
+---@return integer
+local function heading_icon_pad_loss(level)
+  local markdown = require "md-render.markdown"
+  return #markdown.heading_icon_prefix(level) - #markdown.heading_icon(level) - 1
+end
+
 --- How to draw a source line's heading, and the width its text has to wrap to
 --- in order to fit once scaled. Returns nil when the heading must stay plain.
 ---@param source_text string raw source line (still carrying the `#` markers)
 ---@param indent string
 ---@param max_width integer
 ---@return MdRender.TextSize.Spec? spec
----@return integer? level
 ---@return integer? content_width width for the text alone, indent excluded
 local function heading_scale_plan(source_text, indent, max_width)
-  local markers = source_text:match "^(#+)%s"
-  if not markers then return nil end
-  local level = math.min(#markers, 6)
+  local level = heading_level_of(source_text)
+  if not level then return nil end
 
   local spec = require("md-render.text_size").spec_for(level)
   if not spec then return nil end
@@ -574,7 +595,56 @@ local function heading_scale_plan(source_text, indent, max_width)
   local avail = math.floor((max_width - vim.api.nvim_strwidth(indent) - spec.s) / spec.ratio)
   if avail < MIN_SCALED_HEADING_WIDTH then return nil end
 
-  return spec, level, avail
+  return spec, avail
+end
+
+--- Put back the icon padding that wrapping collapsed on a heading's first line.
+---
+--- The padding is what gives the one-cell Nerd Font glyph its two cells, so a
+--- heading that lost it sits a column left of every heading that did not. Under
+--- `md-render.text_size` it is worse than uneven: the icon is painted as a run
+--- two cells wide, and with only one space after the glyph that run ends where
+--- the text begins, leaving no gap between them at all.
+---
+--- Restoring it here rather than teaching `wrap_words` to keep runs of spaces
+--- keeps the change to the one place it is known to be wrong. Collapsing is
+--- what prose wants everywhere else, and the icon is chrome this module added,
+--- not text the document asked for.
+---@param line integer 0-indexed rendered line the heading starts on
+---@param indent string
+---@param level integer 1-6
+function ContentBuilder:restore_heading_icon_pad(line, indent, level)
+  local markdown = require "md-render.markdown"
+  local text = self.lines[line + 1]
+  if not text then return end
+
+  local icon = markdown.heading_icon(level)
+  local icon_end = #indent + #icon
+  if text:sub(#indent + 1, icon_end) ~= icon then return end
+
+  local spaces = text:match("^ *", icon_end + 1) or ""
+  local at = icon_end + #spaces
+  local pad = (#markdown.heading_icon_prefix(level) - #icon) - #spaces
+  if pad <= 0 then return end
+
+  self.lines[line + 1] = text:sub(1, at) .. string.rep(" ", pad) .. text:sub(at + 1)
+  -- Everything at or past the insertion point moves right by that much. The
+  -- heading's own highlight starts where the indent ends and runs to the end of
+  -- the line, so it keeps the icon and grows to cover the new cells.
+  for _, entry in ipairs(self.highlights) do
+    if entry.line == line then
+      for _, group in ipairs(entry.groups) do
+        if group.col >= at then group.col = group.col + pad end
+        if group.end_col >= at then group.end_col = group.end_col + pad end
+      end
+    end
+  end
+  for _, link in ipairs(self.link_metadata) do
+    if link.line == line then
+      if link.col_start >= at then link.col_start = link.col_start + pad end
+      if link.col_end >= at then link.col_end = link.col_end + pad end
+    end
+  end
 end
 
 --- Register one scaled-text placement per rendered line of a heading.
@@ -600,8 +670,10 @@ function ContentBuilder:add_heading_text_scale(heading_line, indent, spec, level
   -- cell to overflow into, so the glyph gets clipped to its box and `󰉬` renders
   -- as a bare "H".
   -- Match the glyph plus whatever spacing follows rather than the exact
-  -- prefix: wrapping collapses runs of spaces, so a wrapped heading keeps one
-  -- space after the icon where an unwrapped one keeps two.
+  -- prefix. `restore_heading_icon_pad` has already put back the space wrapping
+  -- collapsed, so the two agree — but this runs over lines the builder wrote,
+  -- and a placement pointed a column off would paint the heading over its own
+  -- icon.
   local icon_pat = "^" .. vim.pesc(require("md-render.markdown").heading_icon(level)) .. "%s*"
 
   local segments = (#self.lines - heading_line) / scale
@@ -672,10 +744,16 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
   -- A scaled heading wraps at 1/ratio of the usual width and reserves
   -- `s - 1` rows under each of its lines for the taller glyphs.
   local spec, level, content_width
-  if heading_content and self.text_scale then
-    spec, level, content_width = heading_scale_plan(text, indent, max_width)
+  if heading_content then
+    level = heading_level_of(text)
+    if self.text_scale then
+      spec, content_width = heading_scale_plan(text, indent, max_width)
+    end
   end
   local line_gap = spec and (spec.s - 1) or 0
+  -- Held back from the wrap and given back afterwards; see
+  -- `heading_icon_pad_loss`.
+  local icon_pad_loss = level and heading_icon_pad_loss(level) or 0
 
   -- `add_wrapped_markdown` sizes the text alone while the test below sizes
   -- indent + text. Only the scaled path needs the two to agree exactly, so the
@@ -691,11 +769,12 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
       md_highlights,
       md_links,
       indent,
-      wrap_max,
+      wrap_max - icon_pad_loss,
       quote_prefix,
       list_marker,
       line_gap
     )
+    if level then self:restore_heading_icon_pad(lines_before_fn, indent, level) end
   else
     self:add_simple_markdown(rendered_text, md_highlights, md_links, indent)
     for _ = 1, line_gap do

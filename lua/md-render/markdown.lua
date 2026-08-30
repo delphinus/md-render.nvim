@@ -378,8 +378,9 @@ end
 
 --- The icon and spacing a rendered heading line starts with, e.g. `"󰉬  "`.
 --- Exposed so callers can tell the icon apart from the heading text without
---- re-deriving the padding rules. Note that wrapping collapses runs of spaces,
---- so a wrapped heading line may carry fewer spaces than this returns.
+--- re-deriving the padding rules. Wrapping collapses runs of spaces, so a
+--- heading that wraps loses one of them and `ContentBuilder` puts it back —
+--- see `restore_heading_icon_pad`.
 ---@param level integer 1-6
 ---@return string
 function Markdown.heading_icon_prefix(level)
