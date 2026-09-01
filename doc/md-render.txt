@@ -11,6 +11,7 @@ Installation						|md-render-installation|
 Mappings						    |md-render-mappings|
 Commands						    |md-render-commands|
   Scaled headings (experimental)			 |md-render-text-size|
+Presenter mode						  |md-render-presenter|
 Telescope Integration					   |md-render-telescope|
 Snacks.nvim Integration					      |md-render-snacks|
 Usage							       |md-render-usage|
@@ -141,6 +142,11 @@ Map them yourself: >lua
 <Plug>(md-render-split) ~
 	Open a split window showing the source and rendered views of the
 	current Markdown buffer.  See |:MdRender-split|.
+
+						      *<Plug>(md-render-present)*
+<Plug>(md-render-present) ~
+	Enter the full-screen slideshow presenter for the current buffer.
+	See |:MdRender-present|.
 
 							*<Plug>(md-render-demo)*
 <Plug>(md-render-demo) ~
@@ -368,6 +374,9 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	Because the extra rows a scaled heading needs are reserved while the
 	content is built, switching this rebuilds every preview currently on
 	screen.
+						    *:MdRender-present*
+:MdRender present ~
+	Full-screen slideshow presenter.  See |md-render-presenter|.
 
 							      *:MdRender-demo*
 :MdRender demo ~
@@ -669,6 +678,99 @@ The preview function handles three kinds of files:
 
 For grep-based pickers the preview automatically scrolls to the matched
 source line.
+
+==============================================================================
+PRESENTER MODE						  *md-render-presenter*
+
+The presenter mode turns a Markdown buffer into a full-screen slideshow.
+`---` (a thematic break on its own line) separates slides; each slide fills
+the screen.  Mermaid diagrams render inline as images.
+
+ENTRY POINT ~
+
+The entry point is |:MdRender-present|, also accessible via
+|<Plug>(md-render-present)|.
+
+KEYS IN PRESENTER MODE ~
+
+The following keys are available inside the presenter:
+
+  `n` / `→` / `<Space>` / `<PageDown>`
+		Next slide
+
+  `p` / `←` / `<PageUp>`
+		Previous slide
+
+  `gg` / `G`
+		First / last slide
+
+  `L`	Cycle the layout of the diagram on the current slide (fit → left →
+	right → full).  On a slide with multiple diagrams, the first one is
+	affected.  The layout is recorded in the layout cache, not in your
+	file (see |md-render-presenter-layout-cache|).
+
+  `<` / `>`
+		Narrow / widen the split in `left` or `right` layout mode, by 5%
+		per keystroke.  Clamped to 20–80% to keep both the diagram and
+		text readable.  The width goes to the layout cache.
+
+  `w`	Write the current slide's layout into the document as a hidden
+	link-label comment (see |md-render-presenter-metadata|), and drop the
+	corresponding cache entry.  This is the only presenter key that edits
+	your file.  The buffer is left modified for you to |:write|.
+
+  `q` / `<Esc>` / `<C-c>`
+		Exit the presenter and restore the source buffer.
+
+SLIDE METADATA (HIDDEN COMMENTS)		*md-render-presenter-metadata*
+
+Slide metadata lives in link-label comments (in Markdown syntax,
+`[//]: # (...)`) that render as nothing in any Markdown viewer:
+
+```
+[//]: # (diagram: left:40)
+```​`​`​`mermaid
+flowchart LR
+  A --> B
+```​`​`​`
+```
+
+The comment `[//]: # (diagram: <layout>)` appears on the line *above* a
+mermaid fence and specifies that diagram's layout.
+
+Diagram layout formats: ~
+
+  `full`        The diagram fills the slide; any other text on the slide
+                renders above it
+  `fit`         Inline, coexists with text on the same slide
+  `left[:N]`    Diagram fills the left N% (default 50); text takes the right
+  `right[:N]`   Diagram fills the right N% (default 50); text takes the left
+
+A comment is only ever written by the `w` key.  `L`, `<` and `>` go to the
+layout cache instead; see |md-render-presenter-layout-cache|.
+
+LAYOUT CACHE				*md-render-presenter-layout-cache*
+
+md-render renders into a separate, read-only buffer and never mutates the one
+you are editing.  The presenter holds to that: `L`, `<` and `>` are pressed
+mid-talk, and writing a comment into the deck at that moment would leave it
+modified-unsaved when you least want to deal with it.
+
+Those keys record the layout in: >
+
+	stdpath("cache")/md-render/presenter/<hash of the file path>.json
+<
+Entries are keyed by a hash of the diagram's own source text, so a layout
+survives the slide being reordered or the prose around it being rewritten.
+Editing the diagram itself is what drops its layout.  Entries for diagrams the
+deck no longer contains are pruned when the presenter opens.
+
+A cached layout takes precedence over a `[//]: # (diagram: ...)` comment: the
+comment is the deck's committed default, and the cache is your working
+override.  Delete the cache file to return the deck to what the document says.
+
+A buffer with no file on disk has nothing to key a cache on, so its layouts
+last only for that presenter session.
 
 ==============================================================================
 USAGE							       *md-render-usage*
