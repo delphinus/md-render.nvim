@@ -821,5 +821,81 @@ do
   text_size.setup { enabled = false }
 end
 
+-- Test 24: an emoji goes out in a run of its own. A run with `w > 0` is one
+-- multicell character to Kitty and a multicell is shaped with a single font, so
+-- an emoji sharing a run with text takes the whole run down with it — measured
+-- on Kitty 0.48: every cell of the run becomes a missing-glyph box when the
+-- emoji is in the middle of it, and the rest of the text is dropped when the
+-- emoji is first. On its own it renders correctly.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    -- One of every shape a single emoji grapheme comes in: a plain pictograph,
+    -- one that needs U+FE0F to be an emoji at all, a keycap, a flag, a skin
+    -- tone modifier and a ZWJ sequence.
+    local emoji = { "🚀", "🗒️", "1️⃣", "🇯🇵", "👋🏻", "👨‍💻" }
+    for level = 2, 6 do
+      local spec = text_size.spec_for(level)
+      for _, e in ipairs(emoji) do
+        local text = "あいうえお " .. e .. " kk:mm"
+        local runs, width = text_size.split_run(text, spec)
+        local joined, sum, own = {}, 0, 0
+        for _, run in ipairs(runs) do
+          table.insert(joined, run.text)
+          sum = sum + run.w * spec.s
+          if run.text:find(e, 1, true) then
+            own = own + 1
+            assert_eq(run.text, e, string.format("level %d: %s is alone in its run", level, e))
+            assert_true(run.w >= 1 and run.w <= 7, string.format("level %d: %s asks for a legal width", level, e))
+          end
+        end
+        assert_eq(own, 1, string.format("level %d: %s ends up in exactly one run", level, e))
+        assert_eq(table.concat(joined), text, string.format("level %d: %s splitting loses no text", level, e))
+        assert_eq(width, sum, string.format("level %d: %s reported width is the sum of the runs", level, e))
+        -- Isolating costs cells but must never lose any: the run has to be at
+        -- least as wide as the emoji is at plain size, or Kitty clips it.
+        assert_true(
+          width >= vim.api.nvim_strwidth(text) * spec.ratio - 0.001,
+          string.format("level %d: %s never narrower than the exact size", level, e)
+        )
+      end
+    end
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 25: only emoji are isolated. Every character pulled out of the flow
+-- pays for its own rounding, so a symbol the text font draws — an arrow, a
+-- star, CJK — has to stay in the run it belongs to.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local spec = text_size.spec_for(4)
+    for _, text in ipairs { "あいうえお", "abcdefghij", "★ → ± × あ" } do
+      local plain = text_size.split_run(text, spec)
+      local emoji = text_size.split_run(text .. "🚀", spec)
+      assert_eq(#emoji, #plain + 1, string.format("%q gains exactly one run for the emoji", text))
+    end
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- Test 26: `#` is exempt. It scales with `s` alone, so its runs carry `w = 0`
+-- and the terminal splits the text into cells itself, choosing a font per cell
+-- — which is why an emoji is fine there and must not cost a run.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local spec = text_size.spec_for(1)
+    local text = "Heading 🚀 with an emoji"
+    local runs, width = text_size.split_run(text, spec)
+    assert_eq(#runs, 1, "h1 stays a single run even with an emoji in it")
+    assert_eq(runs[1].text, text, "and it carries the whole heading")
+    assert_eq(runs[1].w, 0, "with the width left to the terminal")
+    assert_eq(width, vim.api.nvim_strwidth(text) * spec.s, "h1 covers twice its plain width")
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

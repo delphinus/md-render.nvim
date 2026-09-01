@@ -428,6 +428,16 @@ about it, which drives most of the design:
   paints as a slightly wider word gap rather than as a hole in a word.  Text
   of one uniform character width — plain ASCII, or plain CJK — always lands
   exactly and never needs either.
+- An emoji goes out in a run of its own.  A run with `w=` set is a single
+  multicell character to Kitty, and a multicell is shaped with one font, so
+  an emoji sharing a run with ordinary text takes the whole run down with it:
+  measured on Kitty 0.48, every cell of the run turns into a missing-glyph
+  box when the emoji sits in the middle of it, and the rest of the text is
+  dropped when the emoji comes first.  Alone in a run it renders correctly.
+  The cost is the rounding its own run carries, which shows up as slightly
+  wider gaps either side of the emoji, and a heading that no longer fits is
+  left plain.  `#` is exempt: it scales with `s=` alone, so its run carries
+  `w=0` and Kitty splits the text into cells and picks a font per cell.
 - Every level reserves a two-row block while only `#` fills it, so the rest
   are centered in theirs (`v=2`) rather than sitting against the top edge,
   which is the protocol's default.  At `######`, 1.17x in a block twice as

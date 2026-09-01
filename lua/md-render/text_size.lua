@@ -257,6 +257,100 @@ function M.spec_for(level)
   return spec
 end
 
+-- ============================================================================
+-- Emoji isolation
+-- ============================================================================
+
+--- Code point ranges whose glyphs the terminal takes from its emoji font.
+---
+--- `Extended_Pictographic` from Unicode's `emoji-data.txt` (17.0), flattened to
+--- `lo, hi, lo, hi, …` and searched by bisection. That property is the broadest
+--- of the emoji properties: it covers the pictographs that default to *text*
+--- presentation as well, and it reserves whole unassigned blocks for future
+--- emoji, so a new Unicode version cannot quietly reintroduce the bug below.
+---
+--- Widened by three things the property deliberately leaves out, each of which
+--- can be the only emoji-ish code point in its grapheme: the regional
+--- indicators a flag is spelled with (U+1F1E6 to U+1F1FF), the skin tone
+--- modifiers (U+1F3FB to U+1F3FF) and U+FE0F, which is what makes a keycap like
+--- `1\u{FE0F}\u{20E3}` an emoji. The first two abut a range that was already
+--- here and are folded into it, so only U+FE0F is an entry of its own.
+-- stylua: ignore
+local EMOJI_RANGES = {
+  0x00A9, 0x00A9, 0x00AE, 0x00AE, 0x203C, 0x203C, 0x2049, 0x2049,
+  0x2122, 0x2122, 0x2139, 0x2139, 0x2194, 0x2199, 0x21A9, 0x21AA,
+  0x231A, 0x231B, 0x2328, 0x2328, 0x23CF, 0x23CF, 0x23E9, 0x23F3,
+  0x23F8, 0x23FA, 0x24C2, 0x24C2, 0x25AA, 0x25AB, 0x25B6, 0x25B6,
+  0x25C0, 0x25C0, 0x25FB, 0x25FE, 0x2600, 0x2604, 0x260E, 0x260E,
+  0x2611, 0x2611, 0x2614, 0x2615, 0x2618, 0x2618, 0x261D, 0x261D,
+  0x2620, 0x2620, 0x2622, 0x2623, 0x2626, 0x2626, 0x262A, 0x262A,
+  0x262E, 0x262F, 0x2638, 0x263A, 0x2640, 0x2640, 0x2642, 0x2642,
+  0x2648, 0x2653, 0x265F, 0x2660, 0x2663, 0x2663, 0x2665, 0x2666,
+  0x2668, 0x2668, 0x267B, 0x267B, 0x267E, 0x267F, 0x2692, 0x2697,
+  0x2699, 0x2699, 0x269B, 0x269C, 0x26A0, 0x26A1, 0x26A7, 0x26A7,
+  0x26AA, 0x26AB, 0x26B0, 0x26B1, 0x26BD, 0x26BE, 0x26C4, 0x26C5,
+  0x26C8, 0x26C8, 0x26CE, 0x26CF, 0x26D1, 0x26D1, 0x26D3, 0x26D4,
+  0x26E9, 0x26EA, 0x26F0, 0x26F5, 0x26F7, 0x26FA, 0x26FD, 0x26FD,
+  0x2702, 0x2702, 0x2705, 0x2705, 0x2708, 0x270D, 0x270F, 0x270F,
+  0x2712, 0x2712, 0x2714, 0x2714, 0x2716, 0x2716, 0x271D, 0x271D,
+  0x2721, 0x2721, 0x2728, 0x2728, 0x2733, 0x2734, 0x2744, 0x2744,
+  0x2747, 0x2747, 0x274C, 0x274C, 0x274E, 0x274E, 0x2753, 0x2755,
+  0x2757, 0x2757, 0x2763, 0x2764, 0x2795, 0x2797, 0x27A1, 0x27A1,
+  0x27B0, 0x27B0, 0x27BF, 0x27BF, 0x2934, 0x2935, 0x2B05, 0x2B07,
+  0x2B1B, 0x2B1C, 0x2B50, 0x2B50, 0x2B55, 0x2B55, 0x3030, 0x3030,
+  0x303D, 0x303D, 0x3297, 0x3297, 0x3299, 0x3299, 0xFE0F, 0xFE0F,
+  0x1F004, 0x1F004, 0x1F02C, 0x1F02F, 0x1F094, 0x1F09F, 0x1F0AF, 0x1F0B0,
+  0x1F0C0, 0x1F0C0, 0x1F0CF, 0x1F0D0, 0x1F0F6, 0x1F0FF, 0x1F170, 0x1F171,
+  0x1F17E, 0x1F17F, 0x1F18E, 0x1F18E, 0x1F191, 0x1F19A, 0x1F1AE, 0x1F1FF,
+  0x1F201, 0x1F20F, 0x1F21A, 0x1F21A, 0x1F22F, 0x1F22F, 0x1F232, 0x1F23A,
+  0x1F23C, 0x1F23F, 0x1F249, 0x1F25F, 0x1F266, 0x1F321, 0x1F324, 0x1F393,
+  0x1F396, 0x1F397, 0x1F399, 0x1F39B, 0x1F39E, 0x1F3F0, 0x1F3F3, 0x1F3F5,
+  0x1F3F7, 0x1F4FD, 0x1F4FF, 0x1F53D, 0x1F549, 0x1F54E, 0x1F550, 0x1F567,
+  0x1F56F, 0x1F570, 0x1F573, 0x1F57A, 0x1F587, 0x1F587, 0x1F58A, 0x1F58D,
+  0x1F590, 0x1F590, 0x1F595, 0x1F596, 0x1F5A4, 0x1F5A5, 0x1F5A8, 0x1F5A8,
+  0x1F5B1, 0x1F5B2, 0x1F5BC, 0x1F5BC, 0x1F5C2, 0x1F5C4, 0x1F5D1, 0x1F5D3,
+  0x1F5DC, 0x1F5DE, 0x1F5E1, 0x1F5E1, 0x1F5E3, 0x1F5E3, 0x1F5E8, 0x1F5E8,
+  0x1F5EF, 0x1F5EF, 0x1F5F3, 0x1F5F3, 0x1F5FA, 0x1F64F, 0x1F680, 0x1F6C5,
+  0x1F6CB, 0x1F6D2, 0x1F6D5, 0x1F6E5, 0x1F6E9, 0x1F6E9, 0x1F6EB, 0x1F6F0,
+  0x1F6F3, 0x1F6FF, 0x1F7DA, 0x1F7FF, 0x1F80C, 0x1F80F, 0x1F848, 0x1F84F,
+  0x1F85A, 0x1F85F, 0x1F888, 0x1F88F, 0x1F8AE, 0x1F8AF, 0x1F8BC, 0x1F8BF,
+  0x1F8C2, 0x1F8CF, 0x1F8D9, 0x1F8FF, 0x1F90C, 0x1F93A, 0x1F93C, 0x1F945,
+  0x1F947, 0x1F9FF, 0x1FA58, 0x1FA5F, 0x1FA6E, 0x1FAFF, 0x1FC00, 0x1FFFD,
+}
+
+--- True when the terminal will draw this grapheme from its emoji font, and so
+--- when it has to go out as an OSC 66 run of its own.
+---
+--- A run with `w > 0` becomes a single multicell character, and Kitty shapes a
+--- multicell with one font: an emoji sharing a run with ordinary text makes the
+--- whole run fail. Measured on Kitty 0.48 — an emoji in the middle of a run
+--- turns every one of the run's cells into a missing-glyph box, and one at the
+--- start drops the rest of the run's text. Alone in a run it renders correctly,
+--- which is the whole point of this predicate.
+---
+--- The `w = 0` form is unaffected, so `#` needs none of this: there the
+--- terminal splits the text into cells itself and picks a font per cell.
+---@param ch string one grapheme, as `split(text, "\\zs")` yields it
+---@return boolean
+local function needs_own_run(ch)
+  -- One byte is ASCII, and the lowest range here starts at U+00A9.
+  if #ch == 1 then return false end
+  for _, cp in ipairs(vim.fn.str2list(ch)) do
+    local lo, hi = 1, #EMOJI_RANGES / 2
+    while lo <= hi do
+      local mid = math.floor((lo + hi) / 2)
+      if cp < EMOJI_RANGES[mid * 2 - 1] then
+        hi = mid - 1
+      elseif cp > EMOJI_RANGES[mid * 2] then
+        lo = mid + 1
+      else
+        return true
+      end
+    end
+  end
+  return false
+end
+
 --- Split a heading's text into the runs one OSC 66 escape code may carry, and
 --- report how many cells the painted result covers.
 ---
@@ -281,6 +375,13 @@ end
 --- Hiding the slack costs cells, because a run cut short of the chunk carries
 --- its own rounding. `budget` lets the caller say how many cells are actually
 --- free; over that, the pretty split is dropped for the compact one.
+---
+--- An emoji ends whatever run it would have joined and takes one of its own,
+--- because Kitty cannot render it alongside text — see `needs_own_run`. It
+--- carries its own rounding too, so a heading with emoji in it is wider than
+--- `strwidth * ratio` by more than the one block the rest of the module assumes;
+--- a heading that then no longer fits is left plain rather than clipped, which
+--- is what `visible_placements` already does for every other overflow.
 ---@param text string
 ---@param spec MdRender.TextSize.Spec
 ---@param budget? integer cells available for the painted runs
@@ -290,34 +391,45 @@ function M.split_run(text, spec, budget)
   if not spec.chunk then return { { text = text, w = 0 } }, vim.api.nvim_strwidth(text) * spec.s end
 
   local chars = vim.fn.split(text, "\\zs")
-  local widths = {}
+  local widths, alone = {}, {}
   for i, ch in ipairs(chars) do
     widths[i] = vim.api.nvim_strwidth(ch)
+    alone[i] = needs_own_run(ch)
+  end
+
+  --- The `w=` to ask for, given text `cw` cells wide at plain size.
+  local function width_of(cw)
+    return math.max(1, math.min(MAX_W, math.ceil(cw * spec.n / spec.d)))
   end
 
   local function split(hide_slack)
     local runs, cells = {}, 0
     local i = 1
     while i <= #chars do
-      -- Fill up to the chunk, remembering the last place a word ended.
-      local j, filled = i, 0
-      local space_end, space_w
-      while j <= #chars and filled + widths[j] <= spec.chunk do
-        filled = filled + widths[j]
-        if chars[j] == " " and chars[j + 1] ~= " " then
-          space_end, space_w = j, filled
+      local cut, cut_w
+      if alone[i] then
+        cut, cut_w = i, widths[i]
+      else
+        -- Fill up to the chunk, remembering the last place a word ended.
+        local j, filled = i, 0
+        local space_end, space_w
+        while j <= #chars and not alone[j] and filled + widths[j] <= spec.chunk do
+          filled = filled + widths[j]
+          if chars[j] == " " and chars[j + 1] ~= " " then
+            space_end, space_w = j, filled
+          end
+          j = j + 1
         end
-        j = j + 1
+
+        cut, cut_w = j - 1, filled
+        -- Slack past the end of the heading is invisible, so the final run keeps
+        -- whatever it filled.
+        if hide_slack and j <= #chars and (filled * spec.n) % spec.d ~= 0 and space_end then
+          cut, cut_w = space_end, space_w
+        end
       end
 
-      local cut, cut_w = j - 1, filled
-      -- Slack past the end of the heading is invisible, so the final run keeps
-      -- whatever it filled.
-      if hide_slack and j <= #chars and (filled * spec.n) % spec.d ~= 0 and space_end then
-        cut, cut_w = space_end, space_w
-      end
-
-      local w = math.max(1, math.min(MAX_W, math.ceil(cut_w * spec.n / spec.d)))
+      local w = width_of(cut_w)
       table.insert(runs, { text = table.concat(chars, "", i, cut), w = w })
       cells = cells + w
       i = cut + 1
