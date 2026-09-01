@@ -231,6 +231,8 @@ Headings wrap at `1 / size` of the usual width so that every level scales rather
 
 A fractionally scaled heading goes out as several runs, because each has to declare its width in whole cells while its text does not measure a whole number of them. That width is rounded up — Kitty drops characters that do not fit — and the runs are cut where the leftover cell disappears: at a boundary that comes out exact where there is one, and otherwise after a space, so the slack reads as a slightly wider word gap instead of a hole in a word.
 
+An emoji gets a run to itself. A run that declares a width is one multicell character to Kitty, and a multicell is shaped with a single font, so an emoji sharing a run with ordinary text takes the whole run down with it: measured on Kitty 0.48, every cell of the run turns into a missing-glyph box when the emoji sits in the middle of it, and the rest of the text is dropped when the emoji comes first. Alone in a run it renders correctly. The cost is the rounding that run carries of its own, which shows as slightly wider gaps either side of the emoji, and a heading that no longer fits is left plain. `#` is exempt: it scales with `s=` alone, so its run declares no width and Kitty splits the text into cells and picks a font per cell itself.
+
 The scaled text is written straight to the terminal, the same way inline images are, so Neovim knows nothing about it. The plain-size heading stays in the buffer underneath and the scaled text is painted over it — every terminal repaint degrades to the normal heading rather than to a blank line, and `y` / `/` / `:w` still see the real text.
 
 Known limitations:
