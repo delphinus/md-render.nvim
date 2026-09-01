@@ -631,7 +631,7 @@ end
 ---@param win integer
 ---@param content MdRender.Content
 ---@param ns integer?
----@param opts? { buf?: integer, build_content?: fun(): MdRender.Content, on_content_applied?: fun(content: MdRender.Content) }
+---@param opts? { buf?: integer, build_content?: fun(): MdRender.Content, on_content_applied?: fun(content: MdRender.Content), eager?: boolean }
 ---@return MdRender.ImageState?
 function M.setup_images(win, content, ns, opts)
   if not content.image_placements or #content.image_placements == 0 then return nil end
@@ -695,7 +695,15 @@ function M.setup_images(win, content, ns, opts)
   -- many images of which only a few are actually visible at once.
   local LAZY_PADDING = 10
 
+  -- Laziness is paid for by WinScrolled: whatever is skipped now is picked up
+  -- when the user scrolls to it. Callers with no scrolling to offer — the
+  -- presenter replaces the buffer wholesale to move between slides, and its
+  -- keys are bound to that, not to `<C-d>` — would strand an off-screen
+  -- placement on its placeholder for good, so they opt out.
+  local eager = opts ~= nil and opts.eager == true
+
   local function placement_near_viewport(placement)
+    if eager then return true end
     if not vim.api.nvim_win_is_valid(state.win) then return false end
     local wininfo = vim.fn.getwininfo(state.win)[1]
     if not wininfo then return false end
