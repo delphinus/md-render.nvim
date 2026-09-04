@@ -29,13 +29,26 @@ jobs:
       fail-fast: false
       matrix:
         ffmpeg:
-          # 6.x and 7.x come from a pinned old autobuild: BtbN drops branches
-          # from its rolling `latest` release once they go EOL, but release
-          # assets themselves persist, so these URLs stay valid.
+          # 6.x and 7.x come from pinned old autobuilds: BtbN drops branches
+          # from its rolling `latest` release once they go EOL.
+          #
+          # These pins expire. BtbN deletes whole autobuild releases, assets
+          # and all, keeping roughly the last two weeks of dailies plus a
+          # monthly snapshot going back about two years — so an EOL branch
+          # survives only as long as the newest snapshot that still carries
+          # it. Each URL below is the newest one that does, which is not the
+          # same release for both. When one 404s, re-pin it to the newest
+          # snapshot whose assets still list that branch:
+          #
+          #   gh api "repos/BtbN/FFmpeg-Builds/releases?per_page=100" \
+          #     -q '.[] | .tag_name + " " +
+          #         ([.assets[].name | select(test("linux64-gpl-6\\."))] | join(" "))'
+          #
+          # The scheduled run is what surfaces the expiry.
           - name: "6.1"
-            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2024-09-30-15-36/ffmpeg-n6.1.2-8-gf00f71f590-linux64-gpl-6.1.tar.xz
+            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2025-08-31-13-00/ffmpeg-n6.1.3-linux64-gpl-6.1.tar.xz
           - name: "7.1"
-            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2024-09-30-15-36/ffmpeg-n7.1-linux64-gpl-7.1.tar.xz
+            url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-01-31-12-57/ffmpeg-n7.1.3-35-g419cdf9dcc-linux64-gpl-7.1.tar.xz
           # 8.x, 9.x and master are rolling: the assets are rebuilt in place,
           # so the scheduled run picks up new point releases automatically.
           # This is the part that actually detects drift.
