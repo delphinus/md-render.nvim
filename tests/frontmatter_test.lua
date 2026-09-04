@@ -136,5 +136,37 @@ test("multiple overflowing entries get distinct block ids", function()
   assert_true(id1 < 0 and id2 < 0, "both block ids are negative")
 end)
 
+-- ----------------------------------------------------------------------
+-- Test 5: a fence carrying trailing whitespace still opens/closes the
+-- block. Without this the whole frontmatter falls through to the body,
+-- where the closing fence underlines the last property line as a setext
+-- heading.
+-- ----------------------------------------------------------------------
+test("fences tolerate trailing whitespace", function()
+  for _, fences in ipairs {
+    { open = "--- ", close = "---" },
+    { open = "---", close = "--- " },
+    { open = "---\t", close = "---  " },
+  } do
+    local lines = { fences.open, "k: v", fences.close, "", "body" }
+    local content = preview.build_content(lines, { max_width = 40 })
+    assert_eq(
+      content.lines[1],
+      "  Properties",
+      "'" .. fences.open .. "' / '" .. fences.close .. "' opens a Properties block"
+    )
+    assert_eq(content.lines[2], "  k: v", "the entry is rendered as a property")
+  end
+end)
+
+-- ----------------------------------------------------------------------
+-- Test 6: `----` is a thematic break, not a fence.
+-- ----------------------------------------------------------------------
+test("a four-dash rule is not a frontmatter fence", function()
+  local lines = { "----", "k: v", "----", "", "body" }
+  local content = preview.build_content(lines, { max_width = 40 })
+  assert_true(content.lines[1] ~= "  Properties", "no Properties block for a four-dash rule")
+end)
+
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then vim.cmd "cquit 1" end
