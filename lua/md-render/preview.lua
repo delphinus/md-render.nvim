@@ -82,12 +82,18 @@ MdPreview.build_content = function(lines, opts)
 
   local b = ContentBuilder.new()
 
-  -- Detect and extract frontmatter
+  -- Detect and extract frontmatter.
+  --
+  -- Both fences tolerate trailing whitespace: editors that rewrite the
+  -- frontmatter block (Obsidian's property editor among them) can leave a
+  -- space behind, and requiring a bare `---` would drop the whole block back
+  -- into the body. There it renders as a thematic break followed by a setext
+  -- heading, because the closing fence underlines the last property line.
   local body_start = 1
-  if lines[1] and lines[1]:match "^%-%-%-$" then
+  if lines[1] and lines[1]:match "^%-%-%-%s*$" then
     local frontmatter_lines = {}
     for i = 2, #lines do
-      if lines[i]:match "^%-%-%-$" then
+      if lines[i]:match "^%-%-%-%s*$" then
         body_start = i + 1
         break
       end
