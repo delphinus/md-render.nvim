@@ -1116,25 +1116,37 @@ local function list_content_column(line)
   return #ws + #marker + (#gap <= 4 and #gap or 1)
 end
 
---- Move indented blockquotes to column 0 and report the indent that was
---- taken off each line.
+--- Move the content of a block container to column 0 and report the indent
+--- that was taken off each line.
 ---
---- CommonMark allows up to three spaces of indentation in front of a `>`
---- (four is an indented code block), and a blockquote nested in a list item
---- carries the item's content column on top of that.  The rest of the
---- renderer anchors blockquotes at column 0, so the indent is stripped here
---- and handed back to render_document, which puts it back as display
+--- Two containers put their content past column 0.  A blockquote may carry up
+--- to three spaces of indentation in front of its `>` (four is an indented
+--- code block), and a list item puts everything that belongs to it at its
+--- content column — the column its own text starts at.  The rest of the
+--- renderer works on blocks that begin at column 0, so the indent is stripped
+--- here and handed back to render_document, which puts it back as display
 --- indent.  Indices are into the original `lines`, before any pass merges
 --- lines together.
+---
+--- Without this a list item's second paragraph came out flush left: nothing
+--- downstream knew the three spaces in front of it meant "inside item 2", and
+--- wrap_words drops leading whitespace, so the indent survived only on a
+--- paragraph short enough not to wrap.
 ---
 --- What comes back is the *container's* content column, not the whitespace
 --- that was taken off: the up-to-three spaces in front of a marker are not
 --- content, so `   > a` at the top level renders flush left, while a quote
 --- in a list item renders under the item.  Two quote lines belong to the
 --- same blockquote only if they report the same column.
+---
+--- A list item's own marker line keeps its indentation, because the marker is
+--- what the renderer measures the item's hanging indent from.  So does fenced
+--- code, whose block renderer measures its own prefix and whose content lines
+--- are not visited here at all — dedenting the fences alone would leave the
+--- code behind.
 ---@param lines string[]
 ---@return string[] result, table<integer, string> indents
-local function strip_quote_indent(lines)
+local function strip_container_indent(lines)
   local result = {}
   local indents = {}
   -- Content columns of the list items currently open, innermost last.
@@ -1142,11 +1154,13 @@ local function strip_quote_indent(lines)
   local in_code = false
 
   for i, line in ipairs(lines) do
-    if line:match "^%s*```" or line:match "^%s*~~~" then in_code = not in_code end
     result[i] = line
+    local fence = line:match "^%s*```" or line:match "^%s*~~~"
 
+    if in_code or fence then
+      if fence then in_code = not in_code end
     -- A blank line neither closes a list item nor holds a quote marker.
-    if not in_code and not line:match "^%s*$" then
+    elseif not line:match "^%s*$" then
       local ws = #line:match "^ *"
       -- Anything indented less than the innermost item's content has left it.
       while #item_cols > 0 and ws < item_cols[#item_cols] do
@@ -1158,7 +1172,15 @@ local function strip_quote_indent(lines)
         result[i] = line:sub(ws + 1)
       else
         local col = list_content_column(line)
-        if col then table.insert(item_cols, col) end
+        if col then
+          table.insert(item_cols, col)
+        elseif base > 0 then
+          -- Block content of the innermost open item.  Only the item's own
+          -- column comes off; anything past it is the line's own indentation
+          -- and may still mean something (an indented code block, say).
+          indents[i] = string.rep(" ", base)
+          result[i] = line:sub(base + 1)
+        end
       end
     end
   end
@@ -1178,14 +1200,14 @@ end
 --- so `source_line_map` can point back to the real buffer position.
 ---@param lines string[]
 ---@param src_indices integer[]
----@param quote_indents? table<integer, string> per original line, from
----   strip_quote_indent(); quote lines in different containers must not be
+---@param container_indents? table<integer, string> per original line, from
+---   strip_container_indent(); quote lines in different containers must not be
 ---   collected into the same blockquote.
 ---@return string[] result, integer[] result_indices
-local function join_paragraph_continuations(lines, src_indices, quote_indents)
+local function join_paragraph_continuations(lines, src_indices, container_indents)
   --- Container a quote line belongs to, as its display indent.
   local function quote_container(idx)
-    return quote_indents and quote_indents[src_indices[idx]] or ""
+    return container_indents and container_indents[src_indices[idx]] or ""
   end
 
   local result = {}
@@ -1254,7 +1276,7 @@ local function join_paragraph_continuations(lines, src_indices, quote_indents)
           last = last + 1
         end
         consumed = last - idx
-        local joined, joined_src = join_paragraph_continuations(inner, inner_src, quote_indents)
+        local joined, joined_src = join_paragraph_continuations(inner, inner_src, container_indents)
         for k, joined_line in ipairs(joined) do
           local marker = markers[joined_src[k]] or "> "
           -- A quote line with no content must not keep the marker's space.
@@ -1403,12 +1425,13 @@ function ContentBuilder:render_document(lines, opts)
   for i = 1, #lines do
     src_indices[i] = i
   end
-  -- Indented blockquotes are moved to column 0 here; quote_indents keeps the
-  -- indent per *original* line so the loop below can restore it on output.
-  local quote_indents
-  lines, quote_indents = strip_quote_indent(lines)
+  -- The content of a blockquote or list item is moved to column 0 here;
+  -- container_indents keeps the indent per *original* line so the loop below
+  -- can restore it on output.
+  local container_indents
+  lines, container_indents = strip_container_indent(lines)
   lines, src_indices = preprocess_multiline_html(lines, src_indices)
-  lines, src_indices = join_paragraph_continuations(lines, src_indices, quote_indents)
+  lines, src_indices = join_paragraph_continuations(lines, src_indices, container_indents)
   lines = markdown.renumber_ordered_lists(lines)
   -- renumber_ordered_lists rewrites text but keeps line count, so
   -- src_indices stays valid.
@@ -1446,6 +1469,10 @@ function ContentBuilder:render_document(lines, opts)
   local lines_shown = 0
   local table_buf = {}
   local table_buf_start_idx = nil
+  -- Display indent of the container the table sits in, taken from its first
+  -- line: the rows are accumulated and rendered together, so the indent of
+  -- whichever line happens to flush the buffer is not the table's own.
+  local table_buf_indent = ""
   local truncated = false
   local current_alert_type = nil
   local skip_callout_body = false
@@ -1497,8 +1524,8 @@ function ContentBuilder:render_document(lines, opts)
       if table_buf_start_idx then self._current_source_line = table_buf_start_idx + source_line_offset end
       self:add_table(
         table_buf,
-        base_indent,
-        base_max_width,
+        base_indent .. table_buf_indent,
+        math.max(1, base_max_width - #table_buf_indent),
         repo_base_url,
         autolinks,
         tbl_expanded or false,
@@ -1527,6 +1554,7 @@ function ContentBuilder:render_document(lines, opts)
       end
       table_buf = {}
       table_buf_start_idx = nil
+      table_buf_indent = ""
     end
   end
 
@@ -1635,13 +1663,14 @@ function ContentBuilder:render_document(lines, opts)
     -- shadow cursor, link/anchor extraction) actually expect.
     self:set_source_line(src_indices[src_idx] + source_line_offset)
 
-    -- An indented blockquote was moved to column 0 by strip_quote_indent();
-    -- its indent comes back as display indent for this line only, and the
-    -- width it takes up is off the budget. Both are the plain base for every
-    -- other line, which is what the rest of the loop reads.
-    local quote_indent = quote_indents[src_indices[src_idx]] or ""
-    local indent = base_indent .. quote_indent
-    local max_width = math.max(1, base_max_width - #quote_indent)
+    -- Content of a blockquote or a list item was moved to column 0 by
+    -- strip_container_indent(); its indent comes back as display indent for
+    -- this line only, and the width it takes up is off the budget. Both are
+    -- the plain base for every other line, which is what the rest of the loop
+    -- reads.
+    local container_indent = container_indents[src_indices[src_idx]] or ""
+    local indent = base_indent .. container_indent
+    local max_width = math.max(1, base_max_width - #container_indent)
 
     -- Skip setext heading underline
     if skip_next_line then
@@ -2197,6 +2226,7 @@ function ContentBuilder:render_document(lines, opts)
         -- stamp source_line_map with the table itself rather than the
         -- line that happens to trigger the flush.
         table_buf_start_idx = src_indices[src_idx]
+        table_buf_indent = container_indent
         -- Ensure exactly 1 blank line before table
         if lines_shown > 0 and not prev_rendered_blank then
           self:add_line(indent)
