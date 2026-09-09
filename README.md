@@ -147,6 +147,7 @@ vim.keymap.set("n", "<leader>md", "<Plug>(md-render-demo)",        { desc = "Mar
 | `<Plug>(md-render-toggle)` | Toggle the current window between source and render mode in place |
 | `<Plug>(md-render-auto)` | **[experimental]** Toggle auto mode (render outside Insert) for the current buffer |
 | `<Plug>(md-render-split)` | Open a split showing source and rendered Markdown |
+| `<Plug>(md-render-present)` | Enter the full-screen slideshow presenter for the current buffer |
 | `<Plug>(md-render-demo)` | Show a demo window with all supported Markdown notations |
 
 ### In-preview keys
@@ -159,6 +160,59 @@ Inside a rendered preview (floating, tab, or in-place toggle), these buffer-loca
 | `<CR>` | Toggle the fold / expandable region under the cursor (no-op elsewhere) |
 | `<LeftMouse>` | Toggle folds, expand regions, and open links by clicking |
 | `q` / `<Esc>` / `<C-c>` | Close the window (floating / tab mode only) |
+
+## Presenter mode
+
+`:MdRender present` turns the current Markdown buffer into a full-screen
+slideshow. `---` (a thematic break) separates slides; each slide fills the
+screen. Mermaid diagrams render inline as images.
+
+### In-presenter keys
+
+| Key | Action |
+|---|---|
+| `n` / `→` / `<Space>` / `<PageDown>` | Next slide |
+| `p` / `←` / `<PageUp>` | Previous slide |
+| `gg` / `G` | First / last slide |
+| `L` | Cycle the layout of the diagram on the current slide (fit → left → right → full). On a slide with multiple diagrams, the first one is affected. |
+| `<` / `>` | Narrow / widen the split (in `left`/`right`), by 5% (20–80%) |
+| `w` | Write the current slide's layout into the document as a hidden comment |
+| `q` / `<Esc>` / `<C-c>` | Exit the presenter (restores your buffer) |
+
+### Slide metadata (hidden comments)
+
+Presenter metadata rides in link-label comments (`[//]: # (...)`) that render as
+nothing in any Markdown viewer:
+
+```markdown
+[//]: # (diagram: left:40)
+```​`​`​`mermaid
+flowchart LR
+  A --> B
+```​`​`​`
+Explanatory text flows in the right 60% of the slide.
+```
+
+Diagram layouts: `full` (the diagram fills the slide; any other text on the
+slide renders above it), `fit` (inline, coexists with text),
+`left[:N]` / `right[:N]` (diagram fills N% of that side; text takes the rest).
+
+### Where layout changes go
+
+md-render never writes to the buffer you are editing, and the presenter is no
+exception: `L` / `<` / `>` record the layout in a cache under
+`stdpath("cache")/md-render/presenter`, keyed by a hash of the diagram's own
+source. Reordering slides or rewriting the prose around a diagram keeps its
+layout; editing the diagram itself drops it.
+
+A cached layout takes precedence over the `[//]: # (diagram: ...)` comment, so
+the comment is the deck's committed default and the cache is your working
+override. Deleting the cache file returns the deck to exactly what is in the
+document.
+
+Press `w` to promote the current slide's layout into the document as a comment.
+That is the only key that edits your file, and it leaves the buffer modified for
+you to `:write` — nothing is saved on your behalf.
 
 ## Commands
 
@@ -174,6 +228,7 @@ The plugin exposes a single `:MdRender` command with subcommands:
 | `:MdRender auto [on\|off\|toggle]` | **[experimental]** Auto-toggle source/render based on Insert mode (per buffer) |
 | `:MdRender textsize [on\|off\|toggle]` | **[experimental]** Scale headings via the Kitty text sizing protocol (on by default) |
 | `:MdRender pager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
+| `:MdRender present` | Full-screen slideshow presenter — `---` splits slides, `L`/`<`/`>` adjust diagram layout |
 | `:MdRender demo` | Show a demo window with all supported Markdown notations |
 
 Tab completion lists the subcommands for the first arg, and `on` / `off` / `toggle` after `auto` and `textsize`.

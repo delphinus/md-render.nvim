@@ -3,7 +3,7 @@
 
 local M = {}
 
-local SUBCOMMANDS = { "float", "tab", "pager", "toggle", "split", "auto", "demo", "textsize" }
+local SUBCOMMANDS = { "float", "tab", "pager", "toggle", "split", "auto", "demo", "textsize", "present" }
 local AUTO_ARGS = { "on", "off", "toggle" }
 local TEXTSIZE_ARGS = { "on", "off", "toggle" }
 
@@ -56,6 +56,8 @@ function M.dispatch(args)
     vim.notify("MdRender textsize: " .. (want and "on" or "off"))
     -- Heading rows are reserved at build time, so the content has to be rebuilt.
     p.rebuild_visible()
+  elseif sub == "present" then
+    p.show_present()
   elseif sub == "auto" then
     local a = (fargs[2] or "toggle"):lower()
     if a == "on" then

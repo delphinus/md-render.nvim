@@ -157,8 +157,9 @@ end)
 --- Drive `setup_images` with one Mermaid placement on `line`, and report how
 --- many times the render was asked for after each step.
 ---@param line integer 0-indexed buffer line to put the diagram on
+---@param opts? { eager?: boolean } passed straight through to `setup_images`
 ---@return { renders: integer, scroll: fun(topline: integer), settle: fun() }
-local function mermaid_harness(line)
+local function mermaid_harness(line, opts)
   local image = require "md-render.image"
   local saved = {
     supports_kitty = image.supports_kitty,
@@ -191,7 +192,7 @@ local function mermaid_harness(line)
       { line = line, col = 0, rows = 5, cols = 20, mermaid_source = "graph LR\n  A --> B" },
     },
   }
-  local state = display_utils.setup_images(win, content, nil)
+  local state = display_utils.setup_images(win, content, nil, opts)
 
   calls.settle = function()
     -- `process_one` walks the placements over scheduled steps; the scroll path
@@ -236,6 +237,24 @@ test("setup_images renders an off-screen diagram once it is scrolled to", functi
   -- The retry runs on every scroll, and the render has not answered yet.
   h.scroll(396)
   assert_eq(h.renders, 1, "a render already in flight is not asked for twice")
+  h.finish()
+end)
+
+test("setup_images eager renders an off-screen diagram without waiting for a scroll", function()
+  -- The lazy pass above is keyed on WinScrolled. Callers that never scroll —
+  -- the presenter swaps whole slides instead — would sit on the placeholder
+  -- forever, so they ask for everything up front.
+  local h = mermaid_harness(400, { eager = true })
+  h.settle()
+  assert_eq(h.renders, 1, "eager asks for the render even though it is off-screen")
+  h.finish()
+end)
+
+test("setup_images eager still asks for a pending render only once", function()
+  local h = mermaid_harness(400, { eager = true })
+  h.settle()
+  h.scroll(395)
+  assert_eq(h.renders, 1, "the in-flight render is not re-requested on scroll")
   h.finish()
 end)
 

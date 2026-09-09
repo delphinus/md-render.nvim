@@ -25,13 +25,17 @@ vim.keymap.set("n", "<Plug>(md-render-demo)", function()
   require("md-render").preview.show_demo()
 end, { desc = "Markdown render demo" })
 
+vim.keymap.set("n", "<Plug>(md-render-present)", function()
+  require("md-render").preview.show_present()
+end, { desc = "Markdown presenter (slideshow)" })
+
 local cmd = require "md-render.command"
 
 vim.api.nvim_create_user_command("MdRender", cmd.dispatch, {
   nargs = "*",
   complete = cmd.complete,
   bar = true,
-  desc = "Markdown render — :MdRender [float|tab|pager|toggle|split|auto on|off|toggle|demo]",
+  desc = "Markdown render — :MdRender [float|tab|pager|toggle|split|auto on|off|toggle|demo|present]",
 })
 
 --- Register a deprecated v3 shim that forwards to the new dispatcher.
