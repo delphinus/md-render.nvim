@@ -107,7 +107,7 @@ local function behaviour_suite(label, a)
       cleaned, reason = true, err
     end)
     pump(function()
-      return victim:status() == "suspended"
+      return victim:status() == "awaiting"
     end)
     victim:close()
     pump(function()
@@ -282,7 +282,7 @@ test("run stays quiet about a task that was cancelled on purpose", function()
     async.sleep(5000)
   end)
   pump(function()
-    return task:status() == "suspended"
+    return task:status() == "awaiting"
   end)
   task:close()
   pump(function()
