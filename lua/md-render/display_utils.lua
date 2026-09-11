@@ -967,69 +967,49 @@ function M.setup_images(win, content, ns, opts)
   --- Shared by both animated GIF and video processing paths.
   --- If the same path was already transmitted, reuses frame IDs and
   --- animation state (avoids duplicate frame transmission).
+  --- Show `placement` as an animation, extracting and transmitting the frames
+  --- if this is the first placement to ask for them.
+  ---
+  --- The same file is routinely placed more than once — the same video in the
+  --- English and Japanese sections of a README — and `transmit_animated_async`
+  --- deduplicates the runs itself, so every placement here can just ask.
   ---@param path string
   ---@param placement MdRender.ImagePlacement
   ---@param placeholder_rows integer
-  -- Track pending transmit_animated_async calls to avoid duplicate
-  -- frame extraction for the same path (e.g. same video in English
-  -- and Japanese sections of the README).
-  local pending_anims = {} -- path -> { {placement, placeholder_rows}, ... }
-
   local function setup_animation(path, placement, placeholder_rows)
-    -- Reuse already-transmitted frames for the same path
-    local existing = state.anims[path]
-    if existing then
-      if existing.frame_w then placement.img_w = existing.frame_w end
-      if existing.frame_h then placement.img_h = existing.frame_h end
+    --- Point a placement at frames that exist, and take their real size.
+    ---@param frame_w integer?
+    ---@param frame_h integer?
+    local function adopt(frame_w, frame_h)
+      if frame_w and frame_h then
+        placement.img_w = frame_w
+        placement.img_h = frame_h
+      end
       clear_placeholder_text(placement, placeholder_rows)
       schedule_redraw()
-      return
     end
 
-    -- If transmit is already in progress for this path, queue this
-    -- placement to be set up when the transmit completes.
-    if pending_anims[path] then
-      table.insert(pending_anims[path], { placement, placeholder_rows })
+    -- Frames for this file are already in the terminal
+    local existing = state.anims[path]
+    if existing then
+      adopt(existing.frame_w, existing.frame_h)
       return
     end
-
-    pending_anims[path] = { { placement, placeholder_rows } }
 
     image.transmit_animated_async(path, function(frame_ids, tmp_dir, frame_w, frame_h)
-      if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then
-        pending_anims[path] = nil
-        return
-      end
+      if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
       state.image_ids[path] = frame_ids[1]
-      local anim = {
+      state.anims[path] = {
         frame_ids = frame_ids,
         current = 1,
         tmp_dir = tmp_dir,
         frame_w = frame_w,
         frame_h = frame_h,
       }
-      state.anims[path] = anim
-
-      -- Apply to all queued placements for this path
-      for _, entry in ipairs(pending_anims[path]) do
-        local p, ph_rows = entry[1], entry[2]
-        if frame_w and frame_h then
-          p.img_w = frame_w
-          p.img_h = frame_h
-        end
-        clear_placeholder_text(p, ph_rows)
-      end
-      pending_anims[path] = nil
-
-      -- Only start animation timer for multi-frame sequences
-      if #frame_ids > 1 then
-        -- Ensure all images (including static) get an initial full placement
-        schedule_redraw()
-        start_anim_timer()
-      else
-        -- Single frame: just display it like a static image
-        schedule_redraw()
-      end
+      adopt(frame_w, frame_h)
+      -- Only a multi-frame sequence needs the timer; a single frame is a
+      -- static image that happens to have arrived this way.
+      if #frame_ids > 1 then start_anim_timer() end
     end)
   end
 

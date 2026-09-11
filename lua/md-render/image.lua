@@ -163,7 +163,7 @@ end
 -- Work already under way
 -- ============================================================================
 
---- Renders and downloads in flight, keyed by the file they will produce.
+--- Work in flight, keyed by what it will produce.
 ---
 --- The same image is asked for again long before the first request has
 --- answered. Rebuilding the content is what does it, and that happens for
@@ -173,32 +173,37 @@ end
 --- used to start its own work — another JVM for a PlantUML diagram, another
 --- browser for a Mermaid one — and for a download, another curl writing over
 --- the file the first curl had not finished writing.
----@type table<string, (fun(path: string?))[]>
+---@type table<string, vim.async.Task>
 local _in_flight = {}
 
---- Wait on the work already producing `key`, or claim it for this caller.
----@param key string the file the work will produce
----@param callback fun(path: string?)
----@return boolean joined true when somebody is already on it and `callback` was queued
-local function join_work(key, callback)
-  local waiting = _in_flight[key]
-  if waiting then
-    table.insert(waiting, callback)
-    return true
+--- Do `produce` for `key`, or join the run already under way, and answer
+--- `callback` either way.
+---
+--- A task is a value: whoever asks second awaits the first one's rather than
+--- starting its own, and both get the same answer. `produce` runs once.
+---@param key string what the work will produce, usually the file's path
+---@param produce async fun(): ... the work, run only if nobody else is on it
+---@param callback fun(...) given whatever `produce` returned, or nothing on failure
+local function shared_work(key, produce, callback)
+  local task = _in_flight[key]
+  if not task then
+    task = async.run(produce)
+    _in_flight[key] = task
+    -- Release the key once the work is done, so a later ask — a retry after a
+    -- failure, or a source file that changed — is allowed to try again.
+    task:on_complete(function()
+      _in_flight[key] = nil
+    end)
   end
-  _in_flight[key] = {}
-  return false
-end
 
---- Hand the result to everyone who joined while the work was running.
----@param key string
----@param path string?
-local function finish_work(key, path)
-  local waiting = _in_flight[key]
-  _in_flight[key] = nil
-  for _, cb in ipairs(waiting or {}) do
-    cb(path)
-  end
+  async.run(function()
+    local answer = vim.F.pack_len(async.pawait(task))
+    if answer[1] then
+      callback(unpack(answer, 2, answer.n))
+    else
+      callback(nil)
+    end
+  end)
 end
 
 -- ============================================================================
@@ -545,26 +550,17 @@ function M.render_mermaid_async(source, callback)
     return
   end
 
-  if join_work(cache_path, callback) then return end
-  local function done(path)
-    callback(path)
-    finish_work(cache_path, path)
-  end
+  shared_work(cache_path, function()
+    local tmp_input = vim.fn.tempname() .. ".mmd"
+    local f = io.open(tmp_input, "w")
+    if not f then return nil end
+    f:write(source)
+    f:close()
 
-  local tmp_input = vim.fn.tempname() .. ".mmd"
-  local f = io.open(tmp_input, "w")
-  if not f then
-    done(nil)
-    return
-  end
-  f:write(source)
-  f:close()
-
-  async.run(function()
     async.system(build_mmdc_cmd(cmd_prefix, tmp_input, cache_path), { text = true, timeout = 30000 })
     os.remove(tmp_input)
-    done(vim.fn.filereadable(cache_path) == 1 and cache_path or nil)
-  end)
+    return vim.fn.filereadable(cache_path) == 1 and cache_path or nil
+  end, callback)
 end
 
 -- ============================================================================
@@ -679,18 +675,9 @@ function M.render_plantuml_async(source, callback)
     return
   end
 
-  if join_work(cache_path, callback) then return end
-  local function done(path)
-    callback(path)
-    finish_work(cache_path, path)
-  end
-
-  async.run(function()
+  shared_work(cache_path, function()
     local cmd_prefix = find_plantuml()
-    if not cmd_prefix then
-      done(render_plantuml_remote(source, cache_path))
-      return
-    end
+    if not cmd_prefix then return render_plantuml_remote(source, cache_path) end
 
     local cmd = vim.list_extend(vim.list_extend({}, cmd_prefix), { "-tpng", "-pipe" })
     local result = async.system(cmd, { stdin = source, text = false, timeout = 30000 })
@@ -701,12 +688,9 @@ function M.render_plantuml_async(source, callback)
         f:close()
       end
     end
-    if vim.fn.filereadable(cache_path) == 1 then
-      done(cache_path)
-    else
-      done(render_plantuml_remote(source, cache_path))
-    end
-  end)
+    if vim.fn.filereadable(cache_path) == 1 then return cache_path end
+    return render_plantuml_remote(source, cache_path)
+  end, callback)
 end
 
 --- Check if file is a format the terminal can display directly (no conversion needed)
@@ -1038,29 +1022,22 @@ function M.download_async(url, callback)
 
   local cache_path = url_to_cache_path(url)
 
-  if join_work(cache_path, callback) then return end
-  local function done(path)
-    callback(path)
-    finish_work(cache_path, path)
-  end
-
-  async.run(function()
+  shared_work(cache_path, function()
     -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
     local taken, ok = custom_download(url, cache_path)
     if taken then
-      done(ok and finalize_download(url, cache_path) or nil)
-      return
+      if not ok then return nil end
+      return finalize_download(url, cache_path)
     end
 
     -- Default: download with curl
     local cmd = { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url }
     if async.system(cmd, { text = true }).code ~= 0 then
       os.remove(cache_path)
-      done(nil)
-      return
+      return nil
     end
-    done(finalize_download(url, cache_path))
-  end)
+    return finalize_download(url, cache_path)
+  end, callback)
 end
 
 --- Check if a video URL is already cached (in-memory or on disk).
@@ -1090,36 +1067,27 @@ function M.download_video_async(url, callback)
 
   local cache_path = url_to_cache_path(url)
 
-  if join_work(cache_path, callback) then return end
-  local function done(path)
-    callback(path)
-    finish_work(cache_path, path)
-  end
-
   --- Both paths below accept the download on the same terms.
   ---@param arrived boolean
+  ---@return string?
   local function settle(arrived)
     if arrived and vim.fn.filereadable(cache_path) == 1 then
       _url_cache[url] = cache_path
-      done(cache_path)
-    else
-      os.remove(cache_path)
-      done(nil)
+      return cache_path
     end
+    os.remove(cache_path)
+    return nil
   end
 
-  async.run(function()
+  shared_work(cache_path, function()
     -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
     local taken, ok = custom_download(url, cache_path)
-    if taken then
-      settle(ok)
-      return
-    end
+    if taken then return settle(ok) end
 
     -- Default: download with curl (larger limits for video)
     local cmd = { "curl", "-sfL", "--max-time", "30", "--max-filesize", "104857600", "-o", cache_path, url }
-    settle(async.system(cmd, { text = true }).code == 0)
-  end)
+    return settle(async.system(cmd, { text = true }).code == 0)
+  end, callback)
 end
 
 --- Resolve an image source to a local file path (cache-only for URLs).
@@ -1677,26 +1645,29 @@ function M.transmit_animated_async(path, callback)
 
   local cache_dir = get_frames_cache_dir(path)
 
-  --- Transmit pre-extracted frames and invoke callback.
+  --- Transmit pre-extracted frames.
   --- Sends frames in small batches (BATCH_SIZE), yielding to the event loop
   --- between batches so Neovim stays responsive while the terminal processes
-  --- the image data. Callback is invoked after the first batch so animation
-  --- can start immediately with available frames.
+  --- the image data. Returns once the first batch is out, so the animation can
+  --- start on the frames that are already there while the rest keep arriving.
   ---@async
   ---@param frames string[]
+  ---@return integer[] frame_ids, nil tmp_dir, integer? frame_w, integer? frame_h
   local function transmit_frames(frames)
     local frame_w, frame_h = M.image_dimensions(frames[1])
     local total = #frames
     local BATCH_SIZE = 10
 
-    -- Pre-allocate all frame IDs so the callback receives the full list
+    -- Pre-allocate all frame IDs so the caller receives the full list
     local all_ids = {}
     for i = 1, total do
       _image_id = _image_id + 1
       all_ids[i] = _image_id
     end
 
-    for first = 1, total, BATCH_SIZE do
+    ---@param first integer
+    ---@return integer last  index of the last frame sent
+    local function send_batch(first)
       local last = math.min(first + BATCH_SIZE - 1, total)
       M.begin_batch()
       for i = first, last do
@@ -1705,12 +1676,29 @@ function M.transmit_animated_async(path, callback)
         _image_paths[all_ids[i]] = frames[i]
       end
       M.flush_batch()
-      if first == 1 then callback(all_ids, nil, frame_w, frame_h) end
-      if last < total then async.sleep(10) end
+      return last
     end
+
+    local sent = send_batch(1)
+    if sent < total then
+      -- Detached: this is background feeding, and a child task would make the
+      -- caller wait for the last frame before it could show the first.
+      async
+        .run(function()
+          while sent < total do
+            async.sleep(10)
+            sent = send_batch(sent + 1)
+          end
+        end)
+        :detach()
+    end
+
+    return all_ids, nil, frame_w, frame_h
   end
 
-  async.run(function()
+  -- Keyed on the source file: the frames are transmitted, not just produced, so
+  -- a second run would send every frame to the terminal a second time.
+  shared_work("frames:" .. path, function()
     -- Check frame cache first
     local frames = get_cached_frames(path, cache_dir)
 
@@ -1729,21 +1717,19 @@ function M.transmit_animated_async(path, callback)
       if result.code ~= 0 then
         warn_extract_failed(anim_tool, result)
         vim.fn.delete(cache_dir, "rf")
-        callback(nil)
-        return
+        return nil
       end
 
       frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
       table.sort(frames)
       if #frames == 0 then
         vim.fn.delete(cache_dir, "rf")
-        callback(nil)
-        return
+        return nil
       end
     end
 
-    transmit_frames(frames)
-  end)
+    return transmit_frames(frames)
+  end, callback)
 end
 
 --- Display an image at a screen position.
