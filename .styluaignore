@@ -1,0 +1,3 @@
+# Upstream code kept verbatim; reformatting it would make every re-sync a
+# conflict. See lua/md-render/vendor/README.md.
+lua/md-render/vendor/

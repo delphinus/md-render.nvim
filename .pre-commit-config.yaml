@@ -15,3 +15,7 @@ repos:
     rev: v2.5.2
     hooks:
       - id: stylua-github
+        # .styluaignore covers `stylua .`, but not paths handed to StyLua
+        # directly — that needs --respect-ignores — and handing it paths is
+        # exactly what pre-commit does. Exclude the vendored copy here too.
+        exclude: '^lua/md-render/vendor/'

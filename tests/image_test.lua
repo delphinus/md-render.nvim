@@ -919,5 +919,104 @@ test("download_async: asking for the same URL twice runs one curl", function()
   sys.restore()
 end)
 
+-- ============================================================================
+-- set_download_fn: the two answers a custom downloader gives
+-- ============================================================================
+
+--- Wait for `answers` to reach `n`, pumping the event loop.
+---@param answers table
+---@param n integer
+local function wait_for(answers, n)
+  vim.wait(2000, function()
+    return #answers >= n
+  end, 5)
+end
+
+test("set_download_fn: declining hands the URL back to curl", function()
+  local sys = stub_vim_system()
+  local asked = {}
+  image.set_download_fn(function(url)
+    table.insert(asked, url)
+    return false
+  end)
+
+  local url = "https://example.invalid/md-render-test-declined.png"
+  local answers = {}
+  image.download_async(url, function(path)
+    table.insert(answers, path or false)
+  end)
+
+  -- Both of the custom function's answers are deferred to the main loop, so
+  -- curl only starts on the next tick.
+  vim.wait(2000, function()
+    return sys.spawns > 0
+  end, 5)
+  assert_eq(asked, { url }, "the custom function was offered the URL")
+  assert_eq(sys.spawns, 1, "and declining fell through to curl")
+
+  sys.finish(1)
+  wait_for(answers, 1)
+  assert_eq(answers, { false }, "the failed curl answers the caller")
+
+  image.set_download_fn(nil)
+  sys.restore()
+end)
+
+test("set_download_fn: taking the job keeps curl out of it", function()
+  local sys = stub_vim_system()
+  -- Call back at once, in the same tick as the `true` return. Nothing in the
+  -- documented contract forbids it, and it is the ordering that separates the
+  -- two runtimes: 0.12 resumes the task from inside the callback, so a task
+  -- that read "did it take the job?" straight after awaiting would read it
+  -- before the answer was assigned and start a redundant curl.
+  local downloaded
+  image.set_download_fn(function(_, output_path, callback)
+    downloaded = output_path
+    vim.fn.writefile(vim.fn.readfile(test_png, "b"), output_path, "b")
+    callback(true)
+    return true
+  end)
+
+  -- A fresh URL every run: the download cache lives on disk and outlives the
+  -- process, and a hit there would answer before the custom function is even
+  -- offered the job, quietly making this test prove nothing.
+  local url = ("https://example.invalid/md-render-test-custom-%d.png"):format(vim.uv.hrtime())
+  local answers = {}
+  image.download_async(url, function(path)
+    table.insert(answers, path or false)
+  end)
+  wait_for(answers, 1)
+
+  assert_eq(sys.spawns, 0, "no curl was spawned")
+  assert_eq(#answers, 1, "the caller is answered exactly once")
+  assert_eq(answers[1], downloaded, "and gets the file the custom function wrote")
+
+  if downloaded then os.remove(downloaded) end
+  image.set_download_fn(nil)
+  sys.restore()
+end)
+
+test("set_download_fn: reporting failure answers nil without falling back", function()
+  local sys = stub_vim_system()
+  image.set_download_fn(function(_, _, callback)
+    vim.schedule(function()
+      callback(false)
+    end)
+    return true
+  end)
+
+  local answers = {}
+  image.download_async("https://example.invalid/md-render-test-custom-fail.png", function(path)
+    table.insert(answers, path or false)
+  end)
+  wait_for(answers, 1)
+
+  assert_eq(sys.spawns, 0, "taking the job and failing is not a reason to try curl")
+  assert_eq(answers, { false }, "the caller is told the download failed")
+
+  image.set_download_fn(nil)
+  sys.restore()
+end)
+
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

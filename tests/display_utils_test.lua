@@ -154,11 +154,16 @@ end)
 -- setup_images: off-screen placements that have to be produced first
 -- ============================================================================
 
---- Drive `setup_images` with one Mermaid placement on `line`, and report how
---- many times the render was asked for after each step.
+--- Drive `setup_images` with `count` Mermaid placements on `line`, and report
+--- how many times the render was asked for after each step.
+---
+--- The placements share a line when there is more than one. Nothing in the code
+--- under test looks at whether they overlap, and it keeps every one of them
+--- inside the viewport regardless of how tall the test window is.
 ---@param line integer 0-indexed buffer line to put the diagram on
----@return { renders: integer, scroll: fun(topline: integer), settle: fun() }
-local function mermaid_harness(line)
+---@param count integer? how many placements to put there (default 1)
+---@return { renders: integer, scroll: fun(topline: integer), settle: fun(), state: table }
+local function mermaid_harness(line, count)
   local image = require "md-render.image"
   local saved = {
     supports_kitty = image.supports_kitty,
@@ -186,16 +191,16 @@ local function mermaid_harness(line)
   local prev_buf = vim.api.nvim_win_get_buf(win)
   vim.api.nvim_win_set_buf(win, buf)
 
-  local content = {
-    image_placements = {
-      { line = line, col = 0, rows = 5, cols = 20, mermaid_source = "graph LR\n  A --> B" },
-    },
-  }
-  local state = display_utils.setup_images(win, content, nil)
+  local placements = {}
+  for i = 1, count or 1 do
+    placements[i] = { line = line, col = 0, rows = 5, cols = 20, mermaid_source = "graph LR\n  A" .. i .. " --> B" }
+  end
+  local state = display_utils.setup_images(win, { image_placements = placements }, nil)
+  calls.state = state
 
   calls.settle = function()
-    -- `process_one` walks the placements over scheduled steps; the scroll path
-    -- then waits out the 50 ms redraw debounce.
+    -- Placements start behind a semaphore; the scroll path then waits out the
+    -- 50 ms redraw debounce.
     vim.wait(200, function()
       return false
     end, 10)
@@ -237,6 +242,37 @@ test("setup_images renders an off-screen diagram once it is scrolled to", functi
   h.scroll(396)
   assert_eq(h.renders, 1, "a render already in flight is not asked for twice")
   h.finish()
+end)
+
+test("setup_images keeps only a few placements in flight at once", function()
+  -- A screenful of large PNGs sent in one burst makes the terminal block its
+  -- UI thread decoding them all. Eight placements are asked for; the renders
+  -- stub never answers, so whatever number is running is the permit count.
+  local h = mermaid_harness(0, 8)
+  h.settle()
+  assert_eq(h.renders, 4, "at most MAX_IN_FLIGHT placements are worked on at a time")
+  h.finish()
+end)
+
+test("cleanup_images stops work that is still running", function()
+  -- Closing the window while an ffmpeg or a curl is in flight should stop it,
+  -- not let it run to completion and transmit into a window that is gone.
+  local h = mermaid_harness(0, 8)
+  h.settle()
+
+  local running = 0
+  for _, task in pairs(h.state.tasks) do
+    if task:status() ~= "completed" then running = running + 1 end
+  end
+  assert_eq(running, 8, "every placement has work outstanding before teardown")
+
+  h.finish()
+
+  local still_running = 0
+  for _, task in pairs(h.state.tasks) do
+    if task:status() ~= "completed" then still_running = still_running + 1 end
+  end
+  assert_eq(still_running, 0, "and none of it survives the teardown")
 end)
 
 print(string.format("display_utils_test: %d passed, %d failed", pass_count, fail_count))

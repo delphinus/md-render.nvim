@@ -146,6 +146,46 @@ check_frames("animated GIF extracts frames", "test_animated.gif", 2)
 check_frames("MP4 video extracts frames", "test.mp4", 2)
 
 -- ---------------------------------------------------------------------------
+-- One extraction per file, however many placements ask for it
+--
+-- The same file is routinely placed twice — the same video in the English and
+-- Japanese sections of a README. Both placements have to end up pointing at the
+-- same frames: a second extraction would transmit every frame to the terminal
+-- again under new IDs, and the first placement would be animating IDs nobody
+-- is refreshing.
+-- ---------------------------------------------------------------------------
+
+do
+  local label = "two placements of one file share its frames"
+  if not (have "ffmpeg" or have "magick") then
+    skip(label, "needs ffmpeg or magick")
+  else
+    local path = fresh_copy "test_animated.gif"
+    local answers = {}
+    -- Both asks happen before either can have finished, which is the case the
+    -- deduplication exists for.
+    for _ = 1, 2 do
+      image.transmit_animated_async(path, function(ids)
+        table.insert(answers, ids)
+      end)
+    end
+    vim.wait(120000, function()
+      return #answers == 2
+    end, 50)
+
+    if #answers ~= 2 then
+      fail(label, string.format("only %d of 2 callers were answered", #answers))
+    elseif type(answers[1]) ~= "table" then
+      fail(label, "extraction failed: " .. vim.inspect(answers[1]))
+    elseif not vim.deep_equal(answers[1], answers[2]) then
+      fail(label, string.format("got %d ids and %d different ids", #answers[1], #(answers[2] or {})))
+    else
+      pass(string.format("%s -> both got the same %d ids", label, #answers[1]))
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------------
 -- Video probing (ffprobe)
 -- ---------------------------------------------------------------------------
 

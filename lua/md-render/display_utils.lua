@@ -1,4 +1,5 @@
 local UrlHover = require "md-render.url_hover"
+local async = require "md-render.async"
 
 local M = {}
 
@@ -592,6 +593,7 @@ end
 ---@field placements MdRender.ImagePlacement[]
 ---@field image_ids table<string, integer>  path -> Kitty image ID (transmitted)
 ---@field anims table<string, MdRender.AnimState>  path -> animation state
+---@field tasks table<MdRender.ImagePlacement, vim.async.Task>  work started per placement
 ---@field win integer
 ---@field redraw_timer any?
 ---@field autocmd_ids integer[]
@@ -682,9 +684,21 @@ function M.setup_images(win, content, ns, opts)
     end
   end
 
-  -- Forward declaration (process_placement is defined after redraw_images
-  -- but referenced from the retry logic inside redraw_images)
+  -- Forward declarations (these are defined after redraw_images but referenced
+  -- from the retry logic inside it)
   local process_placement
+  local in_flight
+
+  --- Work started for a placement, so a scroll does not start it a second time
+  --- and tearing the window down can stop it.
+  ---
+  --- Entries are kept after the task finishes: that a placement was *ever*
+  --- asked for is what stops `place_images` from re-running a download that
+  --- failed on every subsequent scroll. Weak keys, because a rebuild replaces
+  --- every placement object and the old ones should not be held here.
+  ---@type table<MdRender.ImagePlacement, vim.async.Task>
+  local tasks = setmetatable({}, { __mode = "k" })
+  state.tasks = tasks
 
   -- Redraw all images (called after redraw! to re-place all at once)
   local MAX_RETRIES = 3
@@ -720,13 +734,13 @@ function M.setup_images(win, content, ns, opts)
         placement.path
         and not state.image_ids[placement.path]
         and not state.anims[placement.path]
-        and not placement._converting
+        and not in_flight(placement)
         and (not placement._retries or placement._retries < MAX_RETRIES)
         and placement_near_viewport(placement)
       then
         placement._retries = (placement._retries or 0) + 1
         process_placement(placement)
-      elseif has_async_source(placement) and not placement._async_started and placement_near_viewport(placement) then
+      elseif has_async_source(placement) and not tasks[placement] and placement_near_viewport(placement) then
         -- A diagram or a remote image that was off-screen when the
         -- window opened has no `path` yet, so the branch above can never pick
         -- it up and it would sit on its placeholder forever. Scrolling it into
@@ -967,192 +981,188 @@ function M.setup_images(win, content, ns, opts)
   --- Shared by both animated GIF and video processing paths.
   --- If the same path was already transmitted, reuses frame IDs and
   --- animation state (avoids duplicate frame transmission).
+  --- Show `placement` as an animation, extracting and transmitting the frames
+  --- if this is the first placement to ask for them.
+  ---
+  --- The same file is routinely placed more than once — the same video in the
+  --- English and Japanese sections of a README — and `transmit_animated_async`
+  --- deduplicates the runs itself, so every placement here can just ask.
+  ---@async
   ---@param path string
   ---@param placement MdRender.ImagePlacement
   ---@param placeholder_rows integer
-  -- Track pending transmit_animated_async calls to avoid duplicate
-  -- frame extraction for the same path (e.g. same video in English
-  -- and Japanese sections of the README).
-  local pending_anims = {} -- path -> { {placement, placeholder_rows}, ... }
-
   local function setup_animation(path, placement, placeholder_rows)
-    -- Reuse already-transmitted frames for the same path
-    local existing = state.anims[path]
-    if existing then
-      if existing.frame_w then placement.img_w = existing.frame_w end
-      if existing.frame_h then placement.img_h = existing.frame_h end
+    --- Point a placement at frames that exist, and take their real size.
+    ---@param frame_w integer?
+    ---@param frame_h integer?
+    local function adopt(frame_w, frame_h)
+      if frame_w and frame_h then
+        placement.img_w = frame_w
+        placement.img_h = frame_h
+      end
       clear_placeholder_text(placement, placeholder_rows)
       schedule_redraw()
+    end
+
+    -- Frames for this file are already in the terminal
+    local existing = state.anims[path]
+    if existing then
+      adopt(existing.frame_w, existing.frame_h)
       return
     end
 
-    -- If transmit is already in progress for this path, queue this
-    -- placement to be set up when the transmit completes.
-    if pending_anims[path] then
-      table.insert(pending_anims[path], { placement, placeholder_rows })
-      return
-    end
-
-    pending_anims[path] = { { placement, placeholder_rows } }
-
-    image.transmit_animated_async(path, function(frame_ids, tmp_dir, frame_w, frame_h)
-      if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then
-        pending_anims[path] = nil
-        return
-      end
-      state.image_ids[path] = frame_ids[1]
-      local anim = {
-        frame_ids = frame_ids,
-        current = 1,
-        tmp_dir = tmp_dir,
-        frame_w = frame_w,
-        frame_h = frame_h,
-      }
-      state.anims[path] = anim
-
-      -- Apply to all queued placements for this path
-      for _, entry in ipairs(pending_anims[path]) do
-        local p, ph_rows = entry[1], entry[2]
-        if frame_w and frame_h then
-          p.img_w = frame_w
-          p.img_h = frame_h
-        end
-        clear_placeholder_text(p, ph_rows)
-      end
-      pending_anims[path] = nil
-
-      -- Only start animation timer for multi-frame sequences
-      if #frame_ids > 1 then
-        -- Ensure all images (including static) get an initial full placement
-        schedule_redraw()
-        start_anim_timer()
-      else
-        -- Single frame: just display it like a static image
-        schedule_redraw()
-      end
-    end)
+    local frame_ids, tmp_dir, frame_w, frame_h = async.await(2, image.transmit_animated_async, path)
+    if not frame_ids or not vim.api.nvim_win_is_valid(state.win) then return end
+    state.image_ids[path] = frame_ids[1]
+    state.anims[path] = {
+      frame_ids = frame_ids,
+      current = 1,
+      tmp_dir = tmp_dir,
+      frame_w = frame_w,
+      frame_h = frame_h,
+    }
+    adopt(frame_w, frame_h)
+    -- Only a multi-frame sequence needs the timer; a single frame is a
+    -- static image that happens to have arrived this way.
+    if #frame_ids > 1 then start_anim_timer() end
   end
 
-  --- Process a single placement: download (if URL), convert, transmit, and display.
+  --- Size the placement from the file, then transmit it and clear the
+  --- placeholder rows it was standing on.
+  ---@async
+  ---@param placement MdRender.ImagePlacement
+  ---@param path string
+  local function show(placement, path)
+    if not vim.api.nvim_win_is_valid(state.win) then return end
+
+    placement.path = path
+
+    -- Save original placeholder row count before recalculation
+    local placeholder_rows = placement.rows
+
+    -- Auto-detect video content when not already flagged (e.g. URL without extension)
+    if not placement.video and image.is_video_content(path) then placement.video = true end
+
+    --- Take the file's real size, unless the table renderer already computed a
+    --- size for us — recalculating would undo its symmetric centering.
+    ---@param img_w integer?
+    ---@param img_h integer?
+    local function size_from(img_w, img_h)
+      if not (img_w and img_h) then return end
+      if not placement.img_w then
+        placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
+      end
+      placement.img_w = img_w
+      placement.img_h = img_h
+    end
+
+    if placement.video then
+      -- Video: always animated, and only ffprobe knows how big it is
+      placement.animated = true
+      size_from(async.await(2, image.video_dimensions_async, path))
+      if not vim.api.nvim_win_is_valid(state.win) then return end
+      setup_animation(path, placement, placeholder_rows)
+      return
+    end
+
+    placement.animated = image.is_animated_gif(path)
+    size_from(image.image_dimensions(path))
+
+    if placement.animated then
+      setup_animation(path, placement, placeholder_rows)
+      return
+    end
+
+    local id, tx_w, tx_h = async.await(2, image.transmit_image_async, path)
+    if not id or not vim.api.nvim_win_is_valid(state.win) then return end
+    -- Update dimensions to match the actually transmitted image
+    -- (conversion may have resized it, e.g. large JPEG → 2000px PNG)
+    if tx_w and tx_h then
+      placement.img_w = tx_w
+      placement.img_h = tx_h
+    end
+    -- Persist transmitted dimensions so rebuilds can restore them
+    -- on fresh placement objects (avoids JPEG→PNG dimension mismatch).
+    state.tx_dims[path] = { placement.img_w, placement.img_h }
+    -- Clear all placeholder lines (using original count before recalculation)
+    clear_placeholder_text(placement, placeholder_rows)
+    state.image_ids[path] = id
+    -- Use schedule_redraw to re-place ALL images together after redraw!
+    schedule_redraw()
+  end
+
+  --- Produce the placement's file, if it does not have one yet.
+  ---@async
+  ---@param placement MdRender.ImagePlacement
+  ---@return string? path
+  local function produce(placement)
+    if placement.mermaid_source then
+      local path = async.await(2, image.render_mermaid_async, placement.mermaid_source)
+      if path then placement.mermaid_source = nil end
+      return path
+    elseif placement.plantuml_source then
+      local path = async.await(2, image.render_plantuml_async, placement.plantuml_source)
+      if path then placement.plantuml_source = nil end
+      return path
+    elseif placement.src_url then
+      local download = placement.video and image.download_video_async or image.download_async
+      return async.await(2, download, placement.src_url)
+    end
+    return nil
+  end
+
+  --- Download or render the placement's image if needed, then display it.
+  ---@async
+  ---@param placement MdRender.ImagePlacement
+  local function process_placement_async(placement)
+    if placement.path then
+      show(placement, placement.path)
+      return
+    end
+
+    local path = produce(placement)
+    if not path then return end
+    -- A file that did not exist when the content was built changes how many
+    -- rows it needs, so everything below it moves. Rebuilding is what puts it
+    -- in the right place; the rebuild comes back around through
+    -- `update_images` with a placement sized for the real image.
+    if on_download then
+      on_download()
+    else
+      show(placement, path)
+    end
+  end
+
+  -- The initial paint asks for every placement near the viewport at once, and
+  -- sending a screenful of large PNGs in one burst makes the terminal
+  -- (WezTerm/Kitty) block its UI thread while it reads and decodes them all —
+  -- a multi-second freeze of the whole terminal. Bound how many placements are
+  -- in flight instead of how fast they are started, so the pacing survives
+  -- scrolling, rebuilds, and retries rather than applying only to the first
+  -- pass. Downloads are the other side of the trade: too low a limit and a page
+  -- of remote images fetches them almost one at a time.
+  local MAX_IN_FLIGHT = 4
+  local permits = async.semaphore(MAX_IN_FLIGHT)
+
+  --- Whether a placement's work is still running.
+  ---@param placement MdRender.ImagePlacement
+  ---@return boolean
+  in_flight = function(placement)
+    local task = tasks[placement]
+    return task ~= nil and task:status() ~= "completed"
+  end
+
   ---@param placement MdRender.ImagePlacement
   process_placement = function(placement)
-    local function on_path_ready(path)
-      if not path then return end
-      if not vim.api.nvim_win_is_valid(state.win) then return end
-
-      placement.path = path
-
-      -- Save original placeholder row count before recalculation
-      local placeholder_rows = placement.rows
-
-      -- Auto-detect video content when not already flagged (e.g. URL without extension)
-      if not placement.video and image.is_video_content(path) then placement.video = true end
-
-      if placement.video then
-        -- Video: always animated, get dimensions via ffprobe
-        placement.animated = true
-        image.video_dimensions_async(path, function(img_w, img_h)
-          if not vim.api.nvim_win_is_valid(state.win) then return end
-          if img_w and img_h then
-            if not placement.img_w then
-              placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
-            end
-            placement.img_w = img_w
-            placement.img_h = img_h
-          end
-          setup_animation(path, placement, placeholder_rows)
-        end)
-        return
-      end
-
-      placement.animated = image.is_animated_gif(path)
-
-      -- Recalculate display size with real dimensions (skip if table renderer
-      -- already pre-computed them — recalculating would undo symmetric centering).
-      local img_w, img_h = image.image_dimensions(path)
-      if img_w and img_h then
-        if not placement.img_w then
-          placement.cols, placement.rows = image.calc_display_size(img_w, img_h, placement.cols, placement.rows)
-        end
-        placement.img_w = img_w
-        placement.img_h = img_h
-      end
-
-      if placement.animated then
-        setup_animation(path, placement, placeholder_rows)
-      else
-        placement._converting = true
-        image.transmit_image_async(path, function(id, tx_w, tx_h)
-          placement._converting = false
-          if not id or not vim.api.nvim_win_is_valid(state.win) then return end
-          -- Update dimensions to match the actually transmitted image
-          -- (conversion may have resized it, e.g. large JPEG → 2000px PNG)
-          if tx_w and tx_h then
-            placement.img_w = tx_w
-            placement.img_h = tx_h
-          end
-          -- Persist transmitted dimensions so rebuilds can restore them
-          -- on fresh placement objects (avoids JPEG→PNG dimension mismatch).
-          state.tx_dims[path] = { placement.img_w, placement.img_h }
-          -- Clear all placeholder lines (using original count before recalculation)
-          clear_placeholder_text(placement, placeholder_rows)
-          state.image_ids[path] = id
-          -- Use schedule_redraw to re-place ALL images together after redraw!
-          schedule_redraw()
-        end)
-      end
-    end
-
-    -- Remember that the render or the download was asked for. `place_images`
-    -- runs on every scroll, and without this it would ask again — a second
-    -- mmdc, a second curl — for as long as the first one is in flight.
-    if not placement.path then placement._async_started = true end
-
-    if placement.path then
-      on_path_ready(placement.path)
-    elseif placement.mermaid_source then
-      image.render_mermaid_async(placement.mermaid_source, function(path)
-        if path then
-          placement.mermaid_source = nil
-          -- Rebuild content so placeholder rows match actual image dimensions
-          if on_download then
-            on_download()
-          else
-            on_path_ready(path)
-          end
-        end
+    if in_flight(placement) then return end
+    tasks[placement] = async.run(function()
+      permits:with(function()
+        -- The window can go, and the placement can scroll away, while this is
+        -- queued behind a permit.
+        if not vim.api.nvim_win_is_valid(state.win) then return end
+        process_placement_async(placement)
       end)
-    elseif placement.plantuml_source then
-      image.render_plantuml_async(placement.plantuml_source, function(path)
-        if path then
-          placement.plantuml_source = nil
-          -- Rebuild content so placeholder rows match actual image dimensions
-          if on_download then
-            on_download()
-          else
-            on_path_ready(path)
-          end
-        end
-      end)
-    elseif placement.src_url then
-      if placement.video then
-        image.download_video_async(placement.src_url, function(path)
-          if path and on_download then
-            on_download()
-          else
-            on_path_ready(path)
-          end
-        end)
-      else
-        image.download_async(placement.src_url, function(path)
-          if path and on_download then
-            on_download()
-          else
-            on_path_ready(path)
-          end
-        end)
-      end
-    end
+    end)
   end
 
   -- Expose internal functions so update_images can reuse transmitted data
@@ -1162,35 +1172,15 @@ function M.setup_images(win, content, ns, opts)
   state.clear_placeholder_text = clear_placeholder_text
   state.start_anim_timer = start_anim_timer
 
-  -- Phase 1: Process placements one-at-a-time with vim.schedule yields so
-  -- the terminal isn't flooded with N transmit commands at once. Sending all
-  -- transmissions in a single burst causes the terminal (WezTerm/Kitty) to
-  -- block its UI thread while it reads + decodes every PNG, which manifests
-  -- as a multi-second freeze of the entire terminal when previewing files
-  -- with many large images. Off-screen placements are skipped entirely on
-  -- the initial pass and only transmitted later via the WinScrolled-driven
-  -- retry in place_images, so the user's first paint cost scales with what
-  -- is actually visible (typically 1-2 images) rather than the file's
-  -- total image count.
-  local function process_one(idx)
-    if state.canceled then return end
-    if not vim.api.nvim_win_is_valid(state.win) then return end
-    if idx > #state.placements then
-      schedule_redraw()
-      return
-    end
-    local placement = state.placements[idx]
-    if placement_near_viewport(placement) then
-      image.begin_batch()
-      local ok, err = pcall(process_placement, placement)
-      image.flush_batch()
-      if not ok then vim.notify("md-render: image setup error: " .. tostring(err), vim.log.levels.WARN) end
-    end
-    vim.schedule(function()
-      process_one(idx + 1)
-    end)
+  -- Ask for everything near the viewport; the semaphore decides how much of it
+  -- happens at once. Off-screen placements are skipped entirely on this pass
+  -- and only transmitted later via the WinScrolled-driven retry in
+  -- place_images, so the user's first paint costs what is actually visible
+  -- (typically 1-2 images) rather than the file's total image count.
+  for _, placement in ipairs(state.placements) do
+    if placement_near_viewport(placement) then process_placement(placement) end
   end
-  process_one(1)
+  schedule_redraw()
 
   -- Re-display on scroll and cursor movement; clean up on window close
   local augroup = vim.api.nvim_create_augroup("md_render_images_" .. win, { clear = true })
@@ -1287,7 +1277,10 @@ function M.update_images(state, win, content)
 
   -- For each placement: clear placeholder text for already-transmitted images,
   -- transmit genuinely new images via the original process_placement closure.
-  image.begin_batch()
+  -- Nothing here writes to the terminal — `clear_placeholder_text` is buffer
+  -- work and `process_placement` only starts a task — so there is nothing to
+  -- batch; the writes are grouped where they happen, in `place_images` and in
+  -- the frame transmit.
   for _, placement in ipairs(state.placements) do
     if placement.path then
       if state.image_ids[placement.path] or state.anims[placement.path] then
@@ -1315,7 +1308,6 @@ function M.update_images(state, win, content)
       state.process_placement(placement)
     end
   end
-  image.flush_batch()
 
   -- Re-place all images at their updated positions
   state.schedule_redraw()
@@ -1329,9 +1321,13 @@ function M.cleanup_images(state)
   if not state then return end
   local image = require "md-render.image"
 
-  -- Signal any in-flight progressive transmit chain to abort at the next
-  -- vim.schedule boundary instead of continuing to send to a torn-down state.
-  state.canceled = true
+  -- Stop work still under way rather than letting it run to completion against
+  -- a window that is going away. Closing a task wakes it where it is waiting,
+  -- so the ffmpeg behind a video the user just closed does not keep going and
+  -- then transmit its frames into nothing.
+  for _, task in pairs(state.tasks or {}) do
+    task:close()
+  end
 
   -- Stop download-rebuild timer
   if state._rebuild_timer then state._rebuild_timer:stop() end
