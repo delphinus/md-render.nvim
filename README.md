@@ -19,6 +19,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **Mermaid diagrams** — rendered as images inline
 - **PlantUML diagrams** — rendered as images inline by a local renderer, or by a server you name
 - **CommonMark paragraphs** — soft-wrapped source lines join into one paragraph, including a list item's continuation lines and a blockquote body; no extra space is inserted between CJK characters
+- **CJK spacing around inline markers** — the spaces in `これは **強調** です。`, written only so that lenient parsers notice the `**`, are closed up on screen; they stay when a neighbour is narrow, as in `これは **API** です。`
 - **Nested block structure** — a blockquote, callout, or fenced code block indented to a list item's content is rendered in place, not as literal text
 - **CJK-aware word wrapping** — JIS X 4051 kinsoku shori + optional [BudouX](https://github.com/google/budoux) phrase segmentation via [budoux.lua](https://github.com/delphinus/budoux.lua)
 - **Clickable links** — mouse click to open URLs; hover the mouse over a link to peek the full URL in a subtle floating window; OSC 8 hyperlink support for compatible terminals
@@ -423,6 +424,15 @@ The server also needs `curl`. Rendered diagrams are cached under `stdpath("cache
 <summary><strong>Japanese text wrapping looks unnatural</strong></summary>
 
 By default, md-render applies JIS X 4051 kinsoku shori (forbidden line-break rules) at the character level. For phrase-level segmentation that respects natural word boundaries in Japanese, install [budoux.lua](https://github.com/delphinus/budoux.lua) — the plugin will automatically detect and use it.
+
+</details>
+
+<details>
+<summary><strong>The spaces around <code>**</code> disappeared in Japanese text</strong></summary>
+
+That is deliberate. `これは **強調** です。` is usually written with those spaces so that a parser which only recognises a `**` surrounded by whitespace still sees the emphasis. CommonMark needs no such help — `これは**強調**です。` emphasises just fine — so once the markers are gone the spaces are pure markup and read as gaps. md-render closes them up when the characters on both sides are East Asian wide, the same rule it applies to the space CommonMark inserts at a soft line break.
+
+A space next to a narrow character is left alone, so `これは **API** です。` and `これは **1** 番目` keep theirs. So does a space between two adjacent spans — in `**あ** **い**`, or in two links in a row, it is the only thing holding them apart on screen.
 
 </details>
 

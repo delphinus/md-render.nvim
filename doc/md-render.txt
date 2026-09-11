@@ -52,6 +52,9 @@ Features: ~
 - CommonMark paragraphs (soft-wrapped source lines are joined into one
   paragraph, including a list item's continuation lines and a blockquote
   body; no extra space is inserted between CJK characters)
+- CJK spacing around inline markers (the spaces in `これは **強調** です。`,
+  written only so that lenient parsers notice the `**`, are closed up; they
+  stay when a neighbour is narrow, as in `これは **API** です。`)
 - Nested block structure (a blockquote, callout, or fenced code block
   indented to a list item's content is rendered in place, not as literal
   text)

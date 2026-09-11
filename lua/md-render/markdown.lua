@@ -1380,6 +1380,97 @@ local function strip_html_tags(text, highlights)
   return processed
 end
 
+--- The UTF-8 character whose last byte sits at `pos` (1-indexed).
+---@param text string
+---@param pos integer
+---@return string char empty when `pos` is before the start of `text`
+local function char_ending_at(text, pos)
+  if pos < 1 then return "" end
+  local first = pos
+  while first > 1 do
+    local b = text:byte(first)
+    if b < 0x80 or b > 0xBF then break end
+    first = first - 1
+  end
+  return text:sub(first, pos)
+end
+
+--- The UTF-8 character whose first byte sits at `pos` (1-indexed).
+---@param text string
+---@param pos integer
+---@return string char empty when `pos` is past the end of `text`
+local function char_starting_at(text, pos)
+  local last = pos
+  while last < #text do
+    local b = text:byte(last + 1)
+    if b < 0x80 or b > 0xBF then break end
+    last = last + 1
+  end
+  return text:sub(pos, last)
+end
+
+--- Drop the spaces a Japanese author puts around an inline marker only so that
+--- a lenient parser recognises it.
+---
+--- `これは **強調** です。` is written that way because some parsers miss a
+--- `**` that is not surrounded by whitespace.  CommonMark needs no such help
+--- (`これは**強調**です。` emphasises just fine), so once the markers are gone
+--- those spaces are pure markup and read as unwanted gaps.  They are dropped
+--- when the characters on both sides are East Asian wide — the same rule
+--- `wrap.join_soft_lines()` applies to the space CommonMark inserts at a soft
+--- line break, and the same rule Japanese typography uses for the space
+--- between a wide and a narrow character.  `これは **API** です。` therefore
+--- keeps its spaces, because `API` is narrow and the gap belongs there.
+---
+--- A space is only dropped when exactly one of its sides is a span boundary.
+--- The space in `**あ** **い**`, or between two adjacent links, is the only
+--- thing holding the two spans apart on screen, so it stays.
+---@param text string fully processed line, inline markers already removed
+---@param highlights MdRender.Markdown.Highlight[]
+---@param links MdRender.Markdown.Link[]
+---@return string processed
+local function drop_marker_spaces(text, highlights, links)
+  if not text:find(" ", 1, true) then return text end
+
+  -- Span boundaries are the record of where the removed markers used to be.
+  local span_starts, span_ends = {}, {}
+  for _, hl in ipairs(highlights) do
+    span_starts[hl.col] = true
+    span_ends[hl.end_col] = true
+  end
+  for _, link in ipairs(links) do
+    span_starts[link.col_start] = true
+    span_ends[link.col_end] = true
+  end
+
+  local removals = {}
+  local pos = text:find(" ", 1, true)
+  while pos do
+    -- `pos` is 1-indexed; span boundaries are 0-indexed columns.
+    local ends_before = span_ends[pos - 1] or false
+    local starts_after = span_starts[pos] or false
+    if ends_before ~= starts_after then
+      local before = char_ending_at(text, pos - 1)
+      local after = char_starting_at(text, pos + 1)
+      if wrap_mod.is_east_asian_wide(before) and wrap_mod.is_east_asian_wide(after) then
+        table.insert(removals, { start = pos - 1, count = 1 })
+      end
+    end
+    pos = text:find(" ", pos + 1, true)
+  end
+  if #removals == 0 then return text end
+
+  local parts = {}
+  local prev = 1
+  for _, r in ipairs(removals) do
+    table.insert(parts, text:sub(prev, r.start))
+    prev = r.start + 2
+  end
+  table.insert(parts, text:sub(prev))
+  adjust_positions(highlights, links, removals, #highlights, #links)
+  return table.concat(parts)
+end
+
 --- Render markdown text to plain text with highlight and link metadata
 ---@param text string The markdown text to render
 ---@param repo_base_url? string Optional repository base URL for issue/PR references
@@ -1558,6 +1649,11 @@ Markdown.render = function(text, repo_base_url, autolinks, ref_links, footnote_m
 
   -- Decode HTML character references (&amp; &#123; &#x1F; etc.)
   rendered_text = decode_html_entities(rendered_text, highlights, links)
+
+  -- Close up the CJK gaps left behind by the removed markers.  Runs last so
+  -- that every span boundary is final, and before the heading/list/blockquote
+  -- highlights below, which are not inline spans.
+  rendered_text = drop_marker_spaces(rendered_text, highlights, links)
 
   ::finalize::
 
