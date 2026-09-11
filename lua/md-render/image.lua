@@ -15,6 +15,7 @@ local M = {}
 
 local uv = vim.uv or vim.loop
 local ffi = require "ffi"
+local async = require "md-render.async"
 local tty_mod = require "md-render.tty"
 
 local IS_WINDOWS = ffi.os == "Windows"
@@ -374,29 +375,28 @@ end
 ---@param path string absolute path to video file
 ---@param callback fun(width: integer?, height: integer?)
 function M.video_dimensions_async(path, callback)
-  -- Use ffprobe to get original video dimensions
-  vim.system({
-    "ffprobe",
-    "-v",
-    "error",
-    "-select_streams",
-    "v:0",
-    "-show_entries",
-    "stream=width,height",
-    "-of",
-    "csv=p=0:s=x",
-    path,
-  }, { text = true, timeout = 10000 }, function(result)
-    vim.schedule(function()
-      if result.code == 0 and result.stdout then
-        local w, h = result.stdout:match "(%d+)x(%d+)"
-        if w and h then
-          callback(tonumber(w), tonumber(h))
-          return
-        end
+  async.run(function()
+    -- Use ffprobe to get original video dimensions
+    local result = async.system({
+      "ffprobe",
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "csv=p=0:s=x",
+      path,
+    }, { text = true, timeout = 10000 })
+    if result.code == 0 and result.stdout then
+      local w, h = result.stdout:match "(%d+)x(%d+)"
+      if w and h then
+        callback(tonumber(w), tonumber(h))
+        return
       end
-      callback(nil, nil)
-    end)
+    end
+    callback(nil, nil)
   end)
 end
 
@@ -560,17 +560,10 @@ function M.render_mermaid_async(source, callback)
   f:write(source)
   f:close()
 
-  local cmd = build_mmdc_cmd(cmd_prefix, tmp_input, cache_path)
-
-  vim.system(cmd, { text = true, timeout = 30000 }, function(_)
-    vim.schedule(function()
-      os.remove(tmp_input)
-      if vim.fn.filereadable(cache_path) == 1 then
-        done(cache_path)
-      else
-        done(nil)
-      end
-    end)
+  async.run(function()
+    async.system(build_mmdc_cmd(cmd_prefix, tmp_input, cache_path), { text = true, timeout = 30000 })
+    os.remove(tmp_input)
+    done(vim.fn.filereadable(cache_path) == 1 and cache_path or nil)
   end)
 end
 
@@ -659,27 +652,19 @@ end
 --- on its own. Without a local renderer and without a server, a `plantuml`
 --- fence stays a code block — which is what a `mermaid` fence does without
 --- `mmdc`.
+---@async
 ---@param source string
 ---@param cache_path string
----@param callback fun(png_path: string?)
-local function render_plantuml_remote_async(source, cache_path, callback)
+---@return string? png_path
+local function render_plantuml_remote(source, cache_path)
   local server = M.config().plantuml_server
-  if not server or vim.fn.executable "curl" ~= 1 then
-    callback(nil)
-    return
-  end
+  if not server or vim.fn.executable "curl" ~= 1 then return nil end
   local url = server:gsub("/+$", "") .. "/png/~h" .. plantuml_encode_hex(source)
   local cmd = { "curl", "-sfL", "--max-time", "15", "--max-filesize", "20000000", "-o", cache_path, url }
-  vim.system(cmd, { text = true }, function()
-    vim.schedule(function()
-      if vim.fn.filereadable(cache_path) == 1 then
-        callback(cache_path)
-      else
-        os.remove(cache_path)
-        callback(nil)
-      end
-    end)
-  end)
+  async.system(cmd, { text = true })
+  if vim.fn.filereadable(cache_path) == 1 then return cache_path end
+  os.remove(cache_path)
+  return nil
 end
 
 --- Render PlantUML source code to a PNG image (asynchronous, cached).
@@ -700,28 +685,27 @@ function M.render_plantuml_async(source, callback)
     finish_work(cache_path, path)
   end
 
-  local cmd_prefix = find_plantuml()
-  if not cmd_prefix then
-    render_plantuml_remote_async(source, cache_path, done)
-    return
-  end
+  async.run(function()
+    local cmd_prefix = find_plantuml()
+    if not cmd_prefix then
+      done(render_plantuml_remote(source, cache_path))
+      return
+    end
 
-  local cmd = vim.list_extend(vim.list_extend({}, cmd_prefix), { "-tpng", "-pipe" })
-  vim.system(cmd, { stdin = source, text = false, timeout = 30000 }, function(result)
-    vim.schedule(function()
-      if result.stdout and #result.stdout > 0 then
-        local f = io.open(cache_path, "wb")
-        if f then
-          f:write(result.stdout)
-          f:close()
-        end
+    local cmd = vim.list_extend(vim.list_extend({}, cmd_prefix), { "-tpng", "-pipe" })
+    local result = async.system(cmd, { stdin = source, text = false, timeout = 30000 })
+    if result.stdout and #result.stdout > 0 then
+      local f = io.open(cache_path, "wb")
+      if f then
+        f:write(result.stdout)
+        f:close()
       end
-      if vim.fn.filereadable(cache_path) == 1 then
-        done(cache_path)
-      else
-        render_plantuml_remote_async(source, cache_path, done)
-      end
-    end)
+    end
+    if vim.fn.filereadable(cache_path) == 1 then
+      done(cache_path)
+    else
+      done(render_plantuml_remote(source, cache_path))
+    end
   end)
 end
 
@@ -986,17 +970,16 @@ local function detect_video_ext(path)
   return nil
 end
 
---- Validate a downloaded file and update cache, then invoke callback.
+--- Validate a downloaded file and update cache.
 --- If the file is video with a wrong extension, rename it to the correct one.
 ---@param url string
 ---@param cache_path string
----@param callback fun(path: string?)
-local function finalize_download(url, cache_path, callback)
+---@return string? path  nil when the download is not usable
+local function finalize_download(url, cache_path)
   if vim.fn.filereadable(cache_path) == 1 then
     if M.image_dimensions(cache_path) then
       _url_cache[url] = cache_path
-      callback(cache_path)
-      return
+      return cache_path
     end
     -- Check if it's a video with wrong extension
     local video_ext = detect_video_ext(cache_path)
@@ -1008,12 +991,32 @@ local function finalize_download(url, cache_path, callback)
         cache_path = correct_path
       end
       _url_cache[url] = cache_path
-      callback(cache_path)
-      return
+      return cache_path
     end
   end
   os.remove(cache_path)
-  callback(nil)
+  return nil
+end
+
+--- Offer the download to the user's `set_download_fn`, if one is registered.
+---
+--- That function answers twice: it returns whether it took the job, and calls
+--- back with the outcome if it did. Reading `taken` after the await is only
+--- sound because `md-render.async` never resumes a task from inside a callback
+--- — a user's function is free to call back before it returns.
+---@async
+---@param url string
+---@param cache_path string
+---@return boolean taken  whether the user's function took the job
+---@return boolean ok  what it reported; meaningless when `taken` is false
+local function custom_download(url, cache_path)
+  if not _custom_download_fn then return false, false end
+  local taken = false
+  local ok = async.await(1, function(callback)
+    taken = _custom_download_fn(url, cache_path, callback)
+    if not taken then callback(false) end
+  end)
+  return taken, ok
 end
 
 --- Download a URL to a local file asynchronously.
@@ -1039,35 +1042,23 @@ function M.download_async(url, callback)
     finish_work(cache_path, path)
   end
 
-  -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
-  if _custom_download_fn then
-    local handled = _custom_download_fn(url, cache_path, function(ok)
-      vim.schedule(function()
-        if ok then
-          finalize_download(url, cache_path, done)
-        else
-          done(nil)
-        end
-      end)
-    end)
-    if handled then return end
-  end
-
-  -- Default: download with curl
-  vim.system(
-    { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url },
-    { text = true },
-    function(result)
-      vim.schedule(function()
-        if result.code == 0 then
-          finalize_download(url, cache_path, done)
-        else
-          os.remove(cache_path)
-          done(nil)
-        end
-      end)
+  async.run(function()
+    -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
+    local taken, ok = custom_download(url, cache_path)
+    if taken then
+      done(ok and finalize_download(url, cache_path) or nil)
+      return
     end
-  )
+
+    -- Default: download with curl
+    local cmd = { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url }
+    if async.system(cmd, { text = true }).code ~= 0 then
+      os.remove(cache_path)
+      done(nil)
+      return
+    end
+    done(finalize_download(url, cache_path))
+  end)
 end
 
 --- Check if a video URL is already cached (in-memory or on disk).
@@ -1103,38 +1094,30 @@ function M.download_video_async(url, callback)
     finish_work(cache_path, path)
   end
 
-  -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
-  if _custom_download_fn then
-    local handled = _custom_download_fn(url, cache_path, function(ok)
-      vim.schedule(function()
-        if ok and vim.fn.filereadable(cache_path) == 1 then
-          _url_cache[url] = cache_path
-          done(cache_path)
-        else
-          os.remove(cache_path)
-          done(nil)
-        end
-      end)
-    end)
-    if handled then return end
+  --- Both paths below accept the download on the same terms.
+  ---@param arrived boolean
+  local function settle(arrived)
+    if arrived and vim.fn.filereadable(cache_path) == 1 then
+      _url_cache[url] = cache_path
+      done(cache_path)
+    else
+      os.remove(cache_path)
+      done(nil)
+    end
   end
 
-  -- Default: download with curl (larger limits for video)
-  vim.system(
-    { "curl", "-sfL", "--max-time", "30", "--max-filesize", "104857600", "-o", cache_path, url },
-    { text = true },
-    function(result)
-      vim.schedule(function()
-        if result.code == 0 and vim.fn.filereadable(cache_path) == 1 then
-          _url_cache[url] = cache_path
-          done(cache_path)
-        else
-          os.remove(cache_path)
-          done(nil)
-        end
-      end)
+  async.run(function()
+    -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
+    local taken, ok = custom_download(url, cache_path)
+    if taken then
+      settle(ok)
+      return
     end
-  )
+
+    -- Default: download with curl (larger limits for video)
+    local cmd = { "curl", "-sfL", "--max-time", "30", "--max-filesize", "104857600", "-o", cache_path, url }
+    settle(async.system(cmd, { text = true }).code == 0)
+  end)
 end
 
 --- Resolve an image source to a local file path (cache-only for URLs).
@@ -1321,18 +1304,16 @@ function M.ensure_png_async(path, callback)
     return
   end
   local tmp = vim.fn.tempname() .. ".png"
-  vim.system(build_convert_cmd(tool, path, tmp), { text = true }, function(result)
-    vim.schedule(function()
-      if result.code ~= 0 then
-        callback(nil, false)
-        return
-      end
-      if cache_path and install_to_cache(tmp, cache_path) then
-        callback(cache_path, false)
-      else
-        callback(tmp, true)
-      end
-    end)
+  async.run(function()
+    if async.system(build_convert_cmd(tool, path, tmp), { text = true }).code ~= 0 then
+      callback(nil, false)
+      return
+    end
+    if cache_path and install_to_cache(tmp, cache_path) then
+      callback(cache_path, false)
+    else
+      callback(tmp, true)
+    end
   end)
 end
 
@@ -1699,6 +1680,7 @@ function M.transmit_animated_async(path, callback)
   --- between batches so Neovim stays responsive while the terminal processes
   --- the image data. Callback is invoked after the first batch so animation
   --- can start immediately with available frames.
+  ---@async
   ---@param frames string[]
   local function transmit_frames(frames)
     local frame_w, frame_h = M.image_dimensions(frames[1])
@@ -1712,34 +1694,27 @@ function M.transmit_animated_async(path, callback)
       all_ids[i] = _image_id
     end
 
-    local idx = 1
-    local function send_next_batch()
-      local end_idx = math.min(idx + BATCH_SIZE - 1, total)
+    for first = 1, total, BATCH_SIZE do
+      local last = math.min(first + BATCH_SIZE - 1, total)
       M.begin_batch()
-      for i = idx, end_idx do
+      for i = first, last do
         local b64_path = vim.base64.encode(frames[i])
         term_write(string.format("\x1b_Ga=t,f=100,t=f,i=%d,q=2;%s\x1b\\", all_ids[i], b64_path))
         _image_paths[all_ids[i]] = frames[i]
       end
       M.flush_batch()
-      idx = end_idx + 1
-      if idx <= total then vim.defer_fn(send_next_batch, 10) end
+      if first == 1 then callback(all_ids, nil, frame_w, frame_h) end
+      if last < total then async.sleep(10) end
     end
-
-    send_next_batch()
-    callback(all_ids, nil, frame_w, frame_h)
   end
 
-  -- Check frame cache first
-  local cached = get_cached_frames(path, cache_dir)
-  if cached then
-    transmit_frames(cached)
-    return
-  end
+  async.run(function()
+    -- Check frame cache first
+    local frames = get_cached_frames(path, cache_dir)
 
-  -- Count frames first
-  vim.system(build_frame_count_cmd(anim_tool, path), { text = true }, function(count_result)
-    vim.schedule(function()
+    if not frames then
+      -- Count frames first
+      local count_result = async.system(build_frame_count_cmd(anim_tool, path), { text = true })
       local total_frames = 1
       if count_result.code == 0 and count_result.stdout then
         total_frames = tonumber(count_result.stdout:match "%d+") or 1
@@ -1748,28 +1723,24 @@ function M.transmit_animated_async(path, callback)
       vim.fn.mkdir(cache_dir, "p")
 
       local cmd = build_frame_extract_cmd(anim_tool, path, cache_dir, total_frames)
+      local result = async.system(cmd, { text = true, timeout = 30000 })
+      if result.code ~= 0 then
+        warn_extract_failed(anim_tool, result)
+        vim.fn.delete(cache_dir, "rf")
+        callback(nil)
+        return
+      end
 
-      vim.system(cmd, { text = true, timeout = 30000 }, function(result)
-        vim.schedule(function()
-          if result.code ~= 0 then
-            warn_extract_failed(anim_tool, result)
-            vim.fn.delete(cache_dir, "rf")
-            callback(nil)
-            return
-          end
+      frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
+      table.sort(frames)
+      if #frames == 0 then
+        vim.fn.delete(cache_dir, "rf")
+        callback(nil)
+        return
+      end
+    end
 
-          local frames = vim.fn.glob(cache_dir .. "/frame_*.png", false, true)
-          table.sort(frames)
-          if #frames == 0 then
-            vim.fn.delete(cache_dir, "rf")
-            callback(nil)
-            return
-          end
-
-          transmit_frames(frames)
-        end)
-      end)
-    end)
+    transmit_frames(frames)
   end)
 end
 
