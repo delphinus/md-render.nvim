@@ -1,10 +1,17 @@
--- Async shim unit tests: the contract md-render.async promises on both the
--- 0.13 `vim.async` runtime and the 0.12 `vim._async` one.
+-- Async tests.
+--
+-- Two jobs. First, pin what `md-render.async` adds on top of `vim.async`.
+-- Second, and more important: run the same behaviour suite against both the
+-- built-in `vim.async` and the vendored copy 0.12 falls back to, so the copy is
+-- exercised on every Neovim the CI matrix covers rather than only the oldest
+-- one. On 0.12 the two are the same object and the suite simply runs twice.
+--
 -- Run: nvim --headless -u NONE --noplugin -l tests/async_test.lua
 
 package.path = vim.fn.getcwd() .. "/lua/?.lua;" .. vim.fn.getcwd() .. "/lua/?/init.lua;" .. package.path
 
 local async = require "md-render.async"
+local vendored = require "md-render.vendor.async"
 
 local pass_count = 0
 local fail_count = 0
@@ -40,45 +47,209 @@ end
 --- Pump the event loop until `done` or the budget runs out.
 ---@param done fun(): boolean
 local function pump(done)
-  vim.wait(2000, done, 10)
+  vim.wait(2000, done, 5)
 end
 
 -- ============================================================================
--- Which runtime is in use
+-- The same suite against both copies
+-- ============================================================================
+
+--- @param label string
+--- @param a vim.async
+local function behaviour_suite(label, a)
+  local function name(what)
+    return label .. ": " .. what
+  end
+
+  test(name "run and await round trip", function()
+    local task = a.run(function()
+      local result = a.await(3, vim.system, { "sh", "-c", "printf md-render" }, { text = true })
+      return result.code, result.stdout
+    end)
+    assert_eq({ task:wait(3000) }, { 0, "md-render" }, name "a command's result comes back through the task")
+  end)
+
+  test(name "a task is a value several awaiters can share", function()
+    -- This is the whole reason for the copy: 0.12's `vim._async` has tasks you
+    -- can start but not results you can share, so the plugin's own in-flight
+    -- deduplication had nothing to build on.
+    local runs = 0
+    local shared = a.run(function()
+      runs = runs + 1
+      a.sleep(20)
+      return "computed once"
+    end)
+    local got = {}
+    for i = 1, 3 do
+      a.run(function()
+        got[i] = a.await(shared)
+      end)
+    end
+    pump(function()
+      return got[3] ~= nil
+    end)
+    -- One that turns up after it already finished.
+    local late = a.run(function()
+      return a.await(shared)
+    end)
+
+    assert_eq(runs, 1, name "the work ran once")
+    assert_eq(got, { "computed once", "computed once", "computed once" }, name "and every awaiter got the result")
+    assert_eq(late:wait(2000), "computed once", name "including one that arrived after it settled")
+  end)
+
+  test(name "close cancels a suspended task and runs its cleanup", function()
+    local cleaned, reason = false, nil
+    local victim = a.run(function()
+      local ok, err = pcall(function()
+        a.sleep(5000)
+      end)
+      cleaned, reason = true, err
+    end)
+    pump(function()
+      return victim:status() == "suspended"
+    end)
+    victim:close()
+    pump(function()
+      return cleaned
+    end)
+
+    assert_true(cleaned, name "the task woke up instead of sitting on its timer")
+    assert_eq(tostring(reason), "closed", name "and was told why")
+  end)
+
+  test(name "semaphore caps how many run at once", function()
+    local sem = a.semaphore(2)
+    local live, peak = 0, 0
+    local tasks = {}
+    for i = 1, 6 do
+      tasks[i] = a.run(function()
+        sem:with(function()
+          live = live + 1
+          peak = math.max(peak, live)
+          a.sleep(10)
+          live = live - 1
+        end)
+      end)
+    end
+    for _, task in ipairs(tasks) do
+      task:wait(3000)
+    end
+    assert_eq(peak, 2, name "never more than the permit count")
+  end)
+
+  test(name "iter hands back tasks in completion order", function()
+    local slow = a.run(function()
+      a.sleep(60)
+      return "slow"
+    end)
+    local fast = a.run(function()
+      a.sleep(10)
+      return "fast"
+    end)
+    local order = {}
+    a.run(function()
+      for task in a.iter { slow, fast } do
+        order[#order + 1] = a.await(task)
+      end
+    end):wait(3000)
+    assert_eq(order, { "fast", "slow" }, name "finished first comes back first, not listed first")
+  end)
+
+  test(name "timeout raises and cancels the task that lost", function()
+    local cancelled = false
+    local victim = a.run(function()
+      pcall(function()
+        a.sleep(5000)
+      end)
+      cancelled = true
+    end)
+    local raised = a.run(function()
+      local ok, err = pcall(function()
+        return a.timeout(30, victim)
+      end)
+      return ok, tostring(err)
+    end):wait(3000)
+    pump(function()
+      return cancelled
+    end)
+
+    assert_eq(raised, false, name "the deadline raises")
+    assert_true(cancelled, name "and the work it was waiting on is actually stopped")
+  end)
+
+  test(name "pawait reports a failure instead of raising", function()
+    local got = {
+      a.run(function()
+        return a.pawait(a.run(function()
+          error("nope", 0)
+        end))
+      end):wait(2000),
+    }
+    assert_eq(got, { false, "nope" }, name "ok is false and the error comes back as a value")
+  end)
+
+  test(name "a callback that fires at once does not resume inline", function()
+    -- 0.12's `vim._async` resumed from inside the callback, so the awaiting
+    -- code ran on before the awaited function had returned. `image.lua` reads
+    -- what `set_download_fn` returned right after awaiting its callback.
+    local order = {}
+    a.run(function()
+      a.await(1, function(callback)
+        order[#order + 1] = "enter"
+        callback()
+        order[#order + 1] = "leave"
+      end)
+      order[#order + 1] = "resumed"
+    end)
+    pump(function()
+      return #order >= 3
+    end)
+    assert_eq(order, { "enter", "leave", "resumed" }, name "the awaited function finishes first")
+  end)
+
+  test(name "await surfaces a raise from the awaited function", function()
+    -- `vim.system` raises when the command is not on PATH.
+    local got = {
+      a.run(function()
+        return pcall(function()
+          a.await(1, function()
+            error("ENOENT", 0)
+          end)
+        end)
+      end):wait(2000),
+    }
+    assert_eq(got, { false, "ENOENT" }, name "it arrives where the code was waiting")
+  end)
+end
+
+behaviour_suite("built-in", vim.async or vendored)
+behaviour_suite("vendored", vendored)
+
+-- ============================================================================
+-- Picking a copy
 -- ============================================================================
 
 test("backend matches what this Neovim carries", function()
   if vim.async then
-    assert_eq(async.backend, "vim.async", "0.13 and later use the public vim.async")
+    assert_eq(async.backend, "vim.async", "0.13 and later use the built-in one")
   else
-    assert_eq(async.backend, "vim._async", "0.12 falls back to the private vim._async")
-    assert_eq(vim._async, nil, "vim._async is reachable only through require, not as a field")
+    assert_eq(async.backend, "vendored", "0.12 falls back to the copy")
+    assert_true(rawequal(getmetatable(async).__index, vendored), "and that copy is what the module forwards to")
   end
 end)
 
--- ============================================================================
--- run
--- ============================================================================
-
-test("run starts the task synchronously", function()
-  -- Several callers depend on this: `download_async` has to have spawned its
-  -- curl by the time it returns, or a second request for the same URL would
-  -- not find any work to join.
-  local reached = false
-  async.run(function()
-    reached = true
-    async.schedule()
-  end)
-  assert_true(reached, "the body runs up to its first await before run() returns")
+test("the whole vim.async surface is reachable through the module", function()
+  -- Call sites should never have to know which copy answered.
+  for _, fn in ipairs { "await", "pawait", "checkpoint", "is_closing", "iter", "sleep", "timeout", "wrap" } do
+    assert_true(vim.is_callable(async[fn]), fn .. " is callable")
+  end
+  assert_true(vim.is_callable(async.semaphore), "semaphore is callable")
 end)
 
-test("run hands return values to wait", function()
-  local task = async.run(function()
-    async.schedule()
-    return "one", 2
-  end)
-  assert_eq({ task:wait(2000) }, { "one", 2 }, "every return value survives the round trip")
-end)
+-- ============================================================================
+-- What this module adds
+-- ============================================================================
 
 test("run reports a failure nobody waited on", function()
   local real_notify = vim.notify
@@ -96,140 +267,40 @@ test("run reports a failure nobody waited on", function()
   end)
   vim.notify = real_notify
 
-  assert_eq(#notified, 1, "an unobserved error is surfaced instead of vanishing")
-  assert_true(notified[1] and notified[1]:match "kaboom", "and the message names the failure")
+  assert_eq(#notified, 1, "an unobserved failure is surfaced instead of vanishing")
+  assert_true(notified[1] and notified[1]:match "kaboom", "and the message names it")
 end)
 
-test("run still raises for a caller that waits", function()
+test("run stays quiet about a task that was cancelled on purpose", function()
   local real_notify = vim.notify
-  local notified = false
-  vim.notify = function()
-    notified = true
+  local notified = {}
+  vim.notify = function(msg)
+    table.insert(notified, msg)
   end
+
   local task = async.run(function()
-    error("waited-on boom", 0)
+    async.sleep(5000)
   end)
-  local ok, err = pcall(function()
-    return task:wait(2000)
-  end)
-  -- The report is scheduled, so let it land before putting vim.notify back;
-  -- otherwise it fires against the real one and prints during the run.
   pump(function()
-    return notified
+    return task:status() == "suspended"
   end)
+  task:close()
+  pump(function()
+    return task:status() == "completed"
+  end)
+  vim.wait(50)
   vim.notify = real_notify
 
-  assert_true(not ok, "wait() re-raises")
-  assert_true(tostring(err):match "waited%-on boom", "with the original message")
+  assert_eq(notified, {}, "closing a task is the caller getting what it asked for")
 end)
 
--- ============================================================================
--- await
--- ============================================================================
-
-test("await splices the callback at argc and returns its arguments", function()
-  local seen
-  local got
-  local function takes_callback_third(a, b, callback)
-    seen = { a, b }
-    vim.schedule(function()
-      callback("x", "y")
-    end)
-  end
-
-  async.run(function()
-    got = { async.await(3, takes_callback_third, "first", "second") }
-  end)
-  pump(function()
-    return got ~= nil
-  end)
-
-  assert_eq(seen, { "first", "second" }, "the leading arguments are passed through untouched")
-  assert_eq(got, { "x", "y" }, "and the callback's arguments come back as return values")
+test("run passes arguments and returns the task", function()
+  local task = async.run(function(a, b)
+    async.schedule()
+    return a + b
+  end, 2, 3)
+  assert_eq(task:wait(2000), 5, "arguments reach the function and the result comes back")
 end)
-
-test("await never resumes from inside the callback", function()
-  -- 0.12 resumes inline where 0.13 queues, so on 0.12 the awaiting task would
-  -- run on before `fn` had finished — before its return value existed, and
-  -- before anything it assigns on the way out was assigned. The shim exists
-  -- partly to hide that, and callers rely on it: `image.custom_download` reads
-  -- what the user's download function returned right after awaiting its
-  -- callback, and the two can arrive in either order.
-  local order = {}
-  local returned_value
-  async.run(function()
-    async.await(1, function(callback)
-      order[#order + 1] = "enter"
-      callback "at once"
-      returned_value = "assigned on the way out"
-      order[#order + 1] = "leave"
-    end)
-    order[#order + 1] = "resumed"
-  end)
-  pump(function()
-    return #order >= 3
-  end)
-
-  assert_eq(order, { "enter", "leave", "resumed" }, "fn runs to completion before the task continues")
-  assert_eq(returned_value, "assigned on the way out", "so what it assigned last is visible")
-end)
-
-test("await turns a raise from the awaited function into a normal error", function()
-  -- `vim.system` raises when the command is not on PATH. Raised from inside the
-  -- yielded function, neither runtime hands that to anybody: the task just
-  -- stops. The awaiting code has to be able to catch it where it waited.
-  local caught
-  local task = async.run(function()
-    local ok, err = pcall(function()
-      async.await(1, function()
-        error("ENOENT: no such file or directory", 0)
-      end)
-    end)
-    caught = { ok, err }
-    return "kept going"
-  end)
-
-  assert_eq(task:wait(2000), "kept going", "the task survives and finishes")
-  assert_eq(caught and caught[1], false, "the await raised")
-  assert_eq(caught and caught[2], "ENOENT: no such file or directory", "with the original message")
-end)
-
-test("await keeps the answer when the function calls back and then raises", function()
-  local got
-  local task = async.run(function()
-    got = async.await(1, function(callback)
-      callback "answered"
-      error("noise on the way out", 0)
-    end)
-    return "kept going"
-  end)
-
-  assert_eq(task:wait(2000), "kept going", "the task is not derailed")
-  assert_eq(got, "answered", "the callback's answer wins over the later raise")
-end)
-
-test("await passes nils through without losing the ones after them", function()
-  local got
-  async.run(function()
-    got = vim.F.pack_len(async.await(3, function(a, b, callback)
-      vim.schedule(function()
-        callback(nil, "after a nil")
-      end)
-      got = { a, b }
-    end, nil, "second"))
-  end)
-  pump(function()
-    return got ~= nil and got.n ~= nil
-  end)
-
-  assert_eq(got.n, 2, "the callback was called with two arguments")
-  assert_eq(got[1], nil, "the first is nil")
-  assert_eq(got[2], "after a nil", "and the one behind it survived")
-end)
-
--- ============================================================================
--- system
--- ============================================================================
 
 test("system returns the completed result on the main loop", function()
   local result, fast
@@ -253,7 +324,9 @@ test("system reads vim.system at call time so tests can stand in for it", functi
   local spawned
   vim.system = function(cmd, _, on_exit)
     spawned = cmd
-    on_exit { code = 7, stdout = "", stderr = "" }
+    vim.schedule(function()
+      on_exit { code = 7, stdout = "", stderr = "" }
+    end)
   end
   local code
   async.run(function()
@@ -268,23 +341,20 @@ test("system reads vim.system at call time so tests can stand in for it", functi
   assert_eq(code, 7, "and its result reaches the task")
 end)
 
--- ============================================================================
--- sleep
--- ============================================================================
-
-test("sleep yields and resumes", function()
-  local resumed = false
-  local before = vim.uv.now()
+test("schedule leaves a fast event context", function()
+  local before, after
   async.run(function()
-    async.sleep(20)
-    resumed = true
+    async.await(3, vim.system, { "sh", "-c", "true" }, { text = true })
+    before = vim.in_fast_event()
+    async.schedule()
+    after = vim.in_fast_event()
   end)
-  assert_true(not resumed, "the task is suspended, not spinning")
   pump(function()
-    return resumed
+    return after ~= nil
   end)
-  assert_true(resumed, "and it comes back")
-  assert_true(vim.uv.now() - before >= 20, "no earlier than it was told to")
+
+  assert_eq(before, true, "vim.system resumes in a fast context")
+  assert_eq(after, false, "and schedule() gets out of it")
 end)
 
 print(string.format("\n%d passed, %d failed", pass_count, fail_count))

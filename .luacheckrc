@@ -30,7 +30,9 @@ globals = {
 -- literals legitimately exceed it and cannot be wrapped.
 ignore = { "631" }
 
-exclude_files = { "tests/fixtures/" }
+-- lua/md-render/vendor/ is upstream code kept verbatim, so its warnings are not
+-- this project's to act on. See lua/md-render/vendor/README.md.
+exclude_files = { "tests/fixtures/", "lua/md-render/vendor/" }
 
 -- Tests intentionally destructure unused return values, shadow module upvalues,
 -- and monkeypatch vim.* functions when mocking.

@@ -495,3 +495,7 @@ This runs all `tests/*_test.lua` files via `nvim --headless`. New test files mat
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+`lua/md-render/vendor/` is third-party code kept verbatim under its own license:
+a copy of Neovim's `vim.async` (Apache-2.0), which gives Neovim 0.12 the async
+runtime 0.13 has built in. See [its README](lua/md-render/vendor/README.md).

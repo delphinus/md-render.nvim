@@ -1001,9 +1001,11 @@ end
 --- Offer the download to the user's `set_download_fn`, if one is registered.
 ---
 --- That function answers twice: it returns whether it took the job, and calls
---- back with the outcome if it did. Reading `taken` after the await is only
---- sound because `md-render.async` never resumes a task from inside a callback
---- — a user's function is free to call back before it returns.
+--- back with the outcome if it did. A user's function is free to call back
+--- before it returns, so reading `taken` after the await is only sound because
+--- `vim.async` queues the resume rather than running it from inside the
+--- callback. 0.12's `vim._async` did resume inline, which is one of the reasons
+--- the plugin carries a copy of `vim.async` for it.
 ---@async
 ---@param url string
 ---@param cache_path string

@@ -495,3 +495,8 @@ make test
 ## ライセンス
 
 MIT — [LICENSE](LICENSE) を参照。
+
+`lua/md-render/vendor/` は原文のまま同梱している第三者のコードで、それぞれ独自の
+ライセンスに従います。中身は Neovim の `vim.async` のコピー (Apache-2.0) で、0.13
+に組み込まれている非同期ランタイムを Neovim 0.12 にも与えるためのものです。詳細は
+[同ディレクトリの README](lua/md-render/vendor/README.md) を参照。
