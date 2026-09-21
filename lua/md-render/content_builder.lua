@@ -328,7 +328,7 @@ end
 ---@param md_highlights MdRender.Markdown.Highlight[]
 ---@param md_links MdRender.Markdown.Link[]
 ---@param indent string
----@param max_width integer
+---@param max_width integer Display width excluding indent, including quote/list prefixes
 ---@param quote_prefix string
 ---@param list_marker? string
 ---@param line_gap? integer blank lines to insert after each wrapped line
@@ -721,7 +721,7 @@ end
 ---@param self MdRender.ContentBuilder
 ---@param text string
 ---@param indent string
----@param max_width integer
+---@param max_width integer Maximum display width including indent
 ---@param repo_base_url? string
 ---@param autolinks? MdRender.Autolink[]
 ---@param ref_links? table<string, string>
@@ -756,12 +756,11 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
   -- `heading_icon_pad_loss`.
   local icon_pad_loss = level and heading_icon_pad_loss(level) or 0
 
-  -- `add_wrapped_markdown` sizes the text alone while the test below sizes
-  -- indent + text. Only the scaled path needs the two to agree exactly, so the
-  -- plain path keeps passing `max_width` to both as it always has.
+  -- The window budget includes indent; add_wrapped_markdown adds it after
+  -- wrapping. Scaled headings already have it removed by heading_scale_plan.
   local indent_w = vim.api.nvim_strwidth(indent)
   local wrap_threshold = content_width and (indent_w + content_width) or max_width
-  local wrap_max = content_width or max_width
+  local wrap_max = content_width or math.max(1, max_width - indent_w)
 
   local lines_before_fn = #self.lines
   if indent_w + vim.api.nvim_strwidth(rendered_text) > wrap_threshold then
@@ -1667,7 +1666,8 @@ function ContentBuilder:render_document(lines, opts)
     -- strip_container_indent(); its indent comes back as display indent for
     -- this line only, and the width it takes up is off the budget. Both are
     -- the plain base for every other line, which is what the rest of the loop
-    -- reads.
+    -- reads. Text wrapping receives base_max_width instead: it accounts for
+    -- the complete display indent itself.
     local container_indent = container_indents[src_indices[src_idx]] or ""
     local indent = base_indent .. container_indent
     local max_width = math.max(1, base_max_width - #container_indent)
@@ -2045,14 +2045,15 @@ function ContentBuilder:render_document(lines, opts)
           end
           if dd_content and dd_content ~= "" then
             local dd_indent = indent .. "  "
+            local dd_width = math.max(1, base_max_width - vim.api.nvim_strwidth(dd_indent))
             local dd_lines_before = #self.lines
             -- Split on <br> / <br/> / <br /> and render each segment
             for _, seg in ipairs(vim.split(dd_content, "<br%s*/?>", { plain = false, trimempty = true })) do
               seg = seg:gsub("^%s+", ""):gsub("%s+$", "")
               if seg ~= "" then
                 local dd_rendered, dd_hls, dd_links = markdown.render(seg, repo_base_url, autolinks, ref_links)
-                if vim.api.nvim_strwidth(dd_rendered) > max_width - 2 then
-                  self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, max_width - 2, "")
+                if vim.api.nvim_strwidth(dd_rendered) > dd_width then
+                  self:add_wrapped_markdown(dd_rendered, dd_hls, dd_links, dd_indent, dd_width, "")
                 else
                   self:add_simple_markdown(dd_rendered, dd_hls, dd_links, dd_indent)
                 end
@@ -2400,7 +2401,7 @@ function ContentBuilder:render_document(lines, opts)
           -- Render as blockquote-style content with alert styling
           local qn_line = "> " .. line
           local alert_type_ret =
-            self:add_markdown_line(qn_line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
+            self:add_markdown_line(qn_line, indent, base_max_width, repo_base_url, autolinks, ref_links, footnote_map)
           local lines_after = #self.lines
           if not alert_type_ret then self:apply_alert_styling(lines_before, lines_after, qiita_note_type, false) end
           lines_shown = lines_shown + (lines_after - lines_before)
@@ -3034,7 +3035,7 @@ function ContentBuilder:render_document(lines, opts)
 
         if not handled then
           local alert_type, fold_mod =
-            self:add_markdown_line(line, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
+            self:add_markdown_line(line, indent, base_max_width, repo_base_url, autolinks, ref_links, footnote_map)
           local lines_after = #self.lines
           if alert_type then
             current_alert_type = alert_type
