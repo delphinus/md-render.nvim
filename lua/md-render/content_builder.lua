@@ -1116,6 +1116,38 @@ local function list_content_column(line)
   return #ws + #marker + (#gap <= 4 and #gap or 1)
 end
 
+--- Expand tabs in each line's leading whitespace to spaces, with tab stops
+--- every four columns as CommonMark specifies.
+---
+--- Everything that measures indentation counts spaces, so a list item
+--- indented with a tab was one column deep instead of four: its continuation
+--- lines hung from the wrong column, and the tab itself reached the buffer,
+--- where 'tabstop' decided how wide it was.  Fenced code is left alone, since
+--- its tabs are content.
+---@param lines string[]
+---@return string[]
+local function expand_leading_tabs(lines)
+  local result = {}
+  local in_code = false
+  for i, line in ipairs(lines) do
+    result[i] = line
+    local fence = line:match "^%s*```" or line:match "^%s*~~~"
+    if fence then
+      in_code = not in_code
+    elseif not in_code then
+      local ws = line:match "^[ \t]*"
+      if ws:find("\t", 1, true) then
+        local col = 0
+        for c in ws:gmatch "." do
+          col = c == "\t" and (col + 4 - col % 4) or (col + 1)
+        end
+        result[i] = string.rep(" ", col) .. line:sub(#ws + 1)
+      end
+    end
+  end
+  return result
+end
+
 --- Move the content of a block container to column 0 and report the indent
 --- that was taken off each line.
 ---
@@ -1429,6 +1461,7 @@ function ContentBuilder:render_document(lines, opts)
   -- container_indents keeps the indent per *original* line so the loop below
   -- can restore it on output.
   local container_indents
+  lines = expand_leading_tabs(lines)
   lines, container_indents = strip_container_indent(lines)
   lines, src_indices = preprocess_multiline_html(lines, src_indices)
   lines, src_indices = join_paragraph_continuations(lines, src_indices, container_indents)
