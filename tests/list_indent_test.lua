@@ -153,5 +153,29 @@ do
   )
 end
 
+-- Test 10: a tab in the indentation advances to the next multiple of four,
+-- so a tab-indented item nests exactly as a four-space one does, wraps under
+-- its own text, and no tab reaches the output
+do
+  local long = string.rep("あ", 30)
+  local tabbed = render({ "- 外側", "\t- " .. long }, 24)
+  assert_eq(tabbed, render({ "- 外側", "    - " .. long }, 24), "a tab should indent like four spaces")
+  assert_eq(
+    #tabbed[3]:match "^ *",
+    vim.api.nvim_strwidth(tabbed[2]:match "^ *[^ ]+ "),
+    "a tab-indented item should hang under its text"
+  )
+  assert_eq(table.concat(tabbed):find("\t", 1, true), nil, "no tab should reach the output")
+
+  assert_eq(
+    render { "- 外側", "  \t- 内側" },
+    render { "- 外側", "    - 内側" },
+    "a tab after spaces should stop at column four"
+  )
+
+  local out = render { "- 項目", "", "  ```", "  \tx = 1", "  ```" }
+  assert_eq(out[2]:find("\t", 1, true) ~= nil, true, "a tab in fenced code is content and must stay")
+end
+
 print(string.format("\nlist_indent_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
