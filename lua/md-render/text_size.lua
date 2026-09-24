@@ -525,6 +525,7 @@ end
 ---@field augroup integer?
 ---@field last_layout string? screen positions of the previous paint
 ---@field last_drawn integer? how many placements the previous paint drew
+---@field drawn table[]? placements at their last painted screen positions
 ---@field owes_invalidate boolean? a write went out without clearing what it replaced
 ---@field last_event_at integer? loop time of the last repaint request
 
@@ -665,8 +666,10 @@ end
 M._stats = { paints = 0, invalidations = 0, skipped = 0, keepalives = 0 }
 
 --- Write the runs for `drawn` where they currently sit.
+---@param state MdRender.TextSizeState
 ---@param drawn { p: MdRender.TextPlacement, row: integer, col: integer, icon_col: integer? }[]
-local function write_runs(drawn)
+local function write_runs(state, drawn)
+  state.drawn = drawn
   if #drawn == 0 then return end
   local out = {}
   for _, d in ipairs(drawn) do
@@ -783,7 +786,7 @@ function M.paint(state)
     end
     state.last_layout = layout_key(drawn)
     state.last_drawn = #drawn
-    write_runs(drawn)
+    write_runs(state, drawn)
   end)
   -- Never leave synchronized output open: the terminal would freeze the frame
   -- until its own timeout.
@@ -880,7 +883,7 @@ local function reassert(state, forced)
     -- is exactly when a repaint by somebody else is most likely, and for that
     -- whole window nothing was putting the runs back. Re-sending bytes that
     -- are already correct cannot make anything worse.
-    write_runs(drawn)
+    write_runs(state, drawn)
     M._stats.keepalives = M._stats.keepalives + 1
   elseif state.redraw_timer then
     -- The layout moved and a real paint is already queued. That one knows how
@@ -931,7 +934,7 @@ local function restore_runs_now(state)
   vim.schedule(function()
     if not vim.api.nvim_win_is_valid(state.win) then return end
     local drawn = visible_placements(state)
-    write_runs(drawn)
+    write_runs(state, drawn)
     state.owes_invalidate = true
     state.last_layout = layout_key(drawn)
     state.last_drawn = #drawn
@@ -965,13 +968,29 @@ local decoration_pending = false
 --- `WinNew` 0, `WinClosed` 0, `on_end` 32. It is the one signal that says "the
 --- screen was just redrawn" whoever did it and however they did it.
 ---
---- `on_end` runs inside the redraw, which is no place to write escape codes,
---- so the write is scheduled — coalesced to one per redraw cycle, which is
---- also why it may skip the rate limit `SafeState` needs.
+--- `on_start` clears the terminal-only blocks before Neovim redraws.
+--- `on_end` schedules their restoration after Neovim flushes the grid,
+--- coalescing writes and bypassing the rate limit `SafeState` needs.
 local function ensure_redraw_notification()
   if decoration_ns then return end
   decoration_ns = vim.api.nvim_create_namespace "md_render_text_size_redraw"
   vim.api.nvim_set_decoration_provider(decoration_ns, {
+    on_start = function()
+      -- Writing spaces over a multicell's lower row skips its occupied cells
+      -- in Kitty. A cursorline repaint can therefore wrap into the next row.
+      -- Erase the blocks before Neovim draws, using their previous positions
+      -- because a scroll may already have changed screenpos(). on_end restores
+      -- them after the grid update. Keep the unscaled icon separator intact.
+      local out = {}
+      for _, st in pairs(active) do
+        for _, d in ipairs(st.drawn or {}) do
+          table.insert(out, string.format("\x1b[%d;%dH\x1b[%dX", d.row, d.col, d.p.width))
+          if d.icon_col then table.insert(out, string.format("\x1b[%d;%dH\x1b[%dX", d.row, d.icon_col, d.p.scale)) end
+        end
+        st.drawn = nil
+      end
+      if #out > 0 then vim.api.nvim_ui_send("\x1b7" .. table.concat(out) .. "\x1b8") end
+    end,
     on_end = function()
       if decoration_pending or not next(active) then return end
       decoration_pending = true
