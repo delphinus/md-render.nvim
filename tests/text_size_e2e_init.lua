@@ -6,7 +6,8 @@
 --
 -- Environment:
 --   MD_RENDER_E2E_ENABLED  "1" to turn scaled headings on
---   MD_RENDER_E2E_SIGNAL   path to create once the preview has settled
+--   MD_RENDER_E2E_MODE     "toggle" for an in-place preview, otherwise a float
+--   MD_RENDER_E2E_SIGNAL   path for "ready" or "error" once the preview settles
 --   MD_RENDER_E2E_DIAG     path to write plugin-side diagnostics to
 
 local plugin_root = vim.fn.getcwd()
@@ -30,7 +31,12 @@ vim.defer_fn(function()
   vim.cmd("edit " .. plugin_root .. "/tests/fixtures/text_size_e2e.md")
   vim.bo.filetype = "markdown"
   local ok, err = pcall(function()
-    require("md-render").preview.show()
+    if vim.env.MD_RENDER_E2E_MODE == "toggle" then
+      vim.wo.cursorline = true
+      require("md-render").preview.toggle()
+    else
+      require("md-render").preview.show()
+    end
   end)
   table.insert(diag, "show_ok=" .. tostring(ok) .. " err=" .. tostring(err))
 
@@ -50,6 +56,6 @@ vim.defer_fn(function()
     table.insert(diag, "max_width=" .. tostring(session and session.opts.max_width))
 
     write(vim.env.MD_RENDER_E2E_DIAG, table.concat(diag, "\n") .. "\n")
-    write(vim.env.MD_RENDER_E2E_SIGNAL, "ready\n")
+    write(vim.env.MD_RENDER_E2E_SIGNAL, ok and "ready\n" or "error\n")
   end, 2000)
 end, 1000)
