@@ -1248,7 +1248,6 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
   local result_indices = {}
   local para = {}
   local para_src = nil
-  local in_code = false
   local open_fence = nil
   local in_html_comment = false
 
@@ -1274,7 +1273,7 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
     do
       -- Track code fences (the indent a list item adds is allowed)
       open_fence = fence_mod.step(open_fence, line)
-      in_code = open_fence ~= nil
+      local in_code = open_fence ~= nil
 
       -- Track multi-line HTML comments
       if not in_code then
