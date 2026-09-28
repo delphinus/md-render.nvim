@@ -790,11 +790,9 @@ do
   local plain = render({ long }, { max_width = 40, indent = indent })
   assert_true(#plain.lines > 1, "the heading wraps at this width")
   assert_eq(plain.lines[1]:sub(#indent + 1, #indent + #prefix), prefix, "plain: the icon keeps both of its cells")
-  -- The cell put back was held out of the wrap, so the line is no wider than
-  -- one that never lost it. (The plain path wraps the text alone, so the
-  -- indent sits outside the width it was given — as it always has.)
+  -- Both the restored cell and the indent must fit inside the window budget.
   assert_true(
-    vim.api.nvim_strwidth(plain.lines[1]) <= vim.api.nvim_strwidth(indent) + 40,
+    vim.api.nvim_strwidth(plain.lines[1]) <= 40,
     "plain: and the cell put back was reserved, so the line is no wider for it"
   )
   local hl = plain.highlights[1]
