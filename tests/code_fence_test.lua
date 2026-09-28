@@ -79,5 +79,66 @@ do
   assert_eq(out[3], "  local x = 1", "code line keeps the item's indent")
 end
 
+--- Languages of the recorded code blocks, in order.
+local function langs(lines)
+  local out = {}
+  for _, cb in ipairs(build(lines).code_blocks) do
+    table.insert(out, cb.language)
+  end
+  return out
+end
+
+-- Test 6: spaces between the fence and the info string (GFM example 113)
+do
+  assert_eq(render { "``` bash", "echo hi", "```" }, { "echo hi" }, "``` bash should render as code")
+  assert_eq(langs { "``` bash", "echo hi", "```" }, { "bash" }, "language after a space should be recorded")
+  assert_eq(
+    langs { "~~~~    ruby startline=3 $%@#$", "def foo(x)", "~~~~~~~" },
+    { "ruby" },
+    "only the first word of the info string is the language"
+  )
+end
+
+-- Test 7: tilde fences (GFM examples 90, 111)
+do
+  assert_eq(render { "~~~bash", "echo hi", "~~~" }, { "echo hi" }, "~~~ fence should render as code")
+  assert_eq(langs { "~~~bash", "echo hi", "~~~" }, { "bash" }, "~~~ fence should record its language")
+  assert_eq(
+    render({ "foo", "---", "~~~", "bar", "~~~", "# baz" })[2],
+    "bar",
+    "a ~~~ block after a setext heading should render as code"
+  )
+end
+
+-- Test 8: only a matching fence closes the block (GFM examples 92-95, 107, 109, 117)
+do
+  assert_eq(render { "```", "aaa", "~~~", "```" }, { "aaa", "~~~" }, "~~~ does not close a ``` block")
+  assert_eq(render { "~~~", "aaa", "```", "~~~" }, { "aaa", "```" }, "``` does not close a ~~~ block")
+  assert_eq(render { "````", "aaa", "```", "``````" }, { "aaa", "```" }, "a shorter fence does not close")
+  assert_eq(render { "~~~~~~", "aaa", "~~~ ~~" }, { "aaa", "~~~ ~~" }, "a fence with trailing text does not close")
+  assert_eq(render { "```", "``` aaa", "```" }, { "``` aaa" }, "an info string does not close")
+  assert_eq(render { "```", "aaa", "    ```" }, { "aaa", "    ```" }, "a fence indented four columns is content")
+end
+
+-- Test 9: a backtick fence's info string may not contain a backtick (GFM examples 115-116)
+do
+  assert_eq(#build({ "``` aa ```", "foo" }).code_blocks, 0, "``` aa ``` is an inline code span")
+  assert_eq(langs { "~~~ aa ``` ~~~", "foo", "~~~" }, { "aa" }, "a tilde fence may carry backticks")
+end
+
+-- Test 10: the same forms work inside blockquotes and callouts
+do
+  assert_eq(langs { "> ``` bash", "> echo hi", "> ```" }, { "bash" }, "``` bash inside a blockquote")
+  assert_eq(langs { "> [!NOTE]", "> ~~~bash", "> echo hi", "> ~~~" }, { "bash" }, "~~~ inside a callout")
+  local out = render { "> ````", "> ```", "> ````" }
+  assert_eq(out[#out], "│ ```", "a shorter fence inside a blockquote is content")
+end
+
+-- Test 11: a tilde block nested in a list keeps the item's indent
+do
+  local out = render { "- item", "", "  ~~~sh", "  echo hi", "  ~~~", "", "  after" }
+  assert_eq(out, { "• item", "  echo hi", "  after" }, "~~~ nested in a list keeps the item's indent")
+end
+
 print(string.format("\ncode_fence_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
