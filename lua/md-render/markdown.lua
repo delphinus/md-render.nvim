@@ -21,6 +21,7 @@
 local Markdown = {}
 
 local wrap_mod = require "md-render.wrap"
+local fence_mod = require "md-render.fence"
 
 local MAX_URL_DISPLAY_WIDTH = 50
 
@@ -1705,7 +1706,7 @@ Markdown.parse_footnotes = function(lines)
   local label_to_num = {}
   local current_label = nil
   local current_parts = {}
-  local in_code = false
+  local open_fence = nil
 
   local function flush()
     if current_label then
@@ -1719,8 +1720,9 @@ Markdown.parse_footnotes = function(lines)
   end
 
   for _, line in ipairs(lines) do
-    if line:match "^```" then in_code = not in_code end
-    if in_code then goto continue end
+    local is_fence
+    open_fence, is_fence = fence_mod.step(open_fence, line)
+    if open_fence or is_fence then goto continue end
 
     local label, text = line:match "^%[%^([^%]]+)%]:%s+(.+)$"
     if label then

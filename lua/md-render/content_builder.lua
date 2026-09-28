@@ -190,6 +190,7 @@ end
 
 local wrap_mod = require "md-render.wrap"
 local icons = require "md-render.icons"
+local fence_mod = require "md-render.fence"
 
 local wrap_words = wrap_mod.wrap_words
 
@@ -1050,7 +1051,7 @@ end
 local function is_block_start(line, in_paragraph)
   if line:match "^%s*$" then return true end
   if line:match "^#+%s" then return true end
-  if line:match "^%s*```" or line:match "^%s*~~~" then return true end
+  if fence_mod.opening(line) then return true end
   if line:match "^%s*|" then return true end
   if line:match "^%s*[%-%*%+]%s" then return true end
   if line:match "^%s*%d+[%.)]%s" then return true end
@@ -1128,13 +1129,13 @@ end
 ---@return string[]
 local function expand_leading_tabs(lines)
   local result = {}
-  local in_code = false
+  local open_fence = nil
   for i, line in ipairs(lines) do
     result[i] = line
-    local fence = line:match "^%s*```" or line:match "^%s*~~~"
-    if fence then
-      in_code = not in_code
-    elseif not in_code then
+    local was_open = open_fence
+    local is_fence
+    open_fence, is_fence = fence_mod.step(open_fence, line)
+    if not is_fence and not was_open then
       local ws = line:match "^[ \t]*"
       if ws:find("\t", 1, true) then
         local col = 0
@@ -1183,16 +1184,17 @@ local function strip_container_indent(lines)
   local indents = {}
   -- Content columns of the list items currently open, innermost last.
   local item_cols = {}
-  local in_code = false
+  local open_fence = nil
 
   for i, line in ipairs(lines) do
     result[i] = line
-    local fence = line:match "^%s*```" or line:match "^%s*~~~"
+    local was_open = open_fence
+    local is_fence
+    open_fence, is_fence = fence_mod.step(open_fence, line)
 
-    if in_code or fence then
-      if fence then in_code = not in_code end
-    -- A blank line neither closes a list item nor holds a quote marker.
-    elseif not line:match "^%s*$" then
+    -- Fenced code is left to its block renderer.  A blank line neither closes
+    -- a list item nor holds a quote marker.
+    if not was_open and not is_fence and not line:match "^%s*$" then
       local ws = #line:match "^ *"
       -- Anything indented less than the innermost item's content has left it.
       while #item_cols > 0 and ws < item_cols[#item_cols] do
@@ -1246,7 +1248,7 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
   local result_indices = {}
   local para = {}
   local para_src = nil
-  local in_code = false
+  local open_fence = nil
   local in_html_comment = false
 
   local function flush_para()
@@ -1270,7 +1272,8 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
 
     do
       -- Track code fences (the indent a list item adds is allowed)
-      if line:match "^%s*```" or line:match "^%s*~~~" then in_code = not in_code end
+      open_fence = fence_mod.step(open_fence, line)
+      local in_code = open_fence ~= nil
 
       -- Track multi-line HTML comments
       if not in_code then
@@ -1369,7 +1372,7 @@ local function preprocess_multiline_html(lines, src_indices)
   local result = {}
   local result_indices = {}
   local accum = nil -- { tag: string, lines: string[], depth: integer, src: integer }
-  local in_code = false
+  local open_fence = nil
 
   for idx, l in ipairs(lines) do
     local src = src_indices[idx]
@@ -1391,8 +1394,8 @@ local function preprocess_multiline_html(lines, src_indices)
         accum = nil
       end
     else
-      if l:match "^%s*```" then in_code = not in_code end
-      if not in_code then
+      open_fence = fence_mod.step(open_fence, l)
+      if not open_fence then
         local tag_name = l:match "^%s*<(%a%w*)[%s>]"
         if tag_name then
           local lower_tag = tag_name:lower()
@@ -1495,6 +1498,8 @@ function ContentBuilder:render_document(lines, opts)
   -- list item. Content lines are dedented by it and re-indented on output,
   -- so the block lines up with the item it belongs to.
   local code_fence_indent = ""
+  -- The opening fence, which decides what may close the block.
+  local code_fence = nil
   local prev_was_heading = false
   local prev_was_hr = false
   local prev_rendered_blank = false
@@ -1511,6 +1516,7 @@ function ContentBuilder:render_document(lines, opts)
   local skip_callout_body = false
   local in_callout_code_block = false
   local callout_code_lang = nil
+  local callout_code_fence = nil
   local callout_code_start = nil
   local callout_code_prefix = nil
   local callout_code_source_lines = nil
@@ -1751,7 +1757,12 @@ function ContentBuilder:render_document(lines, opts)
     end
 
     -- Detect setext heading: current non-blank line followed by === or ---
-    if not in_code_block and not line:match "^%s*$" and not line:match "^[#>%-%*`|%d]" then
+    if
+      not in_code_block
+      and not line:match "^%s*$"
+      and not line:match "^[#>%-%*|%d]"
+      and not fence_mod.opening(line)
+    then
       local next_line = lines[src_idx + 1]
       if next_line then
         if next_line:match "^=+%s*$" then
@@ -2426,7 +2437,7 @@ function ContentBuilder:render_document(lines, opts)
       if in_qiita_note then
         -- Code blocks inside Qiita notes: transform to callout format
         -- and fall through to the callout code block handler below
-        if in_callout_code_block or line:match "^```" then
+        if in_callout_code_block or fence_mod.opening(line) then
           line = "> " .. line
           current_alert_type = qiita_note_type
         else
@@ -2454,11 +2465,14 @@ function ContentBuilder:render_document(lines, opts)
     elseif in_math_block then
       local indented = indent .. line
       self:add_line(indented, { { col = 0, end_col = -1, hl = "MdRenderMath" } })
-    elseif line:match "^%s*```" then
+    elseif
+      (in_code_block and fence_mod.closes(line, code_fence)) or (not in_code_block and fence_mod.opening(line))
+    then
       if not in_code_block then
         in_code_block = true
-        code_fence_indent = line:match "^(%s*)"
-        local info_string = line:match "^%s*```(%S+)" or nil
+        code_fence = fence_mod.opening(line)
+        code_fence_indent = code_fence.indent
+        local info_string = code_fence.lang
         code_block_lang = info_string
         -- Split lang:filename (Qiita-style code block filename)
         local code_block_filename = nil
@@ -2667,6 +2681,7 @@ function ContentBuilder:render_document(lines, opts)
           end
         end
         in_code_block = false
+        code_fence = nil
         code_block_lang = nil
         code_source_lines = nil
         code_block_id = nil
@@ -2706,10 +2721,14 @@ function ContentBuilder:render_document(lines, opts)
       -- Handle code blocks inside blockquotes (both plain blockquotes and callouts)
       if line:match "^>" then
         local stripped = line:gsub("^>%s?", "")
-        if stripped:match "^```" then
+        if
+          (in_callout_code_block and fence_mod.closes(stripped, callout_code_fence))
+          or (not in_callout_code_block and fence_mod.opening(stripped))
+        then
           if not in_callout_code_block then
             in_callout_code_block = true
-            local callout_info = stripped:match "^```(%S+)" or nil
+            callout_code_fence = fence_mod.opening(stripped)
+            local callout_info = callout_code_fence.lang
             callout_code_lang = callout_info
             -- Split lang:filename (Qiita-style)
             if callout_info and callout_info:find(":", 1, true) then
@@ -2761,6 +2780,7 @@ function ContentBuilder:render_document(lines, opts)
               })
             end
             in_callout_code_block = false
+            callout_code_fence = nil
             callout_code_lang = nil
             callout_code_source_lines = nil
             callout_code_block_id = nil
@@ -2804,6 +2824,7 @@ function ContentBuilder:render_document(lines, opts)
         -- Reset callout code block state if we leave the callout
         if in_callout_code_block and not (line:match "^>") then
           in_callout_code_block = false
+          callout_code_fence = nil
           callout_code_lang = nil
         end
 
