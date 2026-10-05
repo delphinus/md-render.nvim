@@ -73,7 +73,13 @@
 ---@field footnote_anchors table<string, integer>
 ---@field source_line_map integer[]
 ---@field private _current_source_line integer
+---@field private _source_breaks? { text: string, breaks: MdRender.SourceBreak[] }
 local ContentBuilder = {}
+
+--- Where a source line begins inside a line joined from several.
+---@class MdRender.SourceBreak
+---@field pos integer 1-based byte position in the joined line
+---@field src integer source line number
 
 ---@return MdRender.ContentBuilder
 function ContentBuilder.new()
@@ -333,6 +339,10 @@ end
 ---@param quote_prefix string
 ---@param list_marker? string
 ---@param line_gap? integer blank lines to insert after each wrapped line
+---@param row_sources? { offset: integer, src: integer }[] for text joined from
+---   several source lines: the byte offset in `rendered_text` at which each
+---   source line after the first begins, in order. Each wrapped row is then
+---   attributed to the source line its first character comes from.
 function ContentBuilder:add_wrapped_markdown(
   rendered_text,
   md_highlights,
@@ -341,7 +351,8 @@ function ContentBuilder:add_wrapped_markdown(
   max_width,
   quote_prefix,
   list_marker,
-  line_gap
+  line_gap,
+  row_sources
 )
   local wrap_text = rendered_text
   local content_offset = 0
@@ -392,7 +403,16 @@ function ContentBuilder:add_wrapped_markdown(
   local list_continuation = string.rep(" ", list_cont_len)
 
   line_gap = line_gap or 0
+  local base_src = self._current_source_line
   for idx, wline in ipairs(wrapped_lines) do
+    if row_sources then
+      local start = line_starts[idx] + content_offset
+      local src = base_src
+      for _, rs in ipairs(row_sources) do
+        if rs.offset <= start then src = rs.src end
+      end
+      self._current_source_line = src
+    end
     local line_prefix = quote_prefix ~= "" and (indent .. quote_prefix) or indent
     local lm = idx == 1 and list_prefix or list_continuation
     local line_hls = per_line_hls[idx]
@@ -401,6 +421,7 @@ function ContentBuilder:add_wrapped_markdown(
       self:add_line ""
     end
   end
+  self._current_source_line = base_src
 
   for _, entry in ipairs(link_entries) do
     -- distribute_links assumed the wrapped lines were consecutive; spread the
@@ -728,10 +749,40 @@ end
 ---@param ref_links? table<string, string>
 ---@return string? alert_type Alert type if this line is an alert header
 ---@return string? fold_mod Fold modifier ("+" or "-") if this is a foldable callout
+--- Find where each source line of a joined paragraph starts in its rendered
+--- text, so the wrapped rows can be attributed to the line they start in.
+---
+--- The joined text is cut at the source line boundaries and each piece is
+--- rendered on its own; the lengths add up to the offsets. That costs about
+--- one more render of the paragraph. It is exact unless an inline construct
+--- spans a boundary — `**` opened on one line and closed on the next stays as
+--- raw markers in its piece — and then off by the width of those markers,
+--- which only matters when the boundary falls right at a wrap.
+---@param text string the joined line
+---@param breaks MdRender.SourceBreak[]
+---@param render fun(piece: string): string
+---@return { offset: integer, src: integer }[]
+local function locate_source_breaks(text, breaks, render)
+  local sources = {}
+  local offset, from = 0, 1
+  for _, b in ipairs(breaks) do
+    offset = offset + #render(text:sub(from, b.pos - 1))
+    table.insert(sources, { offset = offset, src = b.src })
+    from = b.pos
+  end
+  return sources
+end
+
 function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url, autolinks, ref_links, footnote_map)
   local markdown = require "md-render.markdown"
   local rendered_text, md_highlights, md_links, special_type, list_marker, alert_type, fold_mod, heading_content =
     markdown.render(text, repo_base_url, autolinks, ref_links, footnote_map)
+
+  -- Where the other source lines of a joined paragraph start, if this is one.
+  -- Only good for the exact text it was recorded for.
+  local pending = self._source_breaks
+  self._source_breaks = nil
+  if pending and pending.text ~= text then pending = nil end
 
   local quote_prefix = ""
   if special_type == "blockquote" then
@@ -766,6 +817,10 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
 
   local lines_before_fn = #self.lines
   if indent_w + vim.api.nvim_strwidth(rendered_text) > wrap_threshold then
+    local row_sources = pending
+      and locate_source_breaks(text, pending.breaks, function(piece)
+        return (markdown.render(piece, repo_base_url, autolinks, ref_links, footnote_map))
+      end)
     self:add_wrapped_markdown(
       rendered_text,
       md_highlights,
@@ -774,7 +829,8 @@ function ContentBuilder:add_markdown_line(text, indent, max_width, repo_base_url
       wrap_max - icon_pad_loss,
       quote_prefix,
       list_marker,
-      line_gap
+      line_gap,
+      row_sources
     )
     if level then self:restore_heading_icon_pad(lines_before_fn, indent, level) end
   else
@@ -1232,12 +1288,19 @@ end
 --- number for each input line. The returned `result_indices` carries the
 --- original line number of the *first* line of each joined paragraph,
 --- so `source_line_map` can point back to the real buffer position.
+---
+--- `result_breaks` says where the other lines of a joined paragraph went:
+--- for each output line, either `false` or a list of `{ pos, src }`, one per
+--- source line after the first, with `pos` the 1-based byte position in the
+--- output line at which source line `src` begins. The renderer uses it to
+--- attribute each wrapped row to the source line it starts in, rather than
+--- the whole paragraph to its first line.
 ---@param lines string[]
 ---@param src_indices integer[]
 ---@param container_indents? table<integer, string> per original line, from
 ---   strip_container_indent(); quote lines in different containers must not be
 ---   collected into the same blockquote.
----@return string[] result, integer[] result_indices
+---@return string[] result, integer[] result_indices, (MdRender.SourceBreak[]|false)[] result_breaks
 local function join_paragraph_continuations(lines, src_indices, container_indents)
   --- Container a quote line belongs to, as its display indent.
   local function quote_container(idx)
@@ -1246,19 +1309,33 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
 
   local result = {}
   local result_indices = {}
+  local result_breaks = {}
   local para = {}
-  local para_src = nil
+  local para_srcs = {}
   local open_fence = nil
   local in_html_comment = false
+
+  --- Emit a line that is not a joined paragraph.
+  local function emit(line, src)
+    table.insert(result, line)
+    table.insert(result_indices, src)
+    table.insert(result_breaks, false)
+  end
 
   local function flush_para()
     if #para > 0 then
       -- join_soft_lines also drops the trailing-space form of the hard
       -- break marker; the break itself is expressed by ending the line here.
-      table.insert(result, wrap_mod.join_soft_lines(para))
-      table.insert(result_indices, para_src)
+      local joined, starts = wrap_mod.join_soft_lines(para)
+      local breaks = {}
+      for k = 2, #para do
+        if starts[k] then table.insert(breaks, { pos = starts[k], src = para_srcs[k] }) end
+      end
+      table.insert(result, joined)
+      table.insert(result_indices, para_srcs[1])
+      table.insert(result_breaks, #breaks > 0 and breaks)
       para = {}
-      para_src = nil
+      para_srcs = {}
     end
   end
 
@@ -1280,16 +1357,14 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
         if in_html_comment then
           -- Flush paragraph, keep comment lines separate
           flush_para()
-          table.insert(result, line)
-          table.insert(result_indices, src)
+          emit(line, src)
           if line:match "%-%->" then in_html_comment = false end
           goto next_line
         end
         if line:match "^%s*<!%-%-" and not line:match "%-%->%s*$" then
           in_html_comment = true
           flush_para()
-          table.insert(result, line)
-          table.insert(result_indices, src)
+          emit(line, src)
           goto next_line
         end
       end
@@ -1311,13 +1386,20 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
           last = last + 1
         end
         consumed = last - idx
-        local joined, joined_src = join_paragraph_continuations(inner, inner_src, container_indents)
+        local joined, joined_src, joined_breaks = join_paragraph_continuations(inner, inner_src, container_indents)
         for k, joined_line in ipairs(joined) do
           local marker = markers[joined_src[k]] or "> "
           -- A quote line with no content must not keep the marker's space.
           if joined_line == "" then marker = (marker:gsub("%s+$", "")) end
+          local breaks = joined_breaks[k]
+          if breaks then
+            for _, b in ipairs(breaks) do
+              b.pos = b.pos + #marker
+            end
+          end
           table.insert(result, marker .. joined_line)
           table.insert(result_indices, joined_src[k])
+          table.insert(result_breaks, breaks)
         end
         goto next_line
       end
@@ -1335,13 +1417,12 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
         -- trailing space (visible on highlighted lines such as blockquotes).
         -- Code and HTML are left alone, where whitespace can be content.
         if not in_code and not line:match "^    %S" and not line:match "^%s*<" then line = (line:gsub("%s+$", "")) end
-        table.insert(result, line)
-        table.insert(result_indices, src)
+        emit(line, src)
       else
         -- A new list item ends the previous paragraph rather than continuing it.
         if starts_list_item then flush_para() end
-        if #para == 0 then para_src = src end
         table.insert(para, line)
+        table.insert(para_srcs, src)
         -- Hard line break: end the visual line here, but stay in the same
         -- paragraph (the next line starts a new output line).
         if has_hard_break(line) then flush_para() end
@@ -1355,7 +1436,7 @@ local function join_paragraph_continuations(lines, src_indices, container_indent
 
   flush_para()
 
-  return result, result_indices
+  return result, result_indices, result_breaks
 end
 
 --- Preprocess multi-line HTML constructs into single result lines.
@@ -1467,7 +1548,8 @@ function ContentBuilder:render_document(lines, opts)
   lines = expand_leading_tabs(lines)
   lines, container_indents = strip_container_indent(lines)
   lines, src_indices = preprocess_multiline_html(lines, src_indices)
-  lines, src_indices = join_paragraph_continuations(lines, src_indices, container_indents)
+  local src_breaks
+  lines, src_indices, src_breaks = join_paragraph_continuations(lines, src_indices, container_indents)
   lines = markdown.renumber_ordered_lists(lines)
   -- renumber_ordered_lists rewrites text but keeps line count, so
   -- src_indices stays valid.
@@ -1701,6 +1783,15 @@ function ContentBuilder:render_document(lines, opts)
     -- is the original buffer line, which is what consumers (cursor sync,
     -- shadow cursor, link/anchor extraction) actually expect.
     self:set_source_line(src_indices[src_idx] + source_line_offset)
+    -- A joined paragraph also says where each of its other source lines
+    -- starts; add_markdown_line uses that when it wraps this exact text.
+    local breaks = src_breaks[src_idx]
+    if breaks and source_line_offset ~= 0 then
+      breaks = vim.tbl_map(function(b)
+        return { pos = b.pos, src = b.src + source_line_offset }
+      end, breaks)
+    end
+    self._source_breaks = breaks and { text = line, breaks = breaks } or nil
 
     -- Content of a blockquote or a list item was moved to column 0 by
     -- strip_container_indent(); its indent comes back as display indent for
@@ -1790,6 +1881,7 @@ function ContentBuilder:render_document(lines, opts)
           -- original buffer line.
           table.insert(lines, src_idx + 1, img_tag)
           table.insert(src_indices, src_idx + 1, src_indices[src_idx])
+          table.insert(src_breaks, src_idx + 1, false)
           if remaining ~= "" then
             line = string.rep("#", tonumber(h_level)) .. " " .. remaining
           else
