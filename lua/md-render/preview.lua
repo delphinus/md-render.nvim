@@ -1045,24 +1045,33 @@ end
 --- guarantees "I scrolled to the bottom, the other side did too" even
 --- when source has hidden lines like footnote/link reference defs that
 --- produce no render output and would otherwise leave the mapped end
---- short of the file). Otherwise map the source's visible range (top,
---- center, bottom) through `source_to_rendered_f` /
---- `rendered_to_source_f` and center on the mapped center, clamped to
---- stay inside the source's visible range. The destination cursor is
---- set independently from the originating cursor.
+--- short of the file). Otherwise map the cursor line through
+--- `source_to_rendered_f` / `rendered_to_source_f` and put it at the same
+--- height in the destination window as it has in the originating one,
+--- measured as a fraction of the window in screen rows.
 ---
 --- Mapping is done in floating point so a source line that sits between
 --- two sync points yields a fractional render position rather than
---- snapping to the next marker. The final topline is then rounded to an
---- integer (Vim cannot scroll by fractional rows). This mirrors the way
---- VS Code's preview interpolates between `data-line` markers.
+--- snapping to the next marker. This mirrors the way VS Code's preview
+--- interpolates between `data-line` markers.
 ---
---- An even earlier design tried to align the cursor's winrow directly,
---- which jittered: pressing `j` on a source line whose mapped render
---- line did not advance forced the render view *up* by one row to keep
---- the cursor at the new winrow. Centering on a buffer-derived anchor
---- decouples scroll from cursor motion — pressing `j` only moves the
---- cursor unless the source view actually scrolls.
+--- Screen rows, not buffer lines, because the two sides spend them very
+--- differently. A source line full of links wraps over several rows while
+--- the render shortens the links and fits it in one or two, so a source
+--- window can show only a handful of buffer lines whose rendered
+--- counterpart is a fraction of the render window. The previous design
+--- aligned the two visible ranges in buffer lines: centered on the mapped
+--- center, then clamped to keep both mapped ends in view. When the mapped
+--- range was shorter than the window the two clamps contradicted each
+--- other, the bottom one won, and a heading on the top row of the source
+--- showed up halfway down the render. The cursor is what the user is
+--- looking at, so the cursor is what has to line up.
+---
+--- Aligning the cursor's row was tried once before and dropped because it
+--- jittered: pressing `j` on a source line whose mapped render line did not
+--- advance moved the render view up by a row, and the next step moved it
+--- back. `TOPLINE_HYSTERESIS` in `fan_out` now absorbs that one-row
+--- back-and-forth.
 ---
 --- Both topline and cursor are written through a single `winrestview`
 --- call. Using `nvim_win_set_cursor` instead would re-apply 'scrolloff'
@@ -1208,19 +1217,20 @@ local function install_scroll_sync(session)
 
             -- Hysteresis on the scroll, for the same reason as on the cursor.
             --
-            -- An interior topline is derived from the *other* window's visible
-            -- range through a rounded map, so it trails what this window does
-            -- on its own by up to a line: placing the cursor scrolls the
-            -- window forward, the next sync computes a topline one line
-            -- behind, and writing it scrolls back. Held down, that is a
-            -- one-line shudder on every second keystroke — measured at 11 of
-            -- 59 writes on a `j` sweep through README.ja.md.
+            -- An interior topline is derived from the *other* window through a
+            -- rounded map, so it trails what this window does on its own by up
+            -- to a line: placing the cursor scrolls the window forward, the
+            -- next sync computes a topline one line behind, and writing it
+            -- scrolls back. Held down, that is a one-line shudder on every
+            -- second keystroke — measured at 11 of 59 writes on a `j` sweep
+            -- through README.ja.md. The same one-row step comes from a source
+            -- cursor that moves down a row while its mapped line stays put.
             --
             -- Skipping the write leaves the window where it scrolled itself,
             -- which is what an unsynced window would have done anyway. Drift
             -- cannot accumulate: every action is computed from the current
-            -- range rather than from the last one, so the two sides stay
-            -- within the tolerance of each other and anything larger is still
+            -- view rather than from the last one, so the two sides stay within
+            -- the tolerance of each other and anything larger is still
             -- corrected.
             local settled = type(action) == "number"
               and before_view
@@ -1258,6 +1268,30 @@ local function install_scroll_sync(session)
     end)
   end
 
+  --- Screen rows the lines `first` .. `last` take up in `win`, counting
+  --- 'wrap', folds and virtual lines the way the window draws them.
+  ---@return integer
+  local function rows_between(win, first, last)
+    if last < first then return 0 end
+    return vim.api.nvim_win_text_height(win, { start_row = first - 1, end_row = last - 1 }).all
+  end
+
+  --- The topline that puts the first row of `line` `rows` screen rows below
+  --- the top of `win`, or as close above that as whole lines allow. Walks up
+  --- from `line` adding the height of each line, so a line that wraps over
+  --- several rows counts as that many.
+  ---@return integer
+  local function topline_for_row(win, line, rows)
+    local top, used = line, 0
+    while top > 1 do
+      local h = rows_between(win, top - 1, top - 1)
+      if used + h > rows then break end
+      used = used + h
+      top = top - 1
+    end
+    return top
+  end
+
   --- Decide what to do with one destination window.
   ---
   --- Returns either:
@@ -1265,74 +1299,52 @@ local function install_scroll_sync(session)
   ---     to its first line via `gg` + `zt` (handles 'wrap' correctly).
   ---   * the literal string `"bot"` — fan_out will scroll the window
   ---     to its last line via `G` + `zb` (handles 'wrap' correctly).
-  ---   * an integer topline for the interior (mid-scroll) case, where
-  ---     center alignment plus the [mapped_top, mapped_bot_end -
-  ---     dest_height + 1] clamp keeps the destination inside the
-  ---     source's visible range.
-  ---
-  --- For interior scrolls the topline is rounded and clamped to the
-  --- destination buffer's valid range, then post-adjusted so the
-  --- cursor's mapped position never sits outside the destination
-  --- viewport. Without that adjustment a wide source window
-  --- (1 source line ~ many render rows because of images / tables)
-  --- can leave the mapped cursor pinned to the bottom edge so a
-  --- single `j` flicks it off-screen.
-  local function pick_action(
-    dest_height,
-    dest_lines,
-    mapped_top,
-    mapped_center,
-    mapped_bot_end,
-    src_top_at_edge,
-    src_bot_at_edge,
-    target_cursor
-  )
+  ---   * an integer topline for the interior (mid-scroll) case, which puts
+  ---     `cursor` `frac` of the way down the window in screen rows. It is
+  ---     clamped so the window does not scroll past the end of its buffer;
+  ---     the end itself is the `"bot"` case.
+  ---@param w integer destination window
+  ---@param dest_lines integer line count of the destination buffer
+  ---@param cursor integer destination cursor line
+  ---@param frac number how far down the originating window its cursor is, 0 <= frac < 1
+  local function pick_action(w, dest_lines, cursor, frac, src_top_at_edge, src_bot_at_edge)
+    local dest_height = vim.api.nvim_win_get_height(w)
     -- Edge snap only when the mapped cursor still fits in the window
     -- from that edge. Otherwise the snap pins topline=1 / botline=last
     -- but the cursor (and shadow) sit beyond the visible rows — common
     -- when the source is short but the render is much taller (images,
     -- tables, wrap). Fall through to the cursor-anchored interior path
     -- in that case.
-    local cursor = target_cursor and math.max(1, math.floor(target_cursor + 0.5)) or nil
-    if src_top_at_edge and (not cursor or cursor <= dest_height) then return "top" end
-    if src_bot_at_edge and (not cursor or cursor >= dest_lines - dest_height + 1) then return "bot" end
-    local topline = mapped_center - dest_height / 2
-    if topline < mapped_top then topline = mapped_top end
-    local max_top_in_range = mapped_bot_end - dest_height + 1
-    if topline > max_top_in_range then topline = max_top_in_range end
-    topline = math.floor(topline + 0.5)
-    local buf_max_top = math.max(1, dest_lines - dest_height + 1)
-    if topline < 1 then topline = 1 end
-    if topline > buf_max_top then topline = buf_max_top end
+    if src_top_at_edge and cursor <= dest_height then return "top" end
+    if src_bot_at_edge and cursor >= dest_lines - dest_height + 1 then return "bot" end
 
-    -- Keep the mapped cursor inside the destination viewport with a
-    -- small margin so a one-line move on the source side doesn't
-    -- immediately push it off-screen on the render side.
-    if target_cursor then
-      local margin = math.min(3, math.floor(dest_height / 4))
-      if cursor < topline + margin then
-        topline = cursor - margin
-      elseif cursor > topline + dest_height - 1 - margin then
-        topline = cursor - dest_height + 1 + margin
-      end
-      if topline < 1 then topline = 1 end
-      if topline > buf_max_top then topline = buf_max_top end
-    end
-    return topline
+    local rows = math.floor(frac * dest_height + 0.5)
+    rows = math.max(0, math.min(rows, dest_height - 1))
+    local topline = topline_for_row(w, cursor, rows)
+    local last_rows = rows_between(w, dest_lines, dest_lines)
+    local max_top = topline_for_row(w, dest_lines, math.max(0, dest_height - last_rows))
+    return math.min(topline, max_top)
   end
 
-  --- Read a window's actual visible buffer-line range. `line('w0')` /
-  --- `line('w$')` honour 'wrap', folds, and 'diff' filler lines, unlike
-  --- `topline + nvim_win_get_height() - 1` which counts screen rows and
-  --- would over- or under-shoot when a single buffer line spans
-  --- multiple screen rows.
+  --- Where a window is looking: its visible buffer-line range, its cursor
+  --- line, and how far down the window the cursor is.
   ---
-  --- Returned as a 3-element array because `nvim_win_call` only
-  --- preserves the first return value of its callback.
-  ---@return integer[] # `{ topline, botline, cursor_line }`
+  --- `line('w0')` / `line('w$')` honour 'wrap', folds, and 'diff' filler
+  --- lines, unlike `topline + nvim_win_get_height() - 1` which counts
+  --- screen rows and would over- or under-shoot when a single buffer line
+  --- spans multiple screen rows. The cursor's height is measured in
+  --- screen rows for the same reason, from the top row to the first row of
+  --- the cursor line, as a fraction of the window height.
+  ---
+  --- Returned as an array because `nvim_win_call` only preserves the
+  --- first return value of its callback.
+  ---@return { [1]: integer, [2]: integer, [3]: integer, [4]: number } # `{ topline, botline, cursor_line, frac }`
   local function visible_range(win)
     return vim.api.nvim_win_call(win, function()
-      return { vim.fn.line "w0", vim.fn.line "w$", vim.fn.line "." }
+      local top, cursor = vim.fn.line "w0", vim.fn.line "."
+      local above = rows_between(win, top, cursor - 1)
+      local frac = above / math.max(1, vim.api.nvim_win_get_height(win))
+      return { top, vim.fn.line "w$", cursor, math.min(math.max(frac, 0), 0.999) }
     end)
   end
 
@@ -1344,25 +1356,12 @@ local function install_scroll_sync(session)
 
     local source_lines = vim.api.nvim_buf_line_count(session.source_bufnr)
     local sv = visible_range(source_win)
-    local source_topline, source_botline, source_cursor_line = sv[1], sv[2], sv[3]
-    source_topline = math.max(1, math.min(source_topline, source_lines))
-    source_botline = math.max(source_topline, math.min(source_botline, source_lines))
-    local source_center = (source_topline + source_botline) / 2
+    local source_topline, source_botline, source_cursor_line, frac = sv[1], sv[2], sv[3], sv[4]
     local src_top_at_edge = source_topline <= 1
     local src_bot_at_edge = source_botline >= source_lines
 
     local render_lines = vim.api.nvim_buf_line_count(session.buf)
-    local function clamp(v)
-      return math.min(math.max(v, 1), render_lines)
-    end
-    local mapped_top = clamp(session:source_to_rendered_f(source_topline))
-    local mapped_center = clamp(session:source_to_rendered_f(source_center))
-    -- Use the *next* source line's mapped start, then step back one render
-    -- line, to capture where source.botline's render block actually ends.
-    -- The sync_points sentinel makes this safe past EOF.
-    local mapped_bot_end = clamp(session:source_to_rendered_f(source_botline + 1) - 1)
-    if mapped_bot_end < mapped_top then mapped_bot_end = mapped_top end
-    local target_cursor = clamp(session:source_to_rendered_f(source_cursor_line))
+    local target_cursor = math.min(math.max(session:source_to_rendered_f(source_cursor_line), 1), render_lines)
 
     -- A render cursor that maps back to the source line the user is on is
     -- already pointing at the same place; only the rounding differs.
@@ -1373,17 +1372,7 @@ local function install_scroll_sync(session)
     end
 
     fan_out(render_wins, source_win, function(w, cursor)
-      local dest_height = vim.api.nvim_win_get_height(w)
-      return pick_action(
-        dest_height,
-        render_lines,
-        mapped_top,
-        mapped_center,
-        mapped_bot_end,
-        src_top_at_edge,
-        src_bot_at_edge,
-        cursor
-      )
+      return pick_action(w, render_lines, cursor, frac, src_top_at_edge, src_bot_at_edge)
     end, target_cursor, in_sync)
   end
 
@@ -1396,22 +1385,12 @@ local function install_scroll_sync(session)
     if #session:get_sync_points() == 0 then return end
     local render_lines = vim.api.nvim_buf_line_count(session.buf)
     local rv = visible_range(render_win)
-    local render_topline, render_botline, render_cursor_line = rv[1], rv[2], rv[3]
-    render_topline = math.max(1, math.min(render_topline, render_lines))
-    render_botline = math.max(render_topline, math.min(render_botline, render_lines))
-    local render_center = (render_topline + render_botline) / 2
+    local render_topline, render_botline, render_cursor_line, frac = rv[1], rv[2], rv[3], rv[4]
     local src_top_at_edge = render_topline <= 1
     local src_bot_at_edge = render_botline >= render_lines
 
     local source_lines = vim.api.nvim_buf_line_count(session.source_bufnr)
-    local function clamp(v)
-      return math.min(math.max(v, 1), source_lines)
-    end
-    local mapped_top = clamp(session:rendered_to_source_f(render_topline))
-    local mapped_center = clamp(session:rendered_to_source_f(render_center))
-    local mapped_bot_end = clamp(session:rendered_to_source_f(render_botline + 1) - 1)
-    if mapped_bot_end < mapped_top then mapped_bot_end = mapped_top end
-    local target_cursor = clamp(session:rendered_to_source_f(render_cursor_line))
+    local target_cursor = math.min(math.max(session:rendered_to_source_f(render_cursor_line), 1), source_lines)
 
     -- The direction that used to trap the cursor. Every source line of a
     -- collapsed block maps to the one rendered line the block occupies, so
@@ -1426,18 +1405,24 @@ local function install_scroll_sync(session)
     end
 
     fan_out(source_wins, render_win, function(w, cursor)
-      local dest_height = vim.api.nvim_win_get_height(w)
-      return pick_action(
-        dest_height,
-        source_lines,
-        mapped_top,
-        mapped_center,
-        mapped_bot_end,
-        src_top_at_edge,
-        src_bot_at_edge,
-        cursor
-      )
+      return pick_action(w, source_lines, cursor, frac, src_top_at_edge, src_bot_at_edge)
     end, target_cursor, in_sync)
+  end
+
+  -- `MdPreview.split` calls this once the windows are in place: the split
+  -- opens with the render centred on the cursor, which is not where the
+  -- cursor is in the source window.
+  --
+  -- The lock is released straight away rather than after 30 ms: nothing
+  -- the user does right after opening the split should be dropped, and the
+  -- render window's own echo of this write is recognised by `is_echo`.
+  session._sync_from_source = function(win)
+    sync_from_source(win)
+    if session._sync_unlock_timer then
+      session._sync_unlock_timer:stop()
+      session._sync_unlock_timer = nil
+    end
+    session._syncing = false
   end
 
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
@@ -2150,6 +2135,9 @@ MdPreview.split = function(opts)
   -- Return focus to the source window — the render split is a preview,
   -- not an editing target.
   vim.cmd.wincmd "p"
+
+  -- Line the render up with where the cursor sits in the source window.
+  if session._sync_from_source then session._sync_from_source(vim.api.nvim_get_current_win()) end
 
   -- Initial shadow paint. Neither WinEnter nor CursorMoved fires
   -- reliably from the :split + wincmd p sequence, so call directly.
