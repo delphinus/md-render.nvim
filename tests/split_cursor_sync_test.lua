@@ -391,5 +391,164 @@ test("a preview that is really out of position is still scrolled back", function
   cleanup(source, render_win)
 end)
 
+-- ----------------------------------------------------------------------
+-- Test 7-9: the cursor sits at the same height on both sides
+-- ----------------------------------------------------------------------
+-- The two buffers spend screen rows very differently. A source line packed
+-- with wiki links wraps over several rows, while the preview shortens each
+-- link and fits the same line in one or two. So a source window can show only
+-- a handful of buffer lines whose rendered counterpart is much shorter than the
+-- preview window. Aligning the visible ranges cannot satisfy both ends then;
+-- the bottom clamp used to win, and a heading at the top of the source showed
+-- up in the middle of the preview.
+--
+-- What has to agree is where the cursor is: if it is on the top row of the
+-- source, its counterpart is on the top row of the preview.
+
+--- Short list items, a heading, then lines long enough to wrap many times.
+---@return integer buf, integer heading_line
+local function setup_wrapped_tail_buffer()
+  local lines = {}
+  for i = 1, 40 do
+    table.insert(lines, "- item " .. i)
+  end
+  table.insert(lines, "")
+  table.insert(lines, "## Target heading")
+  local heading = #lines
+  table.insert(lines, "")
+  for i = 1, 12 do
+    table.insert(lines, "- **long " .. i .. "** " .. string.rep("[[note-" .. i .. "|alias]] ", 20))
+  end
+  local buf = vim.api.nvim_create_buf(false, false)
+  vim.bo[buf].filetype = "markdown"
+  vim.api.nvim_buf_set_name(buf, "/tmp/md-render-split-anchor-test-" .. buf .. ".md")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_win_set_buf(0, buf)
+  return buf, heading
+end
+
+--- Screen rows between the top of `win` and the first row of `line`.
+local function rows_above(win, line)
+  local top = view_of(win)[1]
+  if line <= top then return 0 end
+  return vim.api.nvim_win_text_height(win, { start_row = top - 1, end_row = line - 2 }).all
+end
+
+local function render_line_of(session, pattern)
+  for i, l in ipairs(vim.api.nvim_buf_get_lines(session.buf, 0, -1, false)) do
+    if l:find(pattern, 1, true) then return i end
+  end
+end
+
+test("a heading at the top of a wrapped source is at the top of the preview", function()
+  local source, heading = setup_wrapped_tail_buffer()
+  local source_win = vim.api.nvim_get_current_win()
+  vim.wo[source_win].wrap = true
+
+  preview.split { mods = { vertical = true } }
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_set_current_win(source_win)
+  vim.fn.winrestview { topline = heading, lnum = heading, col = 0 }
+  assert_true(
+    vim.fn.line "w$" < vim.api.nvim_buf_line_count(source),
+    "fixture precondition: the source is not at the end of the file"
+  )
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+
+  -- The heading's block starts with the blank row the renderer puts above it,
+  -- so this is a line or so before the heading text itself.
+  local target = session:source_to_rendered(heading)
+  assert_true(
+    math.abs(target - render_line_of(session, "Target heading")) <= 1,
+    "fixture precondition: the heading maps onto its own block"
+  )
+  assert_eq(vim.api.nvim_win_get_cursor(render_win)[1], target, "the preview cursor is on the heading")
+  assert_true(
+    rows_above(render_win, target) <= 1,
+    "the heading is on the top row of the preview, got row " .. rows_above(render_win, target)
+  )
+
+  cleanup(source, render_win)
+end)
+
+test("a cursor a third of the way down the source is there on the preview too", function()
+  local source = setup_tall_md_buffer(120)
+  local source_win = vim.api.nvim_get_current_win()
+
+  preview.split { mods = { vertical = true } }
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  vim.api.nvim_set_current_win(source_win)
+  local height = vim.api.nvim_win_get_height(source_win)
+  local cursor = 121
+  vim.fn.winrestview { topline = cursor - math.floor(height / 3), lnum = cursor, col = 0 }
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+
+  local src_frac = rows_above(source_win, cursor) / height
+  local render_cursor = vim.api.nvim_win_get_cursor(render_win)[1]
+  local dst_frac = rows_above(render_win, render_cursor) / vim.api.nvim_win_get_height(render_win)
+  assert_true(
+    math.abs(src_frac - dst_frac) <= 2 / height,
+    ("the cursor is at the same height: source %.2f, preview %.2f"):format(src_frac, dst_frac)
+  )
+  assert_eq(
+    render_cursor,
+    math.floor(session:source_to_rendered_f(cursor) + 0.5),
+    "the preview cursor is on the mapped line"
+  )
+
+  cleanup(source, render_win)
+end)
+
+test("a render cursor at the top puts a wrapped source line at the top", function()
+  local source, heading = setup_wrapped_tail_buffer()
+  local source_win = vim.api.nvim_get_current_win()
+  vim.wo[source_win].wrap = true
+
+  preview.split { mods = { vertical = true } }
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  -- The second long item, on the top row of the preview.
+  local target = render_line_of(session, "long 2")
+  vim.api.nvim_set_current_win(render_win)
+  vim.fn.winrestview { topline = target, lnum = target, col = 0 }
+  clear_sync_locks()
+  vim.cmd "doautocmd CursorMoved"
+
+  local src_cursor = vim.api.nvim_win_get_cursor(source_win)[1]
+  assert_eq(src_cursor, heading + 3, "the source cursor is on the second long item")
+  assert_true(
+    rows_above(source_win, src_cursor) <= 1,
+    "the item is on the top row of the source, got row " .. rows_above(source_win, src_cursor)
+  )
+
+  cleanup(source, render_win)
+end)
+
+test("the split opens with the cursor at the same height as in the source", function()
+  local source, heading = setup_wrapped_tail_buffer()
+  local source_win = vim.api.nvim_get_current_win()
+  vim.wo[source_win].wrap = true
+  vim.fn.winrestview { topline = heading, lnum = heading, col = 0 }
+
+  preview.split { mods = { vertical = true } }
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+
+  local target = session:source_to_rendered(heading)
+  assert_true(
+    rows_above(render_win, target) <= 1,
+    "the heading is on the top row of the new preview, got row " .. rows_above(render_win, target)
+  )
+
+  cleanup(source, render_win)
+end)
+
 print(string.format("split_cursor_sync_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
