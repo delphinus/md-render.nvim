@@ -1483,8 +1483,9 @@ end
 --- to in the counterpart buffer.
 ---
 --- - source -> render: highlight the contiguous render-line block that
----   the source cursor's line expands into (a heading or paragraph that
----   produces multiple render lines is shown as a block).
+---   the source cursor's line expands into (a heading that wraps, or a
+---   source line of a paragraph whose rows start in it, is shown as a
+---   block).
 --- - render -> source: highlight the single source line the render
 ---   cursor's line maps back to (the map is 1:1 in this direction).
 ---

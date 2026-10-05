@@ -1560,10 +1560,11 @@ test("closing the render split clears shadows on both sides", function()
   cleanup_buffer(source)
 end)
 
-test("source line inside a joined paragraph highlights the whole block", function()
+test("source line inside a one-row paragraph highlights that row", function()
   -- Three consecutive non-blank lines form a single paragraph in
-  -- CommonMark; only the first source line appears in source_line_map,
-  -- so cursor on lines 2 or 3 must fall back to the owner block (line 1).
+  -- CommonMark, and here it fits on one row, which starts with line 1. Lines
+  -- 2 and 3 start no row of their own, so the cursor on them must fall back
+  -- to the owner block (line 1).
   local source = setup_md_buffer {
     "first paragraph line",
     "continuation line",
@@ -1590,6 +1591,43 @@ test("source line inside a joined paragraph highlights the whole block", functio
   trigger_shadow(source)
   local block_for_line_3 = get_shadow_lines(session.buf)
   assert_eq(block_for_line_3, block_for_line_1, "continuation line 3 should also highlight the owner block")
+
+  vim.api.nvim_win_close(render_win, true)
+  cleanup_buffer(source)
+end)
+
+test("source line inside a wrapped paragraph highlights only its own rows", function()
+  -- The rows of a wrapped paragraph used to be attributed to its first line,
+  -- all of them, so the cursor anywhere in it lit up the whole paragraph.
+  local long = string.rep("word ", 30)
+  local source = setup_md_buffer {
+    "first " .. long,
+    "second " .. long,
+    "third " .. long,
+    "",
+    "next paragraph",
+  }
+  local source_win = vim.api.nvim_get_current_win()
+  preview.split()
+  local session = preview._toggle_sessions[source]
+  local render_win = find_render_win(source)
+  local map = session.content.source_line_map
+
+  vim.api.nvim_win_set_cursor(source_win, { 1, 0 })
+  trigger_shadow(source)
+  local rows_1 = get_shadow_lines(session.buf)
+
+  vim.api.nvim_win_set_cursor(source_win, { 3, 0 })
+  trigger_shadow(source)
+  local rows_3 = get_shadow_lines(session.buf)
+
+  assert_true(#rows_3 > 0, "line 3 should produce a shadow")
+  local all_line_3 = true
+  for _, r in ipairs(rows_3) do
+    if map[r] ~= 3 then all_line_3 = false end
+  end
+  assert_true(all_line_3, "every highlighted row starts in line 3: " .. vim.inspect(rows_3))
+  assert_true(rows_1[#rows_1] < rows_3[1], "line 1's rows come before line 3's and do not overlap them")
 
   vim.api.nvim_win_close(render_win, true)
   cleanup_buffer(source)
