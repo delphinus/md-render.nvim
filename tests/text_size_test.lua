@@ -895,5 +895,126 @@ do
   text_size.setup { enabled = false }
 end
 
+-- A float over a heading is Neovim's to draw. Writing the run there painted
+-- the heading over the float, and every repaint wrote it back (#72), so a
+-- covered heading is left at plain size until the float goes away.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function() end
+
+    local state = text_size.attach(win, out)
+    text_size.paint(state)
+    local d = state.drawn and state.drawn[1]
+    assert_true(d ~= nil and d.icon_col ~= nil, "the heading and its icon are drawn with nothing over them")
+
+    --- Open a float on the screen cells given (1-based), paint, and close it.
+    local function with_float(row, col, width, height, extra, fn)
+      local fbuf = vim.api.nvim_create_buf(false, true)
+      local fwin = vim.api.nvim_open_win(
+        fbuf,
+        false,
+        vim.tbl_extend(
+          "force",
+          { relative = "editor", row = row - 1, col = col - 1, width = width, height = height },
+          extra or {}
+        )
+      )
+      text_size.paint(state)
+      fn()
+      vim.api.nvim_win_close(fwin, true)
+      vim.api.nvim_buf_delete(fbuf, { force = true })
+      text_size.paint(state)
+    end
+
+    with_float(d.row + 1, d.col + 2, 5, 1, nil, function()
+      assert_eq(#state.drawn, 0, "a float over the heading's lower row leaves it plain")
+    end)
+    assert_eq(#state.drawn, 1, "and it is drawn again once the float closes")
+
+    with_float(d.row - 1, d.col, 3, 1, { border = "single" }, function()
+      assert_eq(#state.drawn, 0, "a float's border counts as covering")
+    end)
+
+    with_float(d.row, d.icon_col, 1, 1, nil, function()
+      assert_eq(#state.drawn, 1, "a float over the icon alone keeps the heading")
+      assert_eq(state.drawn[1] and state.drawn[1].icon_col, nil, "but drops the icon")
+    end)
+
+    with_float(d.row + 3, d.col, 5, 1, nil, function()
+      assert_eq(#state.drawn, 1, "a float elsewhere changes nothing")
+    end)
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- A preview in a float only yields to floats at least as high as itself.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function() end
+    local pwin = vim.api.nvim_open_win(buf, false, {
+      relative = "editor",
+      row = 2,
+      col = 2,
+      width = 60,
+      height = 8,
+      zindex = 50,
+    })
+    local state = text_size.attach(pwin, out)
+    text_size.paint(state)
+    local d = state.drawn and state.drawn[1]
+    assert_true(d ~= nil, "a heading in a float preview is drawn")
+
+    local fbuf = vim.api.nvim_create_buf(false, true)
+    local low = vim.api.nvim_open_win(fbuf, false, {
+      relative = "editor",
+      row = d.row - 1,
+      col = d.col - 1,
+      width = 5,
+      height = 1,
+      zindex = 10,
+    })
+    text_size.paint(state)
+    assert_eq(#state.drawn, 1, "a float below the preview does not cover it")
+    vim.api.nvim_win_close(low, true)
+
+    local high = vim.api.nvim_open_win(fbuf, false, {
+      relative = "editor",
+      row = d.row - 1,
+      col = d.col - 1,
+      width = 5,
+      height = 1,
+      zindex = 60,
+    })
+    text_size.paint(state)
+    assert_eq(#state.drawn, 0, "a float above the preview does")
+    vim.api.nvim_win_close(high, true)
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.api.nvim_win_close(pwin, true)
+    vim.api.nvim_buf_delete(fbuf, { force = true })
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+  text_size.setup { enabled = false }
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
