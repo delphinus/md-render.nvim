@@ -14,7 +14,26 @@ local MdPreview = {}
 --- Upper bound on render width when not explicitly overridden by the user.
 --- Long lines hurt readability even in wide windows, so we cap auto-sized
 --- render windows here while still adapting downward in narrow splits.
+--- `g:md_render_max_width` replaces it; see |g:md_render_max_width|.
 local DEFAULT_MAX_WIDTH = 80
+
+--- The cap in effect: `g:md_render_max_width` when it is a positive number,
+--- otherwise `DEFAULT_MAX_WIDTH`.  Read on every use, so a change takes effect
+--- in the next preview, or an open one when its window is resized.
+---@return integer
+local function default_max_width()
+  local w = vim.g.md_render_max_width
+  if w == nil then return DEFAULT_MAX_WIDTH end
+  if type(w) == "number" and w >= 1 then return math.floor(w) end
+  vim.notify_once(
+    ("md-render: g:md_render_max_width must be a positive number, got %s; using %d"):format(
+      vim.inspect(w),
+      DEFAULT_MAX_WIDTH
+    ),
+    vim.log.levels.WARN
+  )
+  return DEFAULT_MAX_WIDTH
+end
 
 --- Usable text-area width of a window, excluding the gutter (signcolumn,
 --- number column, foldcolumn, statuscolumn). `nvim_win_get_width` returns the
@@ -36,7 +55,7 @@ end
 ---@param win integer
 ---@return integer
 local function content_width(win)
-  return math.min(usable_win_width(win), DEFAULT_MAX_WIDTH)
+  return math.min(usable_win_width(win), default_max_width())
 end
 
 --- Parse simple YAML frontmatter lines into key-value pairs
@@ -87,7 +106,7 @@ end
 ---@return MdRender.Content
 MdPreview.build_content = function(lines, opts)
   opts = opts or {}
-  local max_width = opts.max_width or DEFAULT_MAX_WIDTH
+  local max_width = opts.max_width or default_max_width()
   local expand_state = opts.expand_state or {}
 
   local b = ContentBuilder.new()
@@ -514,7 +533,7 @@ function Session:bind_window(win)
   self.win = win
   if not self._explicit_max_width then
     local win_width = content_width(win)
-    if win_width ~= (self.opts.max_width or DEFAULT_MAX_WIDTH) then
+    if win_width ~= (self.opts.max_width or default_max_width()) then
       self.opts.max_width = win_width
       self:rebuild()
     end
@@ -1749,7 +1768,7 @@ local function install_win_resize_handler(session)
       local win = render_wins[1]
       if not vim.api.nvim_win_is_valid(win) then return end
       local win_width = content_width(win)
-      if win_width == (session.opts.max_width or DEFAULT_MAX_WIDTH) then return end
+      if win_width == (session.opts.max_width or default_max_width()) then return end
 
       session.opts.max_width = win_width
       schedule_live_rebuild(session)
@@ -1918,6 +1937,14 @@ local function get_or_create_toggle_session(source_bufnr, opts)
   end
 
   if session then
+    -- A width asked for now wins over the one the session was created with:
+    -- `:MdRender toggle width=N` reaches here with a session that already
+    -- exists from an earlier toggle.
+    if opts and opts.max_width and opts.max_width ~= session.opts.max_width then
+      session.opts.max_width = opts.max_width
+      session._explicit_max_width = true
+      session.dirty = true
+    end
     -- Keep render content in sync with the latest source state.
     -- Live-update normally clears `dirty`, but fall back to a content
     -- comparison so that direct `nvim_buf_set_lines` (which may not fire

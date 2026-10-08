@@ -11,6 +11,35 @@ local function preview()
   return require("md-render").preview
 end
 
+--- Subcommands that open a preview, and so take `width=N`.
+local WIDTH_SUBCOMMANDS = { float = true, tab = true, pager = true, toggle = true, split = true }
+
+--- Parse the `key=value` options after a preview subcommand.
+---@param sub string
+---@param rest string[] the arguments after the subcommand
+---@return { max_width?: integer }? opts nil when an argument was rejected
+local function parse_opts(sub, rest)
+  local opts = {}
+  for _, arg in ipairs(rest) do
+    local width = arg:match "^width=(.*)$"
+    if width then
+      local n = tonumber(width)
+      if not n or n < 1 or n ~= math.floor(n) then
+        vim.notify(
+          "MdRender " .. sub .. ": width must be a positive integer, got '" .. width .. "'",
+          vim.log.levels.WARN
+        )
+        return nil
+      end
+      opts.max_width = n
+    else
+      vim.notify("MdRender " .. sub .. ": unknown argument '" .. arg .. "' (expected width=N)", vim.log.levels.WARN)
+      return nil
+    end
+  end
+  return opts
+end
+
 --- Dispatch a `:MdRender <sub> [args...]` invocation to the right `MdPreview.*` call.
 ---@param args table The command args table from `nvim_create_user_command`.
 function M.dispatch(args)
@@ -18,16 +47,22 @@ function M.dispatch(args)
   local sub = fargs[1] or "float"
   local p = preview()
 
+  local opts
+  if WIDTH_SUBCOMMANDS[sub] then
+    opts = parse_opts(sub, vim.list_slice(fargs, 2))
+    if not opts then return end
+  end
+
   if sub == "float" then
-    p.show()
+    p.show(opts)
   elseif sub == "tab" then
-    p.show_tab()
+    p.show_tab(opts)
   elseif sub == "pager" then
-    p.show_pager()
+    p.show_pager(opts)
   elseif sub == "toggle" then
-    p.toggle()
+    p.toggle(opts)
   elseif sub == "split" then
-    p.split { mods = args.smods }
+    p.split { mods = args.smods, max_width = opts.max_width }
   elseif sub == "demo" then
     p.show_demo()
   elseif sub == "textsize" then
@@ -75,7 +110,8 @@ function M.dispatch(args)
   end
 end
 
---- Two-level completion. First arg = subcommand list; after `auto` = on/off/toggle.
+--- Two-level completion. First arg = subcommand list; after `auto` = on/off/toggle;
+--- after a preview subcommand = `width=`.
 --- Tolerates command modifiers (`:vert MdRender ...`, `:tab MdRender ...`).
 ---@param arglead string The current word being typed.
 ---@param cmdline string The full command line so far.
@@ -94,6 +130,8 @@ function M.complete(arglead, cmdline, _cursorpos)
     list = AUTO_ARGS
   elseif n == 1 and before:match "^%s*textsize%s+$" then
     list = TEXTSIZE_ARGS
+  elseif n >= 1 and WIDTH_SUBCOMMANDS[before:match "^%s*(%S+)"] and not before:match "%swidth=" then
+    list = { "width=" }
   else
     return {}
   end
@@ -123,5 +161,6 @@ end
 
 M._SUBCOMMANDS = SUBCOMMANDS
 M._AUTO_ARGS = AUTO_ARGS
+M._parse_opts = parse_opts
 
 return M

@@ -147,6 +147,44 @@ test("dispatch split forwards smods to preview.split", function()
   restore()
 end)
 
+test("dispatch width=N passes max_width to every preview subcommand", function()
+  for sub, fn in pairs { float = "show", tab = "show_tab", pager = "show_pager", toggle = "toggle" } do
+    local cmd, calls, restore = with_preview_stub()
+    cmd.dispatch { fargs = { sub, "width=120" } }
+    assert_eq(calls[1].fn, fn, sub .. " -> " .. fn)
+    assert_eq(calls[1].args[1], { max_width = 120 }, sub .. " carries max_width")
+    restore()
+  end
+end)
+
+test("dispatch split width=N keeps smods and adds max_width", function()
+  local cmd, calls, restore = with_preview_stub()
+  local fake_smods = { vertical = true }
+  cmd.dispatch { fargs = { "split", "width=60" }, smods = fake_smods }
+  assert_eq(calls[1].args[1], { mods = fake_smods, max_width = 60 }, "split args carry both")
+  restore()
+end)
+
+test("dispatch without width= passes no max_width", function()
+  local cmd, calls, restore = with_preview_stub()
+  cmd.dispatch { fargs = { "float" } }
+  assert_eq(calls[1].args[1], {}, "float gets empty opts")
+  restore()
+end)
+
+test("dispatch rejects a bad width or an unknown argument", function()
+  for _, arg in ipairs { "width=0", "width=-3", "width=1.5", "width=abc", "width=", "bogus" } do
+    local cmd, calls, restore = with_preview_stub()
+    local notes, restore_notify = with_notify_stub()
+    cmd.dispatch { fargs = { "float", arg } }
+    assert_eq(#calls, 0, arg .. ": no preview call")
+    assert_eq(#notes, 1, arg .. ": one warning")
+    assert_eq(notes[1] and notes[1].level, vim.log.levels.WARN, arg .. ": at WARN")
+    restore_notify()
+    restore()
+  end
+end)
+
 test("dispatch auto (no second arg) -> auto_toggle", function()
   local cmd, calls, restore = with_preview_stub()
   cmd.dispatch { fargs = { "auto" } }
@@ -246,10 +284,21 @@ test("complete tolerates :vert mod prefix", function()
   restore()
 end)
 
-test("complete returns empty after a non-auto subcommand's second slot", function()
+test("complete offers width= after a preview subcommand", function()
   local cmd, _, restore = with_preview_stub()
   local out = cmd.complete("", "MdRender split ", #"MdRender split ")
-  assert_eq(out, {}, "no completion after split")
+  assert_eq(out, { "width=" }, "width= after split")
+  out = cmd.complete("w", "vert MdRender toggle w", #"vert MdRender toggle w")
+  assert_eq(out, { "width=" }, "width= after toggle, with a modifier and a prefix")
+  restore()
+end)
+
+test("complete returns empty once width= is given, and after demo", function()
+  local cmd, _, restore = with_preview_stub()
+  local out = cmd.complete("", "MdRender float width=100 ", #"MdRender float width=100 ")
+  assert_eq(out, {}, "no second width=")
+  out = cmd.complete("", "MdRender demo ", #"MdRender demo ")
+  assert_eq(out, {}, "demo takes no width")
   restore()
 end)
 

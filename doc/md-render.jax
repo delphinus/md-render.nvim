@@ -22,6 +22,7 @@ Snacks.nvim 連携					      |md-render-snacks|
   Display Utilities				       |md-render-display-utils|
   Image							       |md-render-image|
 使用例							     |md-render-example|
+グローバル変数					    |md-render-global-variables|
 バッファ変数					 |md-render-buffer-variables|
 ハイライトグループ					  |md-render-highlights|
 オプション依存						|md-render-dependencies|
@@ -195,8 +196,15 @@ lazy.nvim の場合: >lua
 	                `toggle` を取る(既定は `toggle`)
 	  demo        - 対応している全記法のデモウィンドウを表示
 
-	タブ補完では第1引数としてサブコマンド一覧、`auto` と `textsize` の
-	後では `on` / `off` / `toggle` が候補になります。
+	`float` / `tab` / `pager` / `toggle` / `split` は `width={N}` を取り、そのプレ
+	ビューを {N} 桁の幅で描画します(例: `:MdRender float width=120`)。この幅
+	はインデントを含む描画した行全体の幅で、固定です。ウィンドウの大きさを
+	変えても追従しません。指定しなければ、幅はウィンドウに追従し、上限は
+	|g:md_render_max_width| になります。
+
+	タブ補完では、第1引数ではサブコマンド一覧が、第2引数ではサブコマンドが
+	`auto` か `textsize` なら `on` / `off` / `toggle`、幅を取るサブコマンドなら
+	`width=` が候補になります。
 
 	各サブコマンドの詳細は以下のセクションを参照してください。
 
@@ -1042,6 +1050,27 @@ Markdown をレンダリングしてバッファに表示する完全な例で�
   local win = vim.api.nvim_get_current_win()
   md.display_utils.setup_images(win, content, ns)
 <
+
+==============================================================================
+グローバル変数					    *md-render-global-variables*
+
+							 *g:md_render_max_width*
+g:md_render_max_width ~
+	プレビューを描画する幅の上限を桁数で指定します(既定は 80)。幅を指定し
+	ていないプレビューは、この値を上限としてウィンドウの幅で描画し、ウィン
+	ドウの大きさが変わると追従します。上限があるのは、広いウィンドウでも長
+	い行は読みにくいためです。大きくすれば、幅の広い表や長い行が広いウィン
+	ドウを使えるようになり、小さくすれば、より狭い幅で折り返します: >lua
+
+	  vim.g.md_render_max_width = 120
+<
+	この幅はインデントを含む描画した行全体の幅です。プレビューを描画するた
+	びに読み直すので、変更は次のプレビューから反映されます。開いているプレ
+	ビューには、ウィンドウの大きさが変わったときに反映されます。正の数でな
+	い値は、警告を出したうえで無視します。
+
+	1 つのプレビューだけ幅を固定したいときは |:MdRender| の `width={N}` か、
+	Lua API (|md-render-preview|) の `max_width` を使います。
 
 ==============================================================================
 バッファ変数					 *md-render-buffer-variables*
