@@ -130,18 +130,19 @@ def bad(msg, detail=None):
         print(f"       {detail}")
 
 
-def run_kitty(kitty, enabled, workdir):
+def run_kitty(kitty, enabled, workdir, mode="float"):
     """Launch kitty+nvim, wait for the signal, return (scaled_runs, diagnostics)."""
     # A socket per run. Sharing one path lets a query land on a previous
     # instance that has not finished dying, which reads as "scaled text is
     # still on screen after being disabled".
-    sock = workdir / f"sock-{int(enabled)}"
-    signal = workdir / f"ready-{int(enabled)}"
-    diag = workdir / f"diag-{int(enabled)}"
+    sock = workdir / f"sock-{mode}-{int(enabled)}"
+    signal = workdir / f"ready-{mode}-{int(enabled)}"
+    diag = workdir / f"diag-{mode}-{int(enabled)}"
 
     env = dict(
         os.environ,
         MD_RENDER_E2E_ENABLED="1" if enabled else "0",
+        MD_RENDER_E2E_MODE=mode,
         MD_RENDER_E2E_SIGNAL=str(signal),
         MD_RENDER_E2E_DIAG=str(diag),
         # Kitty needs a GL context; CI has no GPU.
@@ -175,7 +176,7 @@ def run_kitty(kitty, enabled, workdir):
     # Keep the terminal's own output: when kitty refuses to start (a missing
     # shared library, no fonts) it says so there, and discarding it turns a
     # one-line diagnosis into a blind hunt.
-    termlog = workdir / f"kitty-{int(enabled)}.log"
+    termlog = workdir / f"kitty-{mode}-{int(enabled)}.log"
     logf = termlog.open("wb")
     # New session so the whole tree can be signalled: under xvfb-run the
     # process here is the wrapper, and killing it leaves kitty running.
@@ -197,10 +198,54 @@ def run_kitty(kitty, enabled, workdir):
                 + (termlog.read_text(errors="replace").strip() or "(no output)")
             )
 
+        diagnostics = diag.read_text() if diag.exists() else "(no diagnostics)"
+        if signal.read_text().strip() != "ready":
+            raise RuntimeError(f"{mode} preview failed:\n{diagnostics}")
+
         out = subprocess.run(
             [kitty, "@", "--to", f"unix:{sock}", "get-text", "--extent", "screen", "--ansi"],
             capture_output=True, check=True, env=env,
         ).stdout
+        if mode == "toggle":
+            def check_h1(context):
+                screen = subprocess.run(
+                    [kitty, "@", "--to", f"unix:{sock}", "get-text", "--extent", "screen", "--ansi"],
+                    capture_output=True, check=True, env=env,
+                ).stdout
+                # Stable body rows alone also pass when scaling stops working.
+                if any(level_of(meta.decode()) == 1 and text == LEVEL_TEXT[1].encode()
+                       for meta, text in OSC66.findall(screen)):
+                    ok(f"h1 is scaled {context}")
+                else:
+                    bad(f"h1 is scaled {context}", "expected h1 text with s=2")
+
+            def body_rows():
+                screen = subprocess.run(
+                    [kitty, "@", "--to", f"unix:{sock}", "get-text", "--extent", "screen"],
+                    capture_output=True, check=True, env=env, text=True,
+                ).stdout
+                return [(row, line) for row, line in enumerate(screen.splitlines())
+                        if "Body text under" in line or "floating preview is sized" in line]
+
+            check_h1("before cursor movement")
+            expected = body_rows()
+            if len(expected) != 2:
+                bad("both body lines are visible before cursor movement", repr(expected))
+            else:
+                # Repainting the cursorline on the lower half of an OSC 66
+                # block must not skip cells and push the body down a row.
+                for keys in ("ggj", "j", "j", "k"):
+                    subprocess.run(
+                        [kitty, "@", "--to", f"unix:{sock}", "send-text", "--", keys],
+                        capture_output=True, check=True, env=env,
+                    )
+                    time.sleep(0.5)
+                    check_h1(f"after cursor movement {keys!r}")
+                    actual = body_rows()
+                    if actual == expected:
+                        ok(f"body rows survive cursor movement {keys!r}")
+                    else:
+                        bad(f"body rows survive cursor movement {keys!r}", repr(actual))
     finally:
         if not logf.closed:
             logf.close()
@@ -216,7 +261,7 @@ def run_kitty(kitty, enabled, workdir):
             time.sleep(0.25)
 
     runs = [(m.decode(), t.decode("utf-8", "replace")) for m, t in OSC66.findall(out)]
-    return runs, (diag.read_text() if diag.exists() else "(no diagnostics)")
+    return runs, diagnostics
 
 
 def main():
@@ -324,6 +369,9 @@ def main():
             bad("nothing is scaled when disabled", f"found {runs_off}")
         else:
             ok("nothing is scaled when disabled")
+
+        print("\ncursor movement in an in-place preview:")
+        run_kitty(args.kitty, True, workdir, "toggle")
 
     print(f"\nterminal_test: {passed} passed, {failed} failed")
     return 1 if failed else 0
