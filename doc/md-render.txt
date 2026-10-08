@@ -38,7 +38,7 @@ usage from the command line.
 Features: ~
 
 - Rich inline formatting (bold, strikethrough, inline code, links,
-  Obsidian`==highlight==`)
+  Obsidian `==highlight==`)
 - Tables with box-drawing borders, column alignment, and proportional sizing
 - Callouts and folds (GitHub / Obsidian alert types with colored borders,
   icons, and folding you can toggle by click or `za` / `<CR>`)
@@ -773,8 +773,8 @@ MdPreview.auto_on({opts}) ~
 MdPreview.auto_off() ~
 	[EXPERIMENTAL] Disable auto-toggle for the current buffer.  If the
 	current window is showing this buffer's render view, it also swaps
-	back to source so the post-`auto_off` state matches what existed
-	before |MdPreview.auto_on()|.  See |:MdRender-auto|.
+	back to source so the state after `auto_off` matches what existed before
+	|MdPreview.auto_on()|.  See |:MdRender-auto|.
 
 							*MdPreview.auto_toggle()*
 MdPreview.auto_toggle({opts}) ~
