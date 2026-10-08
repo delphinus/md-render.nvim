@@ -483,6 +483,17 @@ Limitations: ~
   highlight.
 - A heading whose second row would fall outside the window stays plain until
   it is scrolled into view.
+- A heading that a floating window covers, even in part, stays plain until the
+  float closes, so that it does not paint over the float.
+- Fractionally scaled headings (`##` to `######`) rely on the font fitting the
+  cell grid.  Each run declares its width in whole cells, counted from the
+  characters' cell widths, while Kitty lays the text out with the font's own
+  glyph advances.  Where the two disagree, CJK text gets gaps where one run
+  ends and the next begins, and Latin glyphs can be clipped at the end of a
+  run, most visibly with a fallback CJK font whose glyphs are narrower than
+  two cells (#65).  With SF Mono Square, whose CJK glyphs are exactly two
+  cells wide, the same headings show neither.  If your font shows it,
+  `:MdRender textsize off` turns scaling off.
 - A repaint by anything else (another plugin forcing a redraw, a message or
   popup overlapping the window, the terminal shifting cells for a mouse
   scroll) drops the heading back to plain size, and there is no way to stop
