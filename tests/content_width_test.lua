@@ -117,5 +117,73 @@ test("code block uses the full width", function()
   pcall(vim.api.nvim_buf_delete, source, { force = true })
 end)
 
+--- Display width of the widest line in the current window's buffer.
+local function widest()
+  local w = 0
+  for _, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+    w = math.max(w, vim.api.nvim_strwidth(line))
+  end
+  return w
+end
+
+-- A paragraph long enough to fill any width it is given.
+local PROSE = { string.rep("lorem ipsum dolor ", 20) }
+
+test("g:md_render_max_width narrows the cap below the window", function()
+  set_columns(100)
+  vim.g.md_render_max_width = 60
+  local source = setup_md_buffer(PROSE)
+  preview.toggle()
+  local w = widest()
+  assert_eq(w <= 60 and w > 50, true, "lines wrap at 60 in a 100-column window (widest " .. w .. ")")
+  preview.toggle()
+  vim.g.md_render_max_width = nil
+  pcall(vim.api.nvim_buf_delete, source, { force = true })
+end)
+
+test("g:md_render_max_width lifts the cap up to the window", function()
+  set_columns(100)
+  vim.g.md_render_max_width = 120
+  local source = setup_md_buffer(PROSE)
+  preview.toggle()
+  local w = widest()
+  assert_eq(w <= 100 and w > 90, true, "lines use the 100-column window, past 80 (widest " .. w .. ")")
+  preview.toggle()
+  vim.g.md_render_max_width = nil
+  pcall(vim.api.nvim_buf_delete, source, { force = true })
+end)
+
+test("an invalid g:md_render_max_width warns and falls back to 80", function()
+  set_columns(100)
+  vim.g.md_render_max_width = "wide"
+  local warned = {}
+  local notify_once = vim.notify_once
+  vim.notify_once = function(msg)
+    table.insert(warned, msg)
+  end
+  local source = setup_md_buffer(PROSE)
+  preview.toggle()
+  local w = widest()
+  vim.notify_once = notify_once
+  assert_eq(w <= 80 and w > 70, true, "lines wrap at 80 (widest " .. w .. ")")
+  assert_eq(#warned > 0 and warned[1]:find("g:md_render_max_width", 1, true) ~= nil, true, "warned about the variable")
+  preview.toggle()
+  vim.g.md_render_max_width = nil
+  pcall(vim.api.nvim_buf_delete, source, { force = true })
+end)
+
+-- `:MdRender toggle width=N` after an earlier toggle reuses that session.
+test("a width given to a later toggle takes effect", function()
+  set_columns(100)
+  local source = setup_md_buffer(PROSE)
+  preview.toggle()
+  preview.toggle()
+  preview.toggle { max_width = 50 }
+  local w = widest()
+  assert_eq(w <= 50 and w > 40, true, "lines wrap at 50 on the second render (widest " .. w .. ")")
+  preview.toggle()
+  pcall(vim.api.nvim_buf_delete, source, { force = true })
+end)
+
 print(string.format("content_width_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end

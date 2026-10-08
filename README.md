@@ -177,9 +177,21 @@ The plugin exposes a single `:MdRender` command with subcommands:
 | `:MdRender pager` | Pager mode — full-screen, no chrome, `q` to quit Neovim |
 | `:MdRender demo` | Show a demo window with all supported Markdown notations |
 
-Tab completion lists the subcommands for the first arg, and `on` / `off` / `toggle` after `auto` and `textsize`.
+`float`, `tab`, `pager`, `toggle` and `split` take `width=N` to render that preview at a fixed width of `N` columns, as in `:MdRender float width=120`. See [Rendering width](#rendering-width).
+
+Tab completion lists the subcommands for the first arg, `on` / `off` / `toggle` after `auto` and `textsize`, and `width=` after the subcommands that take it.
 
 > **Backwards compatibility.** The legacy top-level commands (`:MdRenderTab`, `:MdRenderToggle`, `:MdRenderSplit`, `:MdRenderAuto`, `:MdRenderPager`, `:MdRenderDemo`) still work and forward to the new dispatcher. They print a one-shot deprecation warning per Neovim session and will be removed in a future major version.
+
+### Rendering width
+
+A preview renders at the width of its window, up to 80 columns, and follows the window when it is resized. Long lines are hard to read even in a wide window, which is what the limit is for. Raise it to let wide tables and long lines use more of a wide window, or lower it for a narrower column:
+
+```lua
+vim.g.md_render_max_width = 120
+```
+
+The width is that of a whole rendered line, indent included. `width=N` on `:MdRender`, or `max_width` in the Lua API (`preview.show({ max_width = 120 })`), gives one preview a fixed width instead: it stays at that width when the window is resized.
 
 ### In-place toggle
 

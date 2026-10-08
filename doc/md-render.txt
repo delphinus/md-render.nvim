@@ -21,6 +21,7 @@ Usage							       |md-render-usage|
   Display Utilities				       |md-render-display-utils|
   Image							       |md-render-image|
 Example							     |md-render-example|
+Global Variables				    |md-render-global-variables|
 Buffer Variables				 |md-render-buffer-variables|
 Highlight Groups					  |md-render-highlights|
 Optional Dependencies					|md-render-dependencies|
@@ -196,8 +197,15 @@ still registered as deprecated aliases — see |md-render-deprecated-commands|.
 	                `on` / `off` / `toggle` (defaults to `toggle`)
 	  demo        - show a demo window with every supported notation
 
-	Tab completion lists the subcommands for the first arg, and
-	`on` / `off` / `toggle` after `auto` and `textsize`.
+	`float`, `tab`, `pager`, `toggle` and `split` take `width={N}` to render that
+	preview at {N} columns, as in `:MdRender float width=120`.  The width is
+	that of a whole rendered line, indent included, and it stays fixed: it
+	does not follow the window when the window is resized.  Without it,
+	the width follows the window up to |g:md_render_max_width|.
+
+	Tab completion lists the subcommands for the first arg, `on` / `off` /
+	`toggle` after `auto` and `textsize`, and `width=` after the subcommands that
+	take it.
 
 	The per-subcommand sections below describe behaviour in detail.
 
@@ -1076,6 +1084,28 @@ A complete example showing how to render Markdown and display it in a buffer:
   local win = vim.api.nvim_get_current_win()
   md.display_utils.setup_images(win, content, ns)
 <
+
+==============================================================================
+GLOBAL VARIABLES				    *md-render-global-variables*
+
+							 *g:md_render_max_width*
+g:md_render_max_width ~
+	The widest a preview renders, in columns (default 80).  A preview
+	without an explicit width renders at the width of its window, up to
+	this, and follows the window when it is resized.  Long lines are hard
+	to read even in a wide window, which is what the limit is for.  Set it
+	higher to let wide tables and long lines use more of a wide window, or
+	lower for a narrower column: >lua
+
+	  vim.g.md_render_max_width = 120
+<
+	The width is that of a whole rendered line, indent included.  It is
+	read each time a preview is rendered, so a change applies to the next
+	preview, and to an open one when its window is resized.  A value that
+	is not a positive number is ignored with a warning.
+
+	`width={N}` on |:MdRender| and `max_width` in the Lua API
+	(|md-render-preview|) give one preview a fixed width instead.
 
 ==============================================================================
 BUFFER VARIABLES				 *md-render-buffer-variables*

@@ -31,7 +31,7 @@ vim.api.nvim_create_user_command("MdRender", cmd.dispatch, {
   nargs = "*",
   complete = cmd.complete,
   bar = true,
-  desc = "Markdown render — :MdRender [float|tab|pager|toggle|split|auto on|off|toggle|demo]",
+  desc = "Markdown render — :MdRender [float|tab|pager|toggle|split [width=N]|auto on|off|toggle|demo]",
 })
 
 --- Register a deprecated v3 shim that forwards to the new dispatcher.
