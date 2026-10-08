@@ -563,23 +563,29 @@ end
 --- East Asian wide.  Leading whitespace of the continuation lines is
 --- removed, as CommonMark does; the first line keeps its indentation so
 --- that continuation paragraphs stay aligned with their list item.
+---
+--- The second return value says where each input line ended up: `starts[i]`
+--- is the 1-based byte position in the joined text at which line `i`
+--- begins, or nil when the line contributed nothing (blank after trimming).
 ---@param lines string[]
----@return string
+---@return string text, table<integer, integer> starts
 local function join_soft_lines(lines)
   local text = ""
+  local starts = {}
   for i, line in ipairs(lines) do
     local trimmed = i == 1 and (line:gsub("%s+$", "")) or (line:gsub("^%s+", ""):gsub("%s+$", ""))
     if text == "" then
       text = trimmed
+      if trimmed ~= "" then starts[i] = 1 end
     elseif trimmed ~= "" then
-      if is_east_asian_wide(last_char(text)) and is_east_asian_wide(first_char(trimmed)) then
-        text = text .. trimmed
-      else
-        text = text .. " " .. trimmed
+      if not (is_east_asian_wide(last_char(text)) and is_east_asian_wide(first_char(trimmed))) then
+        text = text .. " "
       end
+      starts[i] = #text + 1
+      text = text .. trimmed
     end
   end
-  return text
+  return text, starts
 end
 
 --- Vowel lookup for English syllable-like word splitting.
