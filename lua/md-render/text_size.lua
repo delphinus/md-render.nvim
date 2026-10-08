@@ -598,6 +598,64 @@ local function text_area(win)
   return left, right, top, top + wininfo.height - 1
 end
 
+--- The screen rectangle a float covers, border and winbar included.
+---@param win integer
+---@return { top: integer, left: integer, bottom: integer, right: integer }?
+local function frame_rect(win)
+  local info = vim.fn.getwininfo(win)[1]
+  if not info then return nil end
+  local border = vim.api.nvim_win_get_config(win).border
+  local t, r, b, l = 0, 0, 0, 0
+  if type(border) == "table" and #border > 0 then
+    -- Clockwise from the top-left corner; a shorter list repeats.
+    local function present(i)
+      local c = border[(i - 1) % #border + 1]
+      if type(c) == "table" then c = c[1] end
+      return c ~= nil and c ~= ""
+    end
+    t, r, b, l = present(2) and 1 or 0, present(4) and 1 or 0, present(6) and 1 or 0, present(8) and 1 or 0
+  elseif type(border) == "string" and border ~= "none" and border ~= "" then
+    t, r, b, l = 1, 1, 1, 1
+  end
+  -- `winrow` / `wincol` are the frame, so they already point at the border.
+  return {
+    top = info.winrow,
+    left = info.wincol,
+    bottom = info.winrow + t + (info.winbar or 0) + info.height + b - 1,
+    right = info.wincol + l + info.width + r - 1,
+  }
+end
+
+--- Floats drawn above `win`: anything floating over a split, and floats at
+--- least as high as `win` when it is itself a float. An equal `zindex` counts,
+--- as the float opened later goes on top; counting one that is underneath
+--- only costs a heading its scale.
+---@param win integer
+---@return { top: integer, left: integer, bottom: integer, right: integer }[]
+local function covering_floats(win)
+  local own = vim.api.nvim_win_get_config(win)
+  local own_z = own.relative ~= "" and (own.zindex or 50) or nil
+  local rects = {}
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win))) do
+    if w ~= win then
+      local cfg = vim.api.nvim_win_get_config(w)
+      if cfg.relative ~= "" and not cfg.hide and (own_z == nil or (cfg.zindex or 50) >= own_z) then
+        table.insert(rects, frame_rect(w))
+      end
+    end
+  end
+  return rects
+end
+
+---@param rects { top: integer, left: integer, bottom: integer, right: integer }[]
+---@return boolean
+local function overlaps(rects, top, left, bottom, right)
+  for _, r in ipairs(rects) do
+    if top <= r.bottom and bottom >= r.top and left <= r.right and right >= r.left then return true end
+  end
+  return false
+end
+
 --- Compute where every placement would be drawn right now.
 ---@param state MdRender.TextSizeState
 ---@return { p: MdRender.TextPlacement, row: integer, col: integer }[]
@@ -607,6 +665,7 @@ local function visible_placements(state)
   local left, right, top, bottom = text_area(win)
   if not left then return {} end
   local buf = vim.api.nvim_win_get_buf(win)
+  local floats = covering_floats(win)
 
   local out = {}
   for _, p in ipairs(state.placements) do
@@ -626,10 +685,13 @@ local function visible_placements(state)
     if pos.row and pos.row > 0 then
       local fits_vertically = pos.row >= top and pos.row + p.scale - 1 <= bottom
       local fits_horizontally = pos.col >= left and pos.col + p.width - 1 <= right
+      -- A float over the heading is drawn by Neovim, and writing the run
+      -- would paint over it (and a repaint would write it back again).
+      local covered = overlaps(floats, pos.row, pos.col, pos.row + p.scale - 1, pos.col + p.width - 1)
       -- Partially visible placements are skipped rather than clipped: the
       -- plain-size text underneath stays on screen, which is the graceful
       -- fallback. OSC 66 has no source-rectangle crop like graphics do.
-      if fits_vertically and fits_horizontally then
+      if fits_vertically and fits_horizontally and not covered then
         -- The icon sits to the left of the text on the same line, so it is
         -- inside the window whenever the text is — unless the window is
         -- scrolled horizontally, which `screenpos` reports by putting it on
@@ -639,7 +701,13 @@ local function visible_placements(state)
         local icon_col
         if p.icon and p.icon_col then
           local ipos = vim.fn.screenpos(win, p.line + 1, p.icon_col + 1)
-          if ipos.row == pos.row and ipos.col >= left then icon_col = ipos.col end
+          if
+            ipos.row == pos.row
+            and ipos.col >= left
+            and not overlaps(floats, pos.row, ipos.col, pos.row + p.scale - 1, ipos.col + p.scale - 1)
+          then
+            icon_col = ipos.col
+          end
         end
         table.insert(out, { p = p, row = pos.row, col = pos.col, icon_col = icon_col })
       end
