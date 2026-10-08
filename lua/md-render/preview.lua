@@ -29,16 +29,14 @@ local function usable_win_width(win)
   return math.max(1, total - textoff)
 end
 
---- The `max_width` to render at for a window.  ContentBuilder wraps the text
---- at `max_width` and then prepends `indent`, so the indent has to come off
---- the window width; otherwise lines run up to its width past the edge and
---- 'wrap' folds their last characters onto a row of their own.
+--- The `max_width` to render at for a window.  `max_width` is the width of a
+--- whole rendered line, indent included: ContentBuilder takes the indent off
+--- where it wraps text, and code blocks, headings and images already measure
+--- with it.  Taking it off here as well narrowed all of those by its width.
 ---@param win integer
----@param indent? string defaults to ContentBuilder's `"  "`
 ---@return integer
-local function content_width(win, indent)
-  local indent_w = vim.api.nvim_strwidth(indent or "  ")
-  return math.max(1, math.min(usable_win_width(win) - indent_w, DEFAULT_MAX_WIDTH))
+local function content_width(win)
+  return math.min(usable_win_width(win), DEFAULT_MAX_WIDTH)
 end
 
 --- Parse simple YAML frontmatter lines into key-value pairs
@@ -515,7 +513,7 @@ end
 function Session:bind_window(win)
   self.win = win
   if not self._explicit_max_width then
-    local win_width = content_width(win, self.opts.indent)
+    local win_width = content_width(win)
     if win_width ~= (self.opts.max_width or DEFAULT_MAX_WIDTH) then
       self.opts.max_width = win_width
       self:rebuild()
@@ -1750,7 +1748,7 @@ local function install_win_resize_handler(session)
 
       local win = render_wins[1]
       if not vim.api.nvim_win_is_valid(win) then return end
-      local win_width = content_width(win, session.opts.indent)
+      local win_width = content_width(win)
       if win_width == (session.opts.max_width or DEFAULT_MAX_WIDTH) then return end
 
       session.opts.max_width = win_width
