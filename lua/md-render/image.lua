@@ -64,6 +64,9 @@ local function term_write(data)
     table.insert(_batch_buffer, data)
     return
   end
+  if vim.env.TMUX and data:find("\x1b_G", 1, true) then
+    data = "\x1bPtmux;" .. data:gsub("\x1b", "\x1b\x1b") .. "\x1b\\"
+  end
   vim.api.nvim_ui_send(data)
 end
 

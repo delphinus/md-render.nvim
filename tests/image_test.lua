@@ -89,7 +89,9 @@ end
 
 --- Concatenate all captured writes into a single string
 local function captured_output()
-  return table.concat(captured)
+  local data = table.concat(captured)
+  if vim.env.TMUX then data = data:gsub("\x1bPtmux;", ""):gsub("\x1b\x1b", "\x1b") end
+  return data
 end
 
 --- Parse Kitty graphics APC sequences from captured output.
