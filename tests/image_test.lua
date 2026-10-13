@@ -94,6 +94,11 @@ local function captured_output()
   return data
 end
 
+--- Concatenate captured writes
+local function captured_raw_output()
+  return table.concat(captured)
+end
+
 --- Parse Kitty graphics APC sequences from captured output.
 --- Returns a list of { params = "a=t,...", payload = "..." }
 local function parse_kitty_sequences(data)
@@ -204,6 +209,77 @@ test("calc_display_size: tall portrait image constrained by max_rows", function(
   assert_true(cols <= 30, "cols should not exceed max_cols")
   assert_true(cols >= 1, "cols should be at least 1")
   image._test_cell_size = nil
+end)
+
+-- ============================================================================
+-- tmux passthrough: filter kitty commands
+-- ============================================================================
+test("tmux passthrough: wraps a Kitty graphics command", function()
+  -- Verifies raw protocol bytes
+  -- ESC P tmux;       outer DCS starts
+  -- ESC ESC _ G       inner Kitty ESC is doubled
+  -- ESC ESC \         inner Kitty terminator ESC is doubled
+  -- ESC \             outer tmux DCS terminator
+  setup_capture()
+
+  local original_tmux = vim.env.TMUX
+  vim.env.TMUX = "/tmp/tmux-1000/default,123,0"
+
+  local id = image.transmit_image(test_png)
+  local output = captured_raw_output()
+
+  assert_true(id ~= nil, "image should transmit")
+  assert_true(output:find("\x1bPtmux;", 1, true) ~= nil, "starts tmux passthrough")
+  assert_true(output:find("\x1b\x1b_G", 1, true) ~= nil, "escapes the Kitty commad start")
+  assert_true(output:find("\x1b\x1b\\\x1b\\", 1, true) ~= nil, "escapes Kitty end and closes tmux passthrough")
+
+  vim.env.TMUX = original_tmux
+  teardown()
+end)
+
+test("tmux passthrough: leaves cursor controls outside the wrapper", function()
+  setup_capture()
+
+  local original_tmux = vim.env.TMUX
+  vim.env.TMUX = "/tmp/tmux-1000/default,123,0"
+
+  image.begin_batch()
+  image.put_image(101, vim.api.nvim_get_current_win(), 0, 0, 1, 1)
+  image.flush_batch()
+
+  local output = captured_raw_output()
+
+  -- put_image() writes: save cursor, move cursor, place image, restore cursor.
+  -- Only the Kitty placement command belong in the DCS wrapper
+
+  assert_true(output:sub(1, 3) == "\x1b[s", "cursor save is sent normally before passthrough")
+  assert_true(output:find("\x1bPtmux;", 1, true) ~= nil, "Kitty placement is wrapped for tmux")
+  assert_true(output:sub(-3) == "\x1b[u", "cursor restore is sent normally after passthrough")
+
+  vim.env.TMUX = original_tmux
+  teardown()
+
+  -- put_image()
+end)
+
+test("tmux passthrough: wraps each kitty command in a batch separately", function()
+  setup_capture()
+
+  local original_tmux = vim.env.TMUX
+  vim.env.TMUX = "/tmp/tmux-1000/default,123,0"
+
+  image.begin_batch()
+  image.clear_placements(101)
+  image.clear_placements(102)
+  image.flush_batch()
+
+  local output = captured_raw_output()
+  local _, wrapper_count = output:gsub("\x1bPtmux;", "")
+
+  assert_eq(wrapper_count, 2, "each Kitty command gets its own tmux wrapper")
+
+  vim.env.TMUX = original_tmux
+  teardown()
 end)
 
 -- ============================================================================
@@ -585,15 +661,22 @@ test("supports_kitty: returns false for unknown terminal", function()
   local orig_kw = vim.env.KITTY_WINDOW_ID
   local orig_gr = vim.env.GHOSTTY_RESOURCES_DIR
   local orig_we = vim.env.WEZTERM_EXECUTABLE
+  local orig_tmux = vim.env.TMUX
+  local orig_tmux_pane = vim.env.TMUX_PANE
+
   vim.env.TERM_PROGRAM = "xterm"
   vim.env.KITTY_WINDOW_ID = nil
   vim.env.GHOSTTY_RESOURCES_DIR = nil
   vim.env.WEZTERM_EXECUTABLE = nil
+  vim.env.TMUX = nil
+  vim.env.TMUX_PANE = nil
   assert_true(not image.supports_kitty(), "should return false for xterm")
   vim.env.TERM_PROGRAM = orig_tp
   vim.env.KITTY_WINDOW_ID = orig_kw
   vim.env.GHOSTTY_RESOURCES_DIR = orig_gr
   vim.env.WEZTERM_EXECUTABLE = orig_we
+  vim.env.TMUX = orig_tmux
+  vim.env.TMUX_PANE = orig_tmux_pane
   image.reset_cache()
 end)
 
@@ -606,6 +689,94 @@ test("supports_kitty: detects via KITTY_WINDOW_ID env var", function()
   assert_true(image.supports_kitty(), "should detect via KITTY_WINDOW_ID")
   vim.env.TERM_PROGRAM = orig_tp
   vim.env.KITTY_WINDOW_ID = orig_kw
+  image.reset_cache()
+end)
+
+test("supports_kitty: detects a Kitty client attached through tmux", function()
+  local original_system = vim.fn.system
+  local original_tmux = vim.env.TMUX
+  local original_tmux_pane = vim.env.TMUX_PANE
+  local original_term = vim.env.TERM
+  local original_term_program = vim.env.TERM_PROGRAM
+  local original_kitty_window_id = vim.env.KITTY_WINDOW_ID
+  local original_ghostty_resources_dir = vim.env.GHOSTTY_RESOURCES_DIR
+  local original_wezterm_executable = vim.env.WEZTERM_EXECUTABLE
+
+  local command_seen = nil
+  vim.fn.system = function(command)
+    command_seen = command
+    return "xterm-kitty\n"
+  end
+
+  -- Reproduce Kitty attached through tmux, but no KITTY_WINDOW_ID env variable
+  vim.env.TMUX = "/tmp/tmux-1000/default,123,0"
+  vim.env.TMUX_PANE = "%1"
+  vim.env.TERM = "xterm-256color"
+  vim.env.TERM_PROGRAM = "tmux"
+  vim.env.KITTY_WINDOW_ID = nil
+  vim.env.GHOSTTY_RESOURCES_DIR = nil
+  vim.env.WEZTERM_EXECUTABLE = nil
+  image.reset_cache()
+
+  assert_true(image.supports_kitty(), "should detect a Kitty tmux client")
+  assert_eq(
+    command_seen,
+    { "tmux", "display-message", "-p", "-t", "%1", "#{client_termname}" },
+    "should query tmux for the client terminal name"
+  )
+
+  vim.fn.system = original_system
+  vim.env.TMUX = original_tmux
+  vim.env.TMUX_PANE = original_tmux_pane
+  vim.env.TERM = original_term
+  vim.env.TERM_PROGRAM = original_term_program
+  vim.env.KITTY_WINDOW_ID = original_kitty_window_id
+  vim.env.GHOSTTY_RESOURCES_DIR = original_ghostty_resources_dir
+  vim.env.WEZTERM_EXECUTABLE = original_wezterm_executable
+  image.reset_cache()
+end)
+
+test("supports_kitty: rejects a non-Kitty tmux client", function()
+  local original_system = vim.fn.system
+  local original_tmux = vim.env.TMUX
+  local original_tmux_pane = vim.env.TMUX_PANE
+  local original_term = vim.env.TERM
+  local original_term_program = vim.env.TERM_PROGRAM
+  local original_kitty_window_id = vim.env.KITTY_WINDOW_ID
+  local original_ghostty_resources_dir = vim.env.GHOSTTY_RESOURCES_DIR
+  local original_wezterm_executable = vim.env.WEZTERM_EXECUTABLE
+
+  local command_seen = nil
+  vim.fn.system = function(command)
+    command_seen = command
+    return "xterm-256color\n"
+  end
+
+  -- Reproduce issue: Kitty attached through tmux, but no Kitty env variable
+  vim.env.TMUX = "/tmp/tmux-1000/default,123,0"
+  vim.env.TMUX_PANE = "%1"
+  vim.env.TERM = "xterm-256color"
+  vim.env.TERM_PROGRAM = "tmux"
+  vim.env.KITTY_WINDOW_ID = nil
+  vim.env.GHOSTTY_RESOURCES_DIR = nil
+  vim.env.WEZTERM_EXECUTABLE = nil
+  image.reset_cache()
+
+  assert_true(not image.supports_kitty(), "should reject a non-Kitty tmux client")
+  assert_eq(
+    command_seen,
+    { "tmux", "display-message", "-p", "-t", "%1", "#{client_termname}" },
+    "should query tmux for the client terminal name"
+  )
+
+  vim.fn.system = original_system
+  vim.env.TMUX = original_tmux
+  vim.env.TMUX_PANE = original_tmux_pane
+  vim.env.TERM = original_term
+  vim.env.TERM_PROGRAM = original_term_program
+  vim.env.KITTY_WINDOW_ID = original_kitty_window_id
+  vim.env.GHOSTTY_RESOURCES_DIR = original_ghostty_resources_dir
+  vim.env.WEZTERM_EXECUTABLE = original_wezterm_executable
   image.reset_cache()
 end)
 

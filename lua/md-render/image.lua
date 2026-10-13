@@ -57,6 +57,46 @@ end
 local _batch_buffer = nil
 local _batch_stack = nil
 
+---@param kitty_command string
+---@return string
+local function wrap_tmux_passthrough(kitty_command)
+  return "\x1bPtmux;" .. kitty_command:gsub("\x1b", "\x1b\x1b") .. "\x1b\\"
+end
+
+---@param data string
+---@return string
+local function wrap_kitty_commands_for_tmux(data)
+  local output = {}
+  local position = 1
+
+  while true do
+    local command_start = data:find("\x1b_G", position, true)
+    if not command_start then
+      table.insert(output, data:sub(position))
+      break
+    end
+
+    local command_end = data:find("\x1b\\", command_start + 3, true)
+    if not command_end then
+      -- Do not alter and incomplete Kitty command
+      table.insert(output, data:sub(position))
+      break
+    end
+
+    -- Terminal bytes before Kitty command starts
+    table.insert(output, data:sub(position, command_start - 1))
+
+    -- Wrap exactly  ESC_G ... ESC\
+    local kitty_command = data:sub(command_start, command_end + 1)
+    table.insert(output, wrap_tmux_passthrough(kitty_command))
+
+    -- ESC\ is two bytes, continue after it
+    position = command_end + 2
+  end
+
+  return table.concat(output)
+end
+
 ---@param data string
 local function term_write(data)
   if data == "" then return end
@@ -64,9 +104,7 @@ local function term_write(data)
     table.insert(_batch_buffer, data)
     return
   end
-  if vim.env.TMUX and data:find("\x1b_G", 1, true) then
-    data = "\x1bPtmux;" .. data:gsub("\x1b", "\x1b\x1b") .. "\x1b\\"
-  end
+  if vim.env.TMUX and data:find("\x1b_G", 1, true) then data = wrap_kitty_commands_for_tmux(data) end
   vim.api.nvim_ui_send(data)
 end
 
@@ -760,6 +798,23 @@ local function probe_kitty_via_apc()
   return supported
 end
 
+--- Return whether the tmux client attached is kitty
+---@return boolean
+local function tmux_client_is_kitty()
+  if not vim.env.TMUX or not vim.env.TMUX_PANE then return false end
+
+  local ok, termname = pcall(vim.fn.system, {
+    "tmux",
+    "display-message",
+    "-p",
+    "-t",
+    vim.env.TMUX_PANE,
+    "#{client_termname}",
+  })
+
+  return ok and vim.trim(termname) == "xterm-kitty"
+end
+
 function M.supports_kitty()
   if _kitty_supported ~= nil then return _kitty_supported end
   -- Windows lacks the POSIX TTY plumbing (isatty/ttyname/ioctl) this module
@@ -797,6 +852,11 @@ function M.supports_kitty()
     _kitty_supported = true
     return true
   end
+  if tmux_client_is_kitty() then
+    _kitty_supported = true
+    return true
+  end
+
   _kitty_supported = false
   return false
 end
