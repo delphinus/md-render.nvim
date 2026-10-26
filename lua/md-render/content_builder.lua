@@ -2475,6 +2475,11 @@ function ContentBuilder:render_document(lines, opts)
         apply_details_body_prefix(ib_lines_before, #self.lines)
       end
       lines_shown = lines_shown + 1
+      -- This path skips the tracking at the end of the loop, so record the
+      -- code line here; otherwise the blank line in front of the block still
+      -- counts as the last one rendered and the blank after it is collapsed.
+      prev_was_heading = false
+      prev_rendered_blank = false
       goto continue
     end
     in_indented_code = false
