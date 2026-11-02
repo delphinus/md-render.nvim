@@ -74,7 +74,7 @@ do
   assert_eq(r.source_cursor, 397, "opening and closing the float should preserve the source cursor")
 end
 
--- An attached UI verifies native wrapping and the actual following text on screen.
+-- An attached UI verifies following text and EOF alignment when lines wrap.
 local child = vim.fn.jobstart(
   { vim.v.progpath, "--embed", "--headless", "-n", "-u", "NONE", "--noplugin", "-i", "NONE" },
   { rpc = true }
@@ -95,7 +95,7 @@ local ok, err = pcall(function()
     end
     vim.bo.filetype = "markdown"
     vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
-    vim.api.nvim_win_set_cursor(0, {21, 0})
+    vim.api.nvim_win_set_cursor(0, {23, 0})
     _G.source_win = vim.api.nvim_get_current_win()
     _G.source_buf = vim.api.nvim_get_current_buf()
     _G.source_tick = vim.api.nvim_buf_get_changedtick(source_buf)
@@ -106,19 +106,22 @@ local ok, err = pcall(function()
     local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
     local session = require("md-render.preview")._sessions[buf]
     assert(vim.api.nvim_win_text_height(win, {}).all > vim.api.nvim_buf_line_count(buf), "fixture must wrap on screen")
-    assert(vim.api.nvim_win_get_cursor(win)[1] == session:source_to_rendered(21), "mapped cursor changed")
+    assert(vim.api.nvim_win_get_cursor(win)[1] == session:source_to_rendered(23), "mapped cursor changed")
     local pos
     for line, text in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
-      local col = text:find("Para12", 1, true)
+      local col = text:find("Para13", 1, true)
       if col then pos = vim.fn.screenpos(win, line, col); break end
     end
     assert(pos and pos.row > 0, "the paragraph after the cursor is off screen")
     local cells = {}
     for col = pos.col, pos.col + 5 do cells[#cells + 1] = vim.fn.screenstring(pos.row, col) end
-    assert(table.concat(cells) == "Para12", "the following paragraph was not drawn")
+    assert(table.concat(cells) == "Para13", "the following paragraph was not drawn")
+    local eof = vim.fn.screenpos(win, vim.api.nvim_buf_line_count(buf), 1)
+    local bottom = vim.api.nvim_win_get_position(win)[1] + vim.api.nvim_win_get_height(win)
+    assert(eof.row == bottom, "wrapped EOF should reach the window's last screen row")
     vim.api.nvim_win_close(win, true)
     assert(vim.api.nvim_win_get_buf(source_win) == source_buf, "closing the preview lost the source")
-    assert(vim.api.nvim_win_get_cursor(source_win)[1] == 21, "source cursor changed")
+    assert(vim.api.nvim_win_get_cursor(source_win)[1] == 23, "source cursor changed")
     assert(vim.api.nvim_buf_get_changedtick(source_buf) == source_tick, "source text changed")
   ]]
 end)
