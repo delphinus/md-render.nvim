@@ -4,6 +4,18 @@
 
 Neovim 用の Markdown レンダリングエンジンです。生の Markdown テキストをハイライト付きのインタラクティブなコンテンツに変換して、エディタ内で表示します。フローティングウィンドウ、タブ表示、コマンドラインからの `less` ライクなページャーモードに対応しています。
 
+## このフォークのセキュリティ修正
+
+`fix/security-hardening` ブランチでは、未信頼の文書の処理を次のように変更しています。
+
+- 画像・動画のパスではホームディレクトリと環境変数だけを展開し、Vim 式・シェルコマンド・ワイルドカードを評価しません。
+- Mermaid は事前導入した `mmdc` だけを使い、描画時に npm パッケージを取得しません。
+- ローカルの PlantUML は `SANDBOX` プロファイルで実行し、ローカルファイルや URL の include を許可しません。
+- リモート画像・動画の取得は既定で無効です。`image.set_download_fn()` に取得関数を登録した場合だけ有効になり、標準ダウンローダーへのフォールバックはありません。取得関数では接続先・名前解決後の IP アドレス・リダイレクト・ダウンロード量を制限してください。
+- 拡大見出しをターミナルへ送る前に、C0・DEL・C1 制御文字を除去します。
+
+このブランチを導入し、プラグインマネージャーで確認済みのコミットに固定してください。導入済みの外部コマンド、任意プラグイン、明示的に設定する取得関数・PlantUML サーバーは、引き続き信頼する必要があります。
+
 <figure align="center">
   <img src="https://github.com/user-attachments/assets/6c51f971-84bb-49fe-aaff-21db40712187" width="900" height="685" alt="md-render.nvim ショーケース：インライン書式、テーブル、コールアウト、コードブロック、画像、動画、Mermaid ダイアグラム" />
 </figure>
@@ -37,7 +49,7 @@ Neovim 用の Markdown レンダリングエンジンです。生の Markdown �
 リポジトリには全機能を一望できるショーケース Markdown が同梱されています。クローン後、ページャーで開いてみてください：
 
 ```bash
-git clone https://github.com/delphinus/md-render.nvim
+git clone --branch fix/security-hardening https://github.com/argonism/md-render.nvim
 cd md-render.nvim
 nvim +"MdRender pager" assets/showcase.md
 ```
@@ -55,10 +67,10 @@ nvim +"MdRender pager" assets/showcase.md
 
 | 依存 | 用途 | フォールバック |
 |---|---|---|
-| [curl](https://curl.se/) | Web 画像・動画のダウンロード | `set_download_fn()` でカスタム関数を指定可 |
+| [curl](https://curl.se/) | 明示的に指定した HTTPS PlantUML サーバーへの接続 | ローカルの PlantUML、またはコードブロック |
 | [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG 変換、アニメーション GIF / 動画のフレーム展開 | ImageMagick にフォールバック（画像のみ。動画には ffmpeg が必要） |
 | [ImageMagick](https://imagemagick.org/) (`magick`) | JPEG/WebP → PNG、アニメーション GIF フレーム展開 | macOS では `sips` が静止画変換を処理。アニメーション GIF には ffmpeg か magick が必要 |
-| [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Mermaid ダイアグラムを画像として描画 | `npx -y @mermaid-js/mermaid-cli` にフォールバック |
+| [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Mermaid ダイアグラムを画像として描画 | コードブロック。パッケージは自動導入しない |
 | [PlantUML](https://plantuml.com/) (`plantuml`、または `java` と `$PLANTUML_JAR`) | PlantUML ダイアグラムを画像として描画 | 指定した場合のみ PlantUML サーバ（curl が必要）。指定が無ければコードブロックのまま |
 | [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK フレーズ単位の改行（BudouX） | 1文字ずつ分割（禁則処理は維持） |
 | Treesitter パーサー | コードブロックのシンタックスハイライト | ハイライトなしで表示 |
@@ -80,8 +92,8 @@ nvim +"MdRender pager" assets/showcase.md
 
 ```lua
 {
-  "delphinus/md-render.nvim",
-  version = "*",
+  "argonism/md-render.nvim",
+  branch = "fix/security-hardening", -- lockfile で確認済みコミットに固定
   dependencies = {
     { "nvim-tree/nvim-web-devicons", version = "*" }, -- optional: file type icons in code blocks
     { "delphinus/budoux.lua", version = "*" }, -- optional: CJK phrase-level line breaking
@@ -98,7 +110,7 @@ nvim +"MdRender pager" assets/showcase.md
 
 ```lua
 vim.pack.add({
-  "https://github.com/delphinus/md-render.nvim",
+  { src = "https://github.com/argonism/md-render.nvim", version = "fix/security-hardening" },
   -- optional:
   "https://github.com/nvim-tree/nvim-web-devicons",
   "https://github.com/delphinus/budoux.lua",
@@ -110,7 +122,8 @@ vim.pack.add({
 ```lua
 local add = MiniDeps.add
 add({
-  source = "delphinus/md-render.nvim",
+  source = "argonism/md-render.nvim",
+  checkout = "fix/security-hardening",
   depends = {
     "nvim-tree/nvim-web-devicons", -- optional
     "delphinus/budoux.lua",        -- optional
@@ -410,14 +423,14 @@ require("snacks").setup({
 <details>
 <summary><strong>Mermaid ダイアグラムが描画されない</strong></summary>
 
-Mermaid のレンダリングには [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli) の `mmdc` バイナリが必要です。グローバルに `mmdc` がない場合は `npx -y @mermaid-js/mermaid-cli` にフォールバックしますが、初回呼び出しが大幅に遅くなります。`npm install -g @mermaid-js/mermaid-cli` でグローバルインストールするのがおすすめです。
+Mermaid の描画には、事前導入した [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli) の `mmdc` が必要です。未導入の場合はコードブロックのまま表示します。このフォークは `npx` を呼び出さず、パッケージを自動導入しません。図が必要な場合は、CLI・推移的な依存・ブラウザを別途確認して導入してください。
 
 </details>
 
 <details>
 <summary><strong>PlantUML ダイアグラムが描画されない</strong></summary>
 
-`plantuml` / `puml` のフェンスは、`plantuml` バイナリが `PATH` にあるか、`java` があって `$PLANTUML_JAR` が読み取れる `plantuml.jar` を指しているときにローカルで描画されます。どちらか一方を入れればフェンスがダイアグラムになります。
+`plantuml` / `puml` のフェンスは、`plantuml` バイナリが `PATH` にあるか、`java` があって `$PLANTUML_JAR` が読み取れる `plantuml.jar` を指しているときにローカルで描画されます。`SANDBOX` プロファイルを強制し、継承した JVM オプション変数をクリアします。ローカルファイルや URL の include は利用できません。このプロファイルに対応する、保守されている PlantUML を使用してください。
 
 明示的に指定しない限りフォールバックはしません。PlantUML はサーバ上で描画する設計であり、他人のサーバで描画するということはダイアグラムをそこへ送るということなので、このプラグインが勝手にそれを選ぶことはしません。ローカルのレンダラが無ければ、`plantuml` のフェンスはコードブロックのままになります。サーバを指定すればそちらを使います:
 
@@ -430,7 +443,7 @@ require("md-render.image").setup {
 }
 ```
 
-サーバを使う場合は `curl` も必要です。描画したダイアグラムはソースをキーにして `stdpath("cache")/md-render/plantuml` にキャッシュされるので、送信は 1 回だけです。
+サーバーを使う場合は `curl` も必要です。認証情報・クエリ・フラグメントを含まない HTTPS のベース URL だけを受け付け、リダイレクトと curl の設定ファイルを無効にします。指定したサーバーへ図のソースを送信するため、信頼するサーバーを指定してください。サーバー側の描画方針は運用者が管理します。描画結果は `stdpath("cache")/md-render/plantuml` に、旧版と異なる名前空間でキャッシュします。
 
 </details>
 

@@ -32,6 +32,18 @@ local M = {}
 --- close to plain size a level can get (roughly 7/6).
 local MAX_W = 7
 
+--- Document text is data inside OSC 66, never terminal control syntax. Work
+--- with codepoints so removing C1 controls does not corrupt UTF-8 text/emoji.
+---@param text string
+---@return string
+local function terminal_text(text)
+  local chars = {}
+  for _, cp in ipairs(vim.fn.str2list(text, true)) do
+    if cp >= 32 and (cp < 127 or cp > 159) then table.insert(chars, cp) end
+  end
+  return vim.fn.list2str(chars, true)
+end
+
 --- Heading level → how `#` … `######` are scaled. Fixed, not user-configurable.
 ---
 --- `s` is Kitty's *cell* scale: the run is drawn in a block `s` cells high and
@@ -388,6 +400,7 @@ end
 ---@return { text: string, w: integer }[] runs
 ---@return integer width cells the painted runs cover in total
 function M.split_run(text, spec, budget)
+  text = terminal_text(text)
   if not spec.chunk then return { { text = text, w = 0 } }, vim.api.nvim_strwidth(text) * spec.s end
 
   local chars = vim.fn.split(text, "\\zs")
@@ -759,7 +772,7 @@ local function write_runs(state, drawn)
       local meta = string.format("s=%d:n=1:d=%d:w=1:v=%d", d.p.scale, d.p.scale, VERTICAL_ALIGN)
       table.insert(out, string.format("\x1b[%d;%dH", d.row, d.icon_col))
       table.insert(out, sgr)
-      table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, d.p.icon))
+      table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, terminal_text(d.p.icon)))
 
       -- Fill the cells between the icon's block and the text's.
       --
@@ -798,7 +811,7 @@ local function write_runs(state, drawn)
       if d.p.num then meta = meta .. string.format(":n=%d:d=%d:w=%d:v=%d", d.p.num, d.p.den, run.w, VERTICAL_ALIGN) end
       table.insert(out, string.format("\x1b[%d;%dH", d.row, col))
       table.insert(out, sgr)
-      table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, run.text))
+      table.insert(out, string.format("\x1b]66;%s;%s\x1b\\", meta, terminal_text(run.text)))
       col = col + d.p.scale * (run.w > 0 and run.w or vim.api.nvim_strwidth(run.text))
     end
   end

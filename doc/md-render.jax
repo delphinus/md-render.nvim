@@ -1003,12 +1003,16 @@ IMAGE							       *md-render-image*
 
 						       *image.set_download_fn()*
 image.set_download_fn({fn}) ~
-	Web 画像のダウンロード関数をカスタム設定します。デフォルトでは curl が
-	使用されます。
+	リモート画像・動画の取得関数を登録します。既定では取得しません。取得関数で
+	接続先・名前解決後の IP アドレス・リダイレクト・使用リソースを制限してください。
+	キャッシュ済みの画像・動画は引き続き表示できます。
 
 	パラメータ: ~
 	  {fn}  (function) 以下のシグネチャを持つ関数:
 		  fn(url: string, dest: string, callback: function)
+		  true を返すと処理を引き受け、callback(ok) を 1 回呼びます。
+		  false を返すと取得を拒否します。標準の取得処理はありません。
+		  nil を指定するとリモート取得を再び無効にします。
 
 							   *image.reset_cache()*
 image.reset_cache() ~
@@ -1192,8 +1196,8 @@ Details ~
   Treesitter パーサー  コードブロックのシンタックスハイライト。パーサーがない
                        場合はハイライトなしで表示。
 
-  curl                 Web 画像・動画のダウンロード。
-                       |image.set_download_fn()| で置換可。
+  curl                 明示的に指定した HTTPS PlantUML サーバーへの接続。
+                       リモート画像・動画は |image.set_download_fn()| のみ。
 
   FFmpeg               JPEG/WebP → PNG 変換、アニメーション GIF / 動画のフ
   (ffmpeg/ffprobe)     レーム展開。画像は ImageMagick にフォールバック。動画
@@ -1203,8 +1207,8 @@ Details ~
   (magick)             macOS では `sips` が静止画変換を処理。アニメーション
                        GIF には ffmpeg か magick が必要。
 
-  Mermaid CLI          Mermaid ダイアグラムを画像として描画。 `npx -y
-  (mmdc)               @mermaid-js/mermaid-cli` にフォールバック。
+  Mermaid CLI          Mermaid ダイアグラムを画像として描画。未導入の場合は
+  (mmdc)               コードブロックのまま表示し、パッケージは自動導入しません。
                        https://github.com/mermaid-js/mermaid-cli
 
 ==============================================================================

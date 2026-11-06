@@ -551,6 +551,8 @@ PlantUML diagrams					 *md-render-plantuml*
 A fenced block tagged `plantuml` or `puml` is rendered as an image, the way a
 `mermaid` fence is.  Rendering is done by a `plantuml` on the PATH, or by
 `java -jar $PLANTUML_JAR` when that variable points at a readable jar.
+Local renderers run with PLANTUML_SECURITY_PROFILE=SANDBOX. Inherited JVM
+option variables are cleared; file and URL includes are unavailable.
 
 With neither, the fence stays a code block.  PlantUML renders on a server by
 design, and rendering on somebody else's means sending the diagram there, so
@@ -564,9 +566,11 @@ be used: >lua
 "https://www.plantuml.com/plantuml" is the public instance, if that is the one
 you want.  Either way the diagram source is sent to it.
 
-A named server also needs `curl`.  Renders are cached under
-`stdpath("cache")/md-render/plantuml`, keyed by the diagram source, so a given
-diagram is sent once.
+A named server also needs `curl`. Only HTTPS base URLs without credentials,
+queries or fragments are accepted. Redirects and curl configuration files are
+disabled. The server receives the diagram source; trust its operator and
+rendering policy. Renders use a separate cache namespace from older versions
+under `stdpath("cache")/md-render/plantuml`.
 
 ------------------------------------------------------------------------------
 Deprecated commands				 *md-render-deprecated-commands*
@@ -1041,12 +1045,16 @@ IMAGE							       *md-render-image*
 
 						       *image.set_download_fn()*
 image.set_download_fn({fn}) ~
-	Set a custom download function for web images.  By default, curl is
-	used.
+	Register a downloader for remote images and videos. By default no remote
+	media is downloaded. The function must restrict destinations, resolved IP
+	addresses, redirects and resource use. Cached media can still be displayed.
 
 	Parameters: ~
 	  {fn}  (function) Function with signature:
 		  fn(url: string, dest: string, callback: function)
+		  Return true to take the job and call callback(ok) once.
+		  Return false to decline; no built-in downloader runs.
+		  Pass nil to disable remote downloads again.
 
 							   *image.reset_cache()*
 image.reset_cache() ~
@@ -1232,8 +1240,8 @@ OPTIONAL DEPENDENCIES					*md-render-dependencies*
   Treesitter parsers   Syntax highlighting in code blocks.  Code blocks
                        render without highlighting if parsers are missing.
 
-  curl                 Download web images and video.  Can be replaced
-                       via |image.set_download_fn()|.
+  curl                 Contact an explicitly configured HTTPS PlantUML server.
+                       Remote media uses |image.set_download_fn()| only.
 
   FFmpeg               JPEG/WebP to PNG conversion, animated GIF / video
   (ffmpeg/ffprobe)     frame extraction.  Falls back to ImageMagick for
@@ -1243,8 +1251,8 @@ OPTIONAL DEPENDENCIES					*md-render-dependencies*
   (magick)             On macOS, `sips` handles static conversion;
                        animated GIF requires ffmpeg or magick.
 
-  Mermaid CLI          Render Mermaid diagrams as images.  Falls back to
-  (mmdc)               `npx -y @mermaid-js/mermaid-cli`.
+  Mermaid CLI          Render Mermaid diagrams as images. Without an installed
+  (mmdc)               CLI, keep the code block. No npm packages are installed.
                        https://github.com/mermaid-js/mermaid-cli
 
   PlantUML             Render PlantUML diagrams as images.  Falls back to a

@@ -162,3 +162,8 @@ if fail_count > 0 then os.exit(1) end
 ```
 
 `make test` globs `tests/*_test.lua`, so a new file is picked up automatically — no workflow change needed.
+
+`security_test.lua` exercises literal media paths, document-driven expression
+evaluation, installed-only Mermaid execution, PlantUML sandboxing, disabled
+remote-media downloads, and terminal-control filtering. External processes and
+terminal writes are captured; the tests perform no real network requests.

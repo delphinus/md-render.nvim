@@ -4,6 +4,18 @@
 
 A Markdown rendering engine for Neovim. Transforms raw Markdown into richly highlighted, interactive content — right inside your editor. Supports floating windows, tab views, and a pager mode for `less`-like usage from the command line.
 
+## Security changes in this fork
+
+The `fix/security-hardening` branch changes the handling of untrusted documents:
+
+- Media paths expand home and environment variables without evaluating Vim expressions, shell commands, or wildcards.
+- Mermaid uses an already installed `mmdc`; rendering never downloads npm packages.
+- Local PlantUML runs with the `SANDBOX` profile. Local file and URL includes are unavailable.
+- Remote images and videos are not downloaded by default. `image.set_download_fn()` explicitly enables a user-provided downloader, with no built-in fallback. That function must enforce trusted destinations, resolved IP addresses, redirect rules, and download limits.
+- Scaled headings remove C0, DEL, and C1 control characters before writing text to the terminal.
+
+Install this branch and pin the reviewed commit in your plugin manager. Installed external tools, optional plugins, and explicitly configured downloaders or PlantUML servers remain trusted dependencies.
+
 <figure align="center">
   <img src="https://github.com/user-attachments/assets/6c51f971-84bb-49fe-aaff-21db40712187" width="900" height="685" alt="md-render.nvim showcase: inline formatting, tables, callouts, code blocks, images, video, and Mermaid diagrams" />
 </figure>
@@ -37,7 +49,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 The repo bundles a showcase Markdown file demonstrating every feature. After cloning, view it with the pager:
 
 ```bash
-git clone https://github.com/delphinus/md-render.nvim
+git clone --branch fix/security-hardening https://github.com/argonism/md-render.nvim
 cd md-render.nvim
 nvim +"MdRender pager" assets/showcase.md
 ```
@@ -55,10 +67,10 @@ Or, once the plugin is installed, run `:MdRender demo` to see a built-in demo of
 
 | Dependency | Purpose | Fallback |
 |---|---|---|
-| [curl](https://curl.se/) | Download web images and video | Custom function via `set_download_fn()` |
+| [curl](https://curl.se/) | Contact an explicitly configured HTTPS PlantUML server | Local PlantUML or a code block |
 | [FFmpeg](https://ffmpeg.org/) (`ffmpeg` / `ffprobe`) | JPEG/WebP → PNG conversion, animated GIF / video frame extraction | Falls back to ImageMagick (images only; video requires ffmpeg) |
 | [ImageMagick](https://imagemagick.org/) (`magick`) | JPEG/WebP → PNG, animated GIF frame extraction | `sips` (macOS) handles static conversion; animated GIF requires ffmpeg or magick |
-| [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Render Mermaid diagrams as images | Falls back to `npx -y @mermaid-js/mermaid-cli` |
+| [Mermaid CLI](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) | Render Mermaid diagrams as images | Code block; no package installation |
 | [PlantUML](https://plantuml.com/) (`plantuml`, or `java` with `$PLANTUML_JAR`) | Render PlantUML diagrams as images | A PlantUML server, if you name one (needs curl); otherwise the fence stays a code block |
 | [budoux.lua](https://github.com/delphinus/budoux.lua) | CJK phrase-level line breaking (BudouX) | Character-level splitting (kinsoku rules still apply) |
 | Treesitter parsers | Syntax highlighting in code blocks | Code blocks rendered without highlighting |
@@ -80,8 +92,8 @@ For image/video format conversion and animation support, the plugin tries tools 
 
 ```lua
 {
-  "delphinus/md-render.nvim",
-  version = "*",
+  "argonism/md-render.nvim",
+  branch = "fix/security-hardening", -- pin a reviewed commit in your lockfile
   dependencies = {
     { "nvim-tree/nvim-web-devicons", version = "*" }, -- optional: file type icons in code blocks
     { "delphinus/budoux.lua", version = "*" }, -- optional: CJK phrase-level line breaking
@@ -98,7 +110,7 @@ For image/video format conversion and animation support, the plugin tries tools 
 
 ```lua
 vim.pack.add({
-  "https://github.com/delphinus/md-render.nvim",
+  { src = "https://github.com/argonism/md-render.nvim", version = "fix/security-hardening" },
   -- optional:
   "https://github.com/nvim-tree/nvim-web-devicons",
   "https://github.com/delphinus/budoux.lua",
@@ -110,7 +122,8 @@ vim.pack.add({
 ```lua
 local add = MiniDeps.add
 add({
-  source = "delphinus/md-render.nvim",
+  source = "argonism/md-render.nvim",
+  checkout = "fix/security-hardening",
   depends = {
     "nvim-tree/nvim-web-devicons", -- optional
     "delphinus/budoux.lua",        -- optional
@@ -411,14 +424,14 @@ Video frame extraction requires `ffmpeg` to be installed and available in `$PATH
 <details>
 <summary><strong>Mermaid diagrams don't render</strong></summary>
 
-Mermaid rendering requires the `mmdc` binary from [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli). If `mmdc` isn't installed globally, the plugin falls back to `npx -y @mermaid-js/mermaid-cli`, which is significantly slower on first invocation. Install it globally with `npm install -g @mermaid-js/mermaid-cli` for faster rendering.
+Mermaid rendering requires an already installed `mmdc` from [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli). Without it, the diagram stays a code block. This fork never invokes `npx` or installs packages. If you need diagrams, provision and review the CLI, its transitive dependencies, and its browser separately.
 
 </details>
 
 <details>
 <summary><strong>PlantUML diagrams don't render</strong></summary>
 
-Fenced blocks tagged `plantuml` or `puml` are rendered locally when a `plantuml` binary is on your `PATH` (most package managers ship one), or when `java` is available and `$PLANTUML_JAR` points at a readable `plantuml.jar`. Install one of those and the fence becomes a diagram.
+Fenced blocks tagged `plantuml` or `puml` are rendered locally when a `plantuml` binary is on your `PATH`, or when `java` is available and `$PLANTUML_JAR` points at a readable `plantuml.jar`. The plugin forces the `SANDBOX` security profile and clears inherited JVM option variables. Local file and URL includes are unavailable. Use a maintained PlantUML release that supports this profile.
 
 There is no fallback unless you ask for one. PlantUML renders on a server by design, and rendering on somebody else's means sending the diagram there, so the plugin will not choose that for you — without a local renderer, a `plantuml` fence stays a code block. Name a server and it will be used:
 
@@ -430,7 +443,7 @@ require("md-render.image").setup {
 }
 ```
 
-The server also needs `curl`. Rendered diagrams are cached under `stdpath("cache")/md-render/plantuml`, keyed by the diagram source, so a diagram is only sent once.
+The server also needs `curl`. Only HTTPS base URLs without credentials, queries, or fragments are accepted. Redirects and curl's configuration file are disabled. The configured server receives the diagram source and must be trusted; its own rendering policy is controlled by its operator. Rendered diagrams are cached under `stdpath("cache")/md-render/plantuml` in a separate namespace from older renders.
 
 </details>
 

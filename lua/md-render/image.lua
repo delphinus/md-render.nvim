@@ -41,6 +41,12 @@ local config = {
 function M.setup(opts)
   opts = opts or {}
   if opts.plantuml_server ~= nil then
+    vim.validate("plantuml_server", opts.plantuml_server, "string")
+    local server = opts.plantuml_server
+    local authority = server:match "^https://([^/?#]+)"
+    if server ~= "" and (not authority or not authority:match "^[%w%.:%[%]%-]+$" or server:find "[%s?#]") then
+      error "plantuml_server must be an HTTPS base URL without credentials, a query or a fragment"
+    end
     config.plantuml_server = opts.plantuml_server ~= "" and opts.plantuml_server or nil
   end
 end
@@ -430,19 +436,15 @@ local function get_mermaid_cache_dir()
 end
 
 --- Find the mmdc executable (mermaid CLI).
---- Searches PATH first, then falls back to npx.
----@return string[]? command prefix (e.g. {"mmdc"} or {"npx", "-y", "@mermaid-js/mermaid-cli"})
+--- Only use an already installed CLI; rendering must never install packages.
+---@return string[]? command prefix
 local _mmdc_cmd = nil
 local _mmdc_checked = false
 
 local function find_mmdc()
   if _mmdc_checked then return _mmdc_cmd end
   _mmdc_checked = true
-  if vim.fn.executable "mmdc" == 1 then
-    _mmdc_cmd = { "mmdc" }
-  elseif vim.fn.executable "npx" == 1 then
-    _mmdc_cmd = { "npx", "-y", "@mermaid-js/mermaid-cli" }
-  end
+  if vim.fn.executable "mmdc" == 1 then _mmdc_cmd = { "mmdc" } end
   return _mmdc_cmd
 end
 
@@ -608,7 +610,7 @@ local function find_plantuml()
   if vim.fn.executable "plantuml" == 1 then
     _plantuml_cmd = { "plantuml" }
   elseif vim.fn.executable "java" == 1 and vim.env.PLANTUML_JAR and vim.fn.filereadable(vim.env.PLANTUML_JAR) == 1 then
-    _plantuml_cmd = { "java", "-jar", vim.env.PLANTUML_JAR }
+    _plantuml_cmd = { "java", "-DPLANTUML_SECURITY_PROFILE=SANDBOX", "-jar", vim.env.PLANTUML_JAR }
   end
   return _plantuml_cmd
 end
@@ -623,12 +625,12 @@ function M.has_plantuml()
 end
 
 --- Compute cache path for PlantUML source.
---- Hashes source only: unlike mermaid's -t/-b flags, nothing here varies the
---- output by theme or background.
+--- Separate sandboxed renders from older cache entries. Unlike Mermaid,
+--- the output does not vary by theme or background.
 ---@param source string
 ---@return string
 local function plantuml_cache_path(source)
-  local hash = vim.fn.sha256(source):sub(1, 16)
+  local hash = vim.fn.sha256("sandbox-v1|" .. source):sub(1, 16)
   return get_plantuml_cache_dir() .. "/" .. hash .. ".png"
 end
 
@@ -656,9 +658,27 @@ local function render_plantuml_remote(source, cache_path)
   local server = M.config().plantuml_server
   if not server or vim.fn.executable "curl" ~= 1 then return nil end
   local url = server:gsub("/+$", "") .. "/png/~h" .. plantuml_encode_hex(source)
-  local cmd = { "curl", "-sfL", "--max-time", "15", "--max-filesize", "20000000", "-o", cache_path, url }
-  async.system(cmd, { text = true })
-  if vim.fn.filereadable(cache_path) == 1 then return cache_path end
+  -- The server is explicitly trusted by the user. Do not let a redirect or
+  -- curl's ambient configuration change the destination or enable a protocol.
+  local cmd = {
+    "curl",
+    "--disable",
+    "--silent",
+    "--fail",
+    "--globoff",
+    "--proto",
+    "=https",
+    "--max-time",
+    "15",
+    "--max-filesize",
+    "20000000",
+    "--output",
+    cache_path,
+    "--",
+    url,
+  }
+  local result = async.system(cmd, { text = true })
+  if result.code == 0 and M.image_dimensions(cache_path) then return cache_path end
   os.remove(cache_path)
   return nil
 end
@@ -680,7 +700,18 @@ function M.render_plantuml_async(source, callback)
     if not cmd_prefix then return render_plantuml_remote(source, cache_path) end
 
     local cmd = vim.list_extend(vim.list_extend({}, cmd_prefix), { "-tpng", "-pipe" })
-    local result = async.system(cmd, { stdin = source, text = false, timeout = 30000 })
+    local result = async.system(cmd, {
+      stdin = source,
+      text = false,
+      timeout = 30000,
+      env = {
+        PLANTUML_SECURITY_PROFILE = "SANDBOX",
+        -- Inherited JVM options can override the environment's profile.
+        JAVA_TOOL_OPTIONS = "",
+        _JAVA_OPTIONS = "",
+        JDK_JAVA_OPTIONS = "",
+      },
+    })
     if result.stdout and #result.stdout > 0 then
       local f = io.open(cache_path, "wb")
       if f then
@@ -806,6 +837,8 @@ function M.reset_cache()
   _convert_checked = false
   _anim_cmd = nil
   _anim_checked = false
+  _mmdc_cmd = nil
+  _mmdc_checked = false
   _plantuml_cmd = nil
   _plantuml_checked = false
   tty_mod.reset()
@@ -832,17 +865,22 @@ end
 ---   - output_path: absolute path where the image file should be saved
 ---   - callback: fun(ok: boolean) — call with true on success, false on failure
 ---   - return true if this function handles the URL (callback will be called later)
----   - return false to fall back to the default curl downloader
+---   - return false to decline the download (no built-in fallback)
 ---@type fun(url: string, output_path: string, callback: fun(ok: boolean)): boolean
 local _custom_download_fn = nil
 
 --- Register a custom download function for URL images.
---- The function is called before the default curl downloader. If it returns
---- true, it is expected to handle the download and call the callback. If it
---- returns false, the default curl-based downloader is used as a fallback.
----@param fn fun(url: string, output_path: string, callback: fun(ok: boolean)): boolean
+--- If the function returns true, it must perform the download and call the callback. If it
+--- returns false, no download is performed. Downloads are disabled until a
+--- function is registered; it must enforce the user's network access policy.
+---@param fn? fun(url: string, output_path: string, callback: fun(ok: boolean)): boolean
 function M.set_download_fn(fn)
   _custom_download_fn = fn
+end
+
+---@return boolean
+function M.has_downloader()
+  return _custom_download_fn ~= nil
 end
 
 --- Check if a string is an HTTP(S) URL
@@ -1019,23 +1057,17 @@ function M.download_async(url, callback)
     callback(cached)
     return
   end
+  if not _custom_download_fn then
+    callback(nil)
+    return
+  end
 
   local cache_path = url_to_cache_path(url)
 
   shared_work(cache_path, function()
-    -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
+    -- Only an explicitly registered downloader may access a document's URL.
     local taken, ok = custom_download(url, cache_path)
-    if taken then
-      if not ok then return nil end
-      return finalize_download(url, cache_path)
-    end
-
-    -- Default: download with curl
-    local cmd = { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url }
-    if async.system(cmd, { text = true }).code ~= 0 then
-      os.remove(cache_path)
-      return nil
-    end
+    if not taken or not ok then return nil end
     return finalize_download(url, cache_path)
   end, callback)
 end
@@ -1064,6 +1096,10 @@ function M.download_video_async(url, callback)
     callback(cached)
     return
   end
+  if not _custom_download_fn then
+    callback(nil)
+    return
+  end
 
   local cache_path = url_to_cache_path(url)
 
@@ -1080,14 +1116,20 @@ function M.download_video_async(url, callback)
   end
 
   shared_work(cache_path, function()
-    -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
     local taken, ok = custom_download(url, cache_path)
-    if taken then return settle(ok) end
-
-    -- Default: download with curl (larger limits for video)
-    local cmd = { "curl", "-sfL", "--max-time", "30", "--max-filesize", "104857600", "-o", cache_path, url }
-    return settle(async.system(cmd, { text = true }).code == 0)
+    return settle(taken and ok)
   end, callback)
+end
+
+--- Expand a media path without evaluating Vim expressions, shell commands,
+--- filename modifiers or wildcards from the document.
+---@param src string
+---@param base_dir? string
+---@return string
+function M.resolve_path(src, base_dir)
+  local path = vim.fs.normalize(src)
+  if path:sub(1, 1) ~= "/" and base_dir then path = vim.fs.joinpath(base_dir, path) end
+  return vim.fs.abspath(path)
 end
 
 --- Resolve an image source to a local file path (cache-only for URLs).
@@ -1102,8 +1144,7 @@ function M.resolve(src, base_dir)
     return M.get_cached(src)
   end
 
-  local resolved = vim.fn.expand(src)
-  if resolved:sub(1, 1) ~= "/" and base_dir then resolved = base_dir .. "/" .. resolved end
+  local resolved = M.resolve_path(src, base_dir)
 
   if vim.fn.filereadable(resolved) == 1 then return resolved end
 

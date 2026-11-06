@@ -396,8 +396,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
                   if src_url then
                     resolved = image_mod.get_video_cached(src_url)
                   else
-                    local video_path = vim.fn.expand(url)
-                    if video_path:sub(1, 1) ~= "/" and buf_dir then video_path = buf_dir .. "/" .. video_path end
+                    local video_path = image_mod.resolve_path(url, buf_dir)
                     if vim.fn.filereadable(video_path) == 1 then resolved = video_path end
                     -- Fallback: try Obsidian vault resolution for local video files
                     if not resolved and buf_dir then
@@ -443,7 +442,7 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
                   }
                   col_image_widths[col] = math.max(col_image_widths[col] or 0, initial_max_per_col)
                   has_image_cells = true
-                elseif src_url then
+                elseif src_url and image_mod.has_downloader() then
                   if not row_images_cache[row_idx] then row_images_cache[row_idx] = {} end
                   row_images_cache[row_idx][col] = {
                     alt = alt,

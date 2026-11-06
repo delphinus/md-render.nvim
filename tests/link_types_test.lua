@@ -149,17 +149,20 @@ end)
 -- routes through image_placements so the existing download + magic-byte
 -- detection can render it as image/video (mirrors github.com behavior).
 --
--- image_placements are only added when the terminal supports the Kitty
--- graphics protocol; CI runners do not, so stub `supports_kitty` for the
--- duration of these tests. The stub is restored even if the test errors.
+-- Media placements require Kitty support and an explicitly registered
+-- downloader. Neither stub performs any I/O; both are restored after the test.
 local function with_kitty_stubbed(fn)
   local image = require "md-render.image"
   local original = image.supports_kitty
   image.supports_kitty = function()
     return true
   end
+  image.set_download_fn(function()
+    return false
+  end)
   local ok, err = pcall(fn)
   image.supports_kitty = original
+  image.set_download_fn(nil)
   if not ok then error(err) end
 end
 

@@ -3040,8 +3040,7 @@ function ContentBuilder:render_document(lines, opts)
             if src_url then
               resolved = image.get_video_cached(src_url)
             else
-              local video_path = vim.fn.expand(img_entry.path)
-              if video_path:sub(1, 1) ~= "/" and buf_dir then video_path = buf_dir .. "/" .. video_path end
+              local video_path = image.resolve_path(img_entry.path, buf_dir)
               if vim.fn.filereadable(video_path) == 1 then resolved = video_path end
               -- Fallback: try Obsidian vault resolution for local video files
               if not resolved and buf_dir then
@@ -3091,7 +3090,7 @@ function ContentBuilder:render_document(lines, opts)
 
           local display_name = (img_entry.alt and img_entry.alt ~= "") and img_entry.alt
             or (img_entry.path:match "([^/]+)$" or img_entry.path)
-          if image.supports_kitty() then
+          if image.supports_kitty() and (not src_url or resolved or image.has_downloader()) then
             if display_cols and display_rows then
               local raw_icon, icon_hl = icons.get_image_icon(img_entry.path)
               local img_icon = pad_icon(raw_icon)

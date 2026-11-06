@@ -892,8 +892,14 @@ local function stub_vim_system()
   return rec
 end
 
-test("download_async: asking for the same URL twice runs one curl", function()
+test("download_async: asking for the same URL twice starts one download", function()
   local sys = stub_vim_system()
+  local asked, finish = 0, nil
+  image.set_download_fn(function(_, _, callback)
+    asked = asked + 1
+    finish = callback
+    return true
+  end)
   local url = "https://example.invalid/md-render-test-dedupe.png"
   local answers = {}
 
@@ -903,19 +909,27 @@ test("download_async: asking for the same URL twice runs one curl", function()
   image.download_async(url, function(path)
     table.insert(answers, path or false)
   end)
-  assert_eq(sys.spawns, 1, "the second request joins the first instead of spawning another curl")
+  assert_eq(asked, 1, "the second request joins the first download")
+  assert_eq(sys.spawns, 0, "there is no built-in network process")
   assert_eq(#answers, 0, "and nothing has answered yet")
 
   -- Fail the download: the file never appears, so both callers get nil, which
   -- is what proves the second one was queued rather than dropped.
-  sys.finish(1)
+  finish(false)
+  vim.wait(1000, function()
+    return #answers == 2
+  end, 5)
   assert_eq(#answers, 2, "both callers are answered when the one download finishes")
   assert_eq(answers, { false, false }, "both get the same result")
 
   -- The key is released, so a later attempt is allowed to try again.
   image.download_async(url, function() end)
-  assert_eq(sys.spawns, 2, "a request after the first finished starts fresh work")
-  sys.finish(1)
+  assert_eq(asked, 2, "a request after the first finished starts fresh work")
+  finish(false)
+  vim.wait(100, function()
+    return false
+  end, 10)
+  image.set_download_fn(nil)
   sys.restore()
 end)
 
@@ -932,7 +946,7 @@ local function wait_for(answers, n)
   end, 5)
 end
 
-test("set_download_fn: declining hands the URL back to curl", function()
+test("set_download_fn: declining does not start a fallback download", function()
   local sys = stub_vim_system()
   local asked = {}
   image.set_download_fn(function(url)
@@ -946,17 +960,13 @@ test("set_download_fn: declining hands the URL back to curl", function()
     table.insert(answers, path or false)
   end)
 
-  -- Both of the custom function's answers are deferred to the main loop, so
-  -- curl only starts on the next tick.
-  vim.wait(2000, function()
-    return sys.spawns > 0
-  end, 5)
+  wait_for(answers, 1)
   assert_eq(asked, { url }, "the custom function was offered the URL")
-  assert_eq(sys.spawns, 1, "and declining fell through to curl")
+  assert_eq(sys.spawns, 0, "declining does not fall through to curl")
 
   sys.finish(1)
   wait_for(answers, 1)
-  assert_eq(answers, { false }, "the failed curl answers the caller")
+  assert_eq(answers, { false }, "the declined download answers the caller")
 
   image.set_download_fn(nil)
   sys.restore()
