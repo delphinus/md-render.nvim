@@ -410,7 +410,7 @@ require("snacks").setup({
 <details>
 <summary><strong>Mermaid ダイアグラムが描画されない</strong></summary>
 
-Mermaid のレンダリングには [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli) の `mmdc` バイナリが必要です。グローバルに `mmdc` がない場合は `npx -y @mermaid-js/mermaid-cli` にフォールバックしますが、初回呼び出しが大幅に遅くなります。npx が mermaid-cli とヘッドレスブラウザをダウンロードするためで、mermaid-cli の新しい版が出るたびにダウンロードし直します。数分かかることがあり、終わるまではプレースホルダが表示されます。描画に失敗したときは、理由を警告で知らせます。`npm install -g @mermaid-js/mermaid-cli` でグローバルインストールするのがおすすめです。
+Mermaid のレンダリングには [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli) の `mmdc` バイナリが必要です。グローバルに `mmdc` がない場合は `npx -y @mermaid-js/mermaid-cli` にフォールバックしますが、初回呼び出しが大幅に遅くなります。npx が mermaid-cli とヘッドレスブラウザをダウンロードするためで、mermaid-cli の新しいバージョンが出るたびにダウンロードし直します。数分かかることがあり、終わるまではプレースホルダが表示されます。描画に失敗したときは、理由を警告で知らせます。`npm install -g @mermaid-js/mermaid-cli` でグローバルインストールするのがおすすめです。
 
 </details>
 
