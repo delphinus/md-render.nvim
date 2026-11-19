@@ -446,6 +446,52 @@ local function find_mmdc()
   return _mmdc_cmd
 end
 
+--- How long one mmdc run may take, in milliseconds.
+--- Rendering a diagram takes a second or two, but through npx the first run
+--- installs mermaid-cli and the headless browser it drives, and so does the
+--- first run after mermaid-cli publishes a new version. That took minutes on a
+--- normal connection, and cutting it short at 30 seconds left nothing in npx's
+--- cache, so every later attempt started the download over and none finished.
+---@param cmd_prefix string[]
+---@return integer
+local function mmdc_timeout(cmd_prefix)
+  if cmd_prefix[1] == "npx" then return 600000 end
+  return 30000
+end
+
+--- Exposed for testing.
+---@param cmd_prefix string[]
+---@return integer
+function M._mmdc_timeout(cmd_prefix)
+  return mmdc_timeout(cmd_prefix)
+end
+
+--- Say why a diagram did not render. Without this the placeholder text just
+--- stays, and nothing tells a timeout from a syntax error in the diagram.
+---@param result vim.SystemCompleted
+---@param timeout integer
+local function notify_mmdc_failure(result, timeout)
+  local detail
+  if result.code == 124 then
+    detail = string.format("timed out after %d seconds", timeout / 1000)
+  else
+    local lines = {}
+    for line in (result.stderr or ""):gmatch "[^\r\n]+" do
+      local trimmed = vim.trim(line)
+      if trimmed ~= "" then table.insert(lines, trimmed) end
+    end
+    detail = lines[1] or ("exit code " .. tostring(result.code))
+  end
+  vim.notify(string.format("md-render: mmdc could not render a Mermaid diagram: %s", detail), vim.log.levels.WARN)
+end
+
+--- Exposed for testing.
+---@param result vim.SystemCompleted
+---@param timeout integer
+function M._notify_mmdc_failure(result, timeout)
+  notify_mmdc_failure(result, timeout)
+end
+
 --- Check if mermaid rendering is available
 ---@return boolean
 function M.has_mmdc()
@@ -527,10 +573,12 @@ function M.render_mermaid(source)
   f:close()
 
   local cmd = build_mmdc_cmd(cmd_prefix, tmp_input, cache_path)
-  vim.system(cmd, { text = true, timeout = 30000 }):wait()
+  local timeout = mmdc_timeout(cmd_prefix)
+  local result = vim.system(cmd, { text = true, timeout = timeout }):wait()
   os.remove(tmp_input)
 
   if vim.fn.filereadable(cache_path) == 1 then return cache_path end
+  notify_mmdc_failure(result, timeout)
   return nil
 end
 
@@ -557,9 +605,12 @@ function M.render_mermaid_async(source, callback)
     f:write(source)
     f:close()
 
-    async.system(build_mmdc_cmd(cmd_prefix, tmp_input, cache_path), { text = true, timeout = 30000 })
+    local timeout = mmdc_timeout(cmd_prefix)
+    local result = async.system(build_mmdc_cmd(cmd_prefix, tmp_input, cache_path), { text = true, timeout = timeout })
     os.remove(tmp_input)
-    return vim.fn.filereadable(cache_path) == 1 and cache_path or nil
+    if vim.fn.filereadable(cache_path) == 1 then return cache_path end
+    notify_mmdc_failure(result, timeout)
+    return nil
   end, callback)
 end
 

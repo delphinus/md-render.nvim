@@ -411,7 +411,7 @@ Video frame extraction requires `ffmpeg` to be installed and available in `$PATH
 <details>
 <summary><strong>Mermaid diagrams don't render</strong></summary>
 
-Mermaid rendering requires the `mmdc` binary from [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli). If `mmdc` isn't installed globally, the plugin falls back to `npx -y @mermaid-js/mermaid-cli`, which is significantly slower on first invocation. Install it globally with `npm install -g @mermaid-js/mermaid-cli` for faster rendering.
+Mermaid rendering requires the `mmdc` binary from [@mermaid-js/mermaid-cli](https://github.com/mermaid-js/mermaid-cli). If `mmdc` isn't installed globally, the plugin falls back to `npx -y @mermaid-js/mermaid-cli`, which is significantly slower on first invocation: npx downloads mermaid-cli and a headless browser, and does so again whenever mermaid-cli publishes a new version. That can take a few minutes, and the diagram shows a placeholder until it finishes. If rendering fails, a warning says why. Install it globally with `npm install -g @mermaid-js/mermaid-cli` for faster rendering.
 
 </details>
 
