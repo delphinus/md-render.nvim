@@ -115,7 +115,6 @@ end)
 
 test("two images with attributes on one line are both shown", function()
   with_kitty(function()
-    -- Two different paths: images with the same path on one line count once
     local out = render { "![a](test_4x4.png){width=4cm} ![b](./test_4x4.png){width=4cm}" }
     assert_eq(#(out.image_placements or {}), 2, "two placements")
   end)
