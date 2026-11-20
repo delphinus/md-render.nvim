@@ -2945,9 +2945,12 @@ function ContentBuilder:render_document(lines, opts)
           if not img_path then
             img_alt, img_path = img_line:match "^#+%s+!%[([^%]]-)%]%(([^)]-)%)%s*$"
           end
-          -- Linked image: [![alt](img-path)](link-url) (standalone on line)
+          -- Linked image: [![alt](img-path)](link-url) (standalone on line).
+          -- Each part stops at its own closing bracket: with `.-` the alt text or
+          -- the URL could run on to the end of the line, so two linked images
+          -- side by side were read as one that held the second.
           if not img_path then
-            img_alt, img_path = img_line:match "^%s*%[!%[(.-)%]%((.-)%)%]%(.-%)%s*$"
+            img_alt, img_path = img_line:match "^%s*%[!%[([^%]]-)%]%(([^)]-)%)%]%([^)]-%)%s*$"
           end
           -- HTML img: <img src="path" alt="alt"> as sole content on line
           -- Also matches inside headings: # <img ...> or ## <img ...>
@@ -3014,19 +3017,25 @@ function ContentBuilder:render_document(lines, opts)
             tmp = tmp:gsub("!%[.-%]%(.-%)", "")
             -- If only whitespace remains, the line is composed entirely of images
             if tmp:match "^%s*$" then
-              for linked_alt, linked_path in remainder:gmatch "%[!%[(.-)%]%((.-)%)%]%(.-%)%s*" do
-                table.insert(img_entries, { alt = linked_alt, path = linked_path })
-              end
-              for plain_alt, plain_path in remainder:gmatch "!%[(.-)%]%((.-)%)" do
-                -- Skip images already captured as part of linked images
-                local is_linked = false
-                for _, entry in ipairs(img_entries) do
-                  if entry.path == plain_path then
-                    is_linked = true
-                    break
-                  end
+              -- Read the images left to right, in the order they are written.
+              -- Linked images used to be collected first and plain ones after,
+              -- skipping any plain image whose path had been seen already —
+              -- meant for the image inside a linked one, it also dropped the
+              -- second of two images of the same file, and put linked images
+              -- ahead of plain ones written before them. Matching the linked
+              -- form first at each position consumes the inner image with it.
+              local pos = 1
+              while pos <= #remainder do
+                local _, e, alt, path = remainder:find("^%[!%[([^%]]-)%]%(([^)]-)%)%]%([^)]-%)", pos)
+                if not e then
+                  _, e, alt, path = remainder:find("^!%[([^%]]-)%]%(([^)]-)%)", pos)
                 end
-                if not is_linked then table.insert(img_entries, { alt = plain_alt, path = plain_path }) end
+                if e then
+                  table.insert(img_entries, { alt = alt, path = path })
+                  pos = e + 1
+                else
+                  pos = pos + 1
+                end
               end
             end
           end
