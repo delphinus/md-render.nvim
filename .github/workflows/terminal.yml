@@ -54,6 +54,11 @@ jobs:
       # CJK heading in the fixture. Ubuntu's own kitty package is 0.32, far
       # below the 0.40 the text sizing protocol needs, so take the tarball.
       - name: Install Kitty ${{ matrix.kitty }} and Xvfb
+        env:
+          # Asking the API for the latest release without a token shares the
+          # runner's address with every other job on it, and comes back 403
+          # once that address has used up its unauthenticated quota.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
           sudo apt-get update
@@ -62,7 +67,8 @@ jobs:
             libxcursor1 libxrandr2 libxi6 libxinerama1 libxkbcommon-x11-0 libdbus-1-3
           version='${{ matrix.kitty }}'
           if [ "$version" = latest ]; then
-            version="$(curl -fsSL https://api.github.com/repos/kovidgoyal/kitty/releases/latest \
+            version="$(curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" \
+              https://api.github.com/repos/kovidgoyal/kitty/releases/latest \
               | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -1)"
           fi
           echo "Using kitty $version"
