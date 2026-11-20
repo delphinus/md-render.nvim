@@ -18,6 +18,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **Video** — local and web video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
 - **Mermaid diagrams** — rendered as images inline
 - **PlantUML diagrams** — rendered as images inline by a local renderer, or by a server you name
+- **Image zoom** — `<CR>` or a click on an image, a video, or a diagram opens it enlarged to fill the editor; a Mermaid diagram is drawn again at that size, so its text stays sharp. While the cursor or the mouse is on one, a hint at the bottom-right says so
 - **CommonMark paragraphs** — soft-wrapped source lines join into one paragraph, including a list item's continuation lines and a blockquote body; no extra space is inserted between CJK characters
 - **CJK spacing around inline markers** — the spaces in `これは **強調** です。`, written only so that lenient parsers notice the `**`, are closed up on screen; they stay when a neighbour is narrow, as in `これは **API** です。`
 - **Nested block structure** — a blockquote, callout, or fenced code block indented to a list item's content is rendered in place, not as literal text
@@ -157,9 +158,11 @@ Inside a rendered preview (floating, tab, or in-place toggle), these buffer-loca
 | Key | Action |
 |---|---|
 | `za` | Toggle the fold / expandable region under the cursor (no-op elsewhere) |
-| `<CR>` | Toggle the fold / expandable region under the cursor (no-op elsewhere) |
-| `<LeftMouse>` | Toggle folds, expand regions, and open links by clicking |
+| `<CR>` | Open the image under the cursor enlarged, or toggle the fold / expandable region under the cursor (no-op elsewhere) |
+| `<LeftMouse>` | Open an image enlarged, toggle folds, expand regions, and open links by clicking |
 | `q` / `<Esc>` / `<C-c>` | Close the window (floating / tab mode only) |
+
+The enlarged view covers the editor above the statusline and closes with `q`, `<Esc>`, `<CR>`, or a click. An image smaller than the view is enlarged past its own size. A video plays at the size its frames were extracted at (400 px wide at most), so it comes out soft.
 
 ## Commands
 

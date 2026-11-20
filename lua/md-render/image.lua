@@ -515,12 +515,23 @@ local function mermaid_theme_args()
   end
 end
 
---- Compute cache path for mermaid source (includes theme in hash).
+--- The `-s` mmdc renders at unless asked otherwise. The zoom view asks for
+--- more, so a diagram enlarged to fill the editor is drawn sharp, not blown up.
+local MERMAID_DEFAULT_SCALE = 2
+
+M.MERMAID_DEFAULT_SCALE = MERMAID_DEFAULT_SCALE
+
+--- Compute cache path for mermaid source (includes theme and scale in hash).
 ---@param source string
+---@param scale? number defaults to MERMAID_DEFAULT_SCALE
 ---@return string
-local function mermaid_cache_path(source)
+local function mermaid_cache_path(source, scale)
   local theme, bg_hex = mermaid_theme_args()
-  local hash = vim.fn.sha256(source .. "|" .. theme .. "|" .. bg_hex):sub(1, 16)
+  local key = source .. "|" .. theme .. "|" .. bg_hex
+  -- The default scale keeps the key it had before scales existed, so the
+  -- diagrams already in the cache stay valid.
+  if scale and scale ~= MERMAID_DEFAULT_SCALE then key = key .. "|s" .. scale end
+  local hash = vim.fn.sha256(key):sub(1, 16)
   return get_mermaid_cache_dir() .. "/" .. hash .. ".png"
 end
 
@@ -528,8 +539,9 @@ end
 ---@param cmd_prefix string[]
 ---@param input_path string
 ---@param output_path string
+---@param scale? number defaults to MERMAID_DEFAULT_SCALE
 ---@return string[]
-local function build_mmdc_cmd(cmd_prefix, input_path, output_path)
+local function build_mmdc_cmd(cmd_prefix, input_path, output_path, scale)
   local theme, bg_hex = mermaid_theme_args()
   local cmd = vim.list_extend({}, cmd_prefix)
   vim.list_extend(cmd, {
@@ -542,16 +554,17 @@ local function build_mmdc_cmd(cmd_prefix, input_path, output_path)
     "-b",
     bg_hex,
     "-s",
-    "2",
+    tostring(scale or MERMAID_DEFAULT_SCALE),
   })
   return cmd
 end
 
 --- Check if a mermaid diagram is already cached (no rendering).
 ---@param source string mermaid diagram source code
+---@param scale? number defaults to MERMAID_DEFAULT_SCALE
 ---@return string? cached_path
-function M.get_mermaid_cached(source)
-  local cache_path = mermaid_cache_path(source)
+function M.get_mermaid_cached(source, scale)
+  local cache_path = mermaid_cache_path(source, scale)
   if vim.fn.filereadable(cache_path) == 1 then return cache_path end
   return nil
 end
@@ -585,14 +598,15 @@ end
 --- Render mermaid source code to a PNG image (asynchronous, cached).
 ---@param source string mermaid diagram source code
 ---@param callback fun(png_path: string?)
-function M.render_mermaid_async(source, callback)
+---@param scale? number defaults to MERMAID_DEFAULT_SCALE
+function M.render_mermaid_async(source, callback, scale)
   local cmd_prefix = find_mmdc()
   if not cmd_prefix then
     callback(nil)
     return
   end
 
-  local cache_path = mermaid_cache_path(source)
+  local cache_path = mermaid_cache_path(source, scale)
   if vim.fn.filereadable(cache_path) == 1 then
     callback(cache_path)
     return
@@ -606,7 +620,8 @@ function M.render_mermaid_async(source, callback)
     f:close()
 
     local timeout = mmdc_timeout(cmd_prefix)
-    local result = async.system(build_mmdc_cmd(cmd_prefix, tmp_input, cache_path), { text = true, timeout = timeout })
+    local result =
+      async.system(build_mmdc_cmd(cmd_prefix, tmp_input, cache_path, scale), { text = true, timeout = timeout })
     os.remove(tmp_input)
     if vim.fn.filereadable(cache_path) == 1 then return cache_path end
     notify_mmdc_failure(result, timeout)
@@ -1370,8 +1385,9 @@ end
 ---@param img_h integer
 ---@param max_cols integer
 ---@param max_rows integer
+---@param allow_upscale? boolean fill the bounds even if that enlarges the image
 ---@return integer cols, integer rows
-function M.calc_display_size(img_w, img_h, max_cols, max_rows)
+function M.calc_display_size(img_w, img_h, max_cols, max_rows, allow_upscale)
   local cell = M.get_cell_size()
   if not cell then return math.min(20, max_cols), math.min(10, max_rows) end
 
@@ -1379,8 +1395,10 @@ function M.calc_display_size(img_w, img_h, max_cols, max_rows)
   local max_w = max_cols * cell.cell_w
   local max_h = max_rows * cell.cell_h
 
-  -- Scale to fit within bounds (don't upscale)
-  local scale = math.min(max_w / img_w, max_h / img_h, 1.0)
+  -- Scale to fit within bounds. Only the zoom view enlarges: in the document an
+  -- image is never drawn bigger than the file.
+  local scale = math.min(max_w / img_w, max_h / img_h)
+  if not allow_upscale then scale = math.min(scale, 1.0) end
 
   local pixel_w = img_w * scale
   local pixel_h = img_h * scale

@@ -440,7 +440,9 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
     end
   end
 
-  UrlHover.attach(buf, ns, win)
+  UrlHover.attach(buf, ns, win, function()
+    return get_content().image_placements
+  end)
 
   -- Return the foldable callout header at the given 0-indexed rendered line, or nil.
   ---@param line integer
@@ -493,6 +495,7 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
   -- / <C-c>). It still falls back to closing when a caller opts <CR> into
   -- close_keys explicitly (cr_is_close).
   vim.keymap.set("n", "<CR>", function()
+    if M.zoom_image_at_cursor(get_content().image_placements) then return end
     if toggle_at_cursor() then return end
     if cr_is_close then vim.cmd.close() end
   end, { buffer = buf, noremap = true, silent = true })
@@ -568,6 +571,9 @@ function M.setup_float_keymaps(buf, ns, win, content, close_handle, opts)
         return
       end
 
+      -- An image clicked on opens enlarged, even inside a table that expands
+      if M.zoom_image_at_mouse(cur_content.image_placements, mouse) then return end
+
       -- Check for expandable region click (code blocks / tables)
       local region = region_at(click_line)
       if region then
@@ -619,6 +625,106 @@ function M.announce_repaint(source)
   })
 end
 
+--- Every image state whose window is still open. The zoom float covers the
+--- other windows, but the terminal draws their images on top of it anyway, so
+--- it has to be able to take them down and put them back.
+---@type table<MdRender.ImageState, true>
+local live_states = {}
+
+--- Take down the images of every window, and keep them down until
+--- `resume_images`. Work under way still finishes; it just is not drawn.
+function M.suspend_images()
+  local image = require "md-render.image"
+  for state in pairs(live_states) do
+    if not state.suspended then
+      state.suspended = true
+      if state.anim_timer then state.anim_timer:stop() end
+      for _, id in pairs(state.image_ids) do
+        image.clear_placements(id)
+      end
+      for _, anim in pairs(state.anims) do
+        local id = anim.frame_ids[anim.current]
+        if id then image.clear_placements(id) end
+      end
+    end
+  end
+end
+
+--- Put back the images `suspend_images` took down.
+function M.resume_images()
+  for state in pairs(live_states) do
+    if state.suspended then
+      state.suspended = nil
+      state.start_anim_timer()
+      state.schedule_redraw()
+    end
+  end
+end
+
+--- The image under a position in a rendered buffer.
+---
+--- `col` is a display column. When it is given the image has to span it;
+--- `loose` relaxes that to "the first image on the line" for the cursor, which
+--- sits in column 0 of the blank rows an image is drawn over.
+---@param placements MdRender.ImagePlacement[]?
+---@param line integer 0-indexed rendered line
+---@param col integer? 0-indexed display column
+---@param loose boolean?
+---@return MdRender.ImagePlacement?
+function M.image_at(placements, line, col, loose)
+  local first
+  for _, p in ipairs(placements or {}) do
+    if line >= p.line and line < p.line + (p.rows or 1) then
+      if col == nil or (col >= p.col and col < p.col + (p.cols or 1)) then return p end
+      first = first or p
+    end
+  end
+  if loose then return first end
+  return nil
+end
+
+--- Open the image under the cursor enlarged, if there is one.
+---@param placements MdRender.ImagePlacement[]?
+---@return boolean opened
+function M.zoom_image_at_cursor(placements)
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local p = M.image_at(placements, line, vim.fn.virtcol "." - 1, true)
+  return p ~= nil and require("md-render.image_zoom").open(p)
+end
+
+--- The display column a mouse position points at in its window's text.
+---
+--- Worked out from the screen column, since the rows an image is drawn over
+--- can be empty, and `column` stops at the end of the line.
+---@param mouse { winid: integer, screencol: integer }
+---@return integer 0-indexed
+function M.mouse_display_col(mouse)
+  local win = mouse.winid
+  local info = vim.fn.getwininfo(win)[1] or {}
+  local left_border = 0
+  local cfg = vim.api.nvim_win_get_config(win)
+  local border = cfg.relative ~= "" and cfg.border or nil
+  if type(border) == "table" then
+    local left = border[8]
+    if type(left) == "table" then left = left[1] end
+    if left and left ~= "" then left_border = vim.api.nvim_strwidth(left) end
+  elseif border and border ~= "none" and border ~= "" then
+    left_border = 1
+  end
+  local text_start = vim.api.nvim_win_get_position(win)[2] + left_border + (info.textoff or 0)
+  return mouse.screencol - 1 - text_start + (info.leftcol or 0)
+end
+
+--- Open the image under the mouse enlarged, if there is one.
+---@param placements MdRender.ImagePlacement[]?
+---@param mouse { winid: integer, line: integer, screencol: integer }
+---@return boolean opened
+function M.zoom_image_at_mouse(placements, mouse)
+  if mouse.line < 1 then return false end
+  local p = M.image_at(placements, mouse.line - 1, M.mouse_display_col(mouse))
+  return p ~= nil and require("md-render.image_zoom").open(p)
+end
+
 --- Whether a placement's image still has to be produced — rendered from its
 --- source or downloaded — before there is a file to transmit.
 ---
@@ -656,6 +762,7 @@ function M.setup_images(win, content, ns, opts)
     redraw_timer = nil,
     autocmd_ids = {},
   }
+  live_states[state] = true
 
   -- When opts.buf and opts.build_content are provided, automatically rebuild
   -- content after URL image downloads so that layout reflects actual image
@@ -722,6 +829,7 @@ function M.setup_images(win, content, ns, opts)
 
   local function place_images()
     if not vim.api.nvim_win_is_valid(state.win) then return end
+    if state.suspended then return end
 
     -- Retry transmit for images that have a path but no ID (up to MAX_RETRIES).
     -- Skip placements whose conversion is already in flight to avoid spawning
@@ -823,12 +931,12 @@ function M.setup_images(win, content, ns, opts)
       anim_timer:stop()
       return
     end
-    if anim_timer:is_active() then return end
+    if anim_timer:is_active() or state.suspended then return end
     anim_timer:start(
       200,
       200,
       vim.schedule_wrap(function()
-        if not vim.api.nvim_win_is_valid(state.win) then
+        if not vim.api.nvim_win_is_valid(state.win) or state.suspended then
           anim_timer:stop()
           return
         end
@@ -902,6 +1010,8 @@ function M.setup_images(win, content, ns, opts)
   local function redraw_images()
     state.redraw_timer = nil
     if not vim.api.nvim_win_is_valid(state.win) then return end
+    -- A full repaint would also wipe the zoom float's image.
+    if state.suspended then return end
     -- Pause animation during redraw! to prevent concurrent placement writes
     pause_anim_timers()
     if is_wezterm() then
@@ -1320,6 +1430,7 @@ end
 function M.cleanup_images(state)
   if not state then return end
   local image = require "md-render.image"
+  live_states[state] = nil
 
   -- Stop work still under way rather than letting it run to completion against
   -- a window that is going away. Closing a task wakes it where it is waiting,
@@ -1351,8 +1462,10 @@ function M.cleanup_images(state)
   end
 
   image.delete_images(ids)
-  -- Robust fallback: some terminals (Ghostty) may not support per-ID deletion
-  image.delete_all()
+  -- Robust fallback: some terminals (Ghostty) may not support per-ID deletion.
+  -- Only when nothing else is showing images: deleting everything would take
+  -- the document's images with it when the zoom float over it closes.
+  if next(live_states) == nil then image.delete_all() end
 
   -- Stop redraw timer
   if state.redraw_timer then state.redraw_timer:stop() end
