@@ -204,5 +204,22 @@ test("<CR> still closes when explicitly a close key", function()
   cleanup(win, buf)
 end)
 
+-- Last, because the pager changes global options ('laststatus' and the like).
+test("the pager has the keys the other previews have", function()
+  local preview = require "md-render.preview"
+  local src = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(src)
+  vim.api.nvim_buf_set_lines(src, 0, -1, false, { "# Title", "", "Some text." })
+  vim.bo[src].filetype = "markdown"
+  preview.show_pager()
+  local function map(lhs)
+    return vim.fn.maparg(lhs, "n", false, true)
+  end
+  assert_eq(map("za").buffer, 1, "za is bound in the pager")
+  assert_eq(map("<CR>").buffer, 1, "<CR> is bound in the pager, so it can enlarge an image")
+  assert_true(map("q").callback ~= nil, "q is still the pager's own, which quits Neovim")
+  assert_true(map("<Esc>").buffer ~= 1, "and no close keys are added")
+end)
+
 print(string.format("key_toggle_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
