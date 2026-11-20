@@ -1016,5 +1016,113 @@ do
   text_size.setup { enabled = false }
 end
 
+-- The run's background is the window's, or the cursor line's band when the
+-- cursor is on the heading, and the band covers every row of the block.
+-- Taking NormalFloat everywhere boxed headings outside floats in a darker
+-- shade, and the band on one row only made a heading under the cursor look
+-- notched.
+do
+  text_size.setup { enabled = true }
+  with_support(true, function()
+    local saved = {}
+    for _, g in ipairs { "Normal", "NormalFloat", "CursorLine" } do
+      saved[g] = vim.api.nvim_get_hl(0, { name = g })
+    end
+    vim.api.nvim_set_hl(0, "Normal", { fg = 0xcccccc, bg = 0x101010 })
+    vim.api.nvim_set_hl(0, "NormalFloat", { bg = 0x202020 })
+    vim.api.nvim_set_hl(0, "CursorLine", { bg = 0x303030 })
+    text_size.reset_sgr_cache()
+
+    local out = render { "# Heading", "", "Body." }
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, out.lines)
+    local win = vim.api.nvim_get_current_win()
+    local prev_buf = vim.api.nvim_win_get_buf(win)
+    vim.api.nvim_win_set_buf(win, buf)
+    vim.wo[win].cursorline = true
+    vim.api.nvim_win_set_cursor(win, { #out.lines, 0 })
+
+    local writes = {}
+    local real_send = vim.api.nvim_ui_send
+    vim.api.nvim_ui_send = function(str)
+      table.insert(writes, str)
+    end
+    local ns = vim.api.nvim_create_namespace "md_render_text_size_cursorline"
+    --- The background of the last OSC 66 run written.
+    local function run_bg()
+      for i = #writes, 1, -1 do
+        local bg = writes[i]:match "\27%[48;2;(%d+;%d+;%d+)m\27%]66;"
+        if bg then return bg end
+      end
+    end
+    local function marked_rows()
+      local rows = {}
+      for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, {})) do
+        table.insert(rows, m[2])
+      end
+      return rows
+    end
+
+    local state = text_size.attach(win, out)
+    local line = out.text_placements[1].line
+    text_size.paint(state)
+    assert_eq(run_bg(), "16;16;16", "outside a float the run takes Normal's background")
+    assert_eq(#marked_rows(), 0, "no band while the cursor is elsewhere")
+
+    vim.api.nvim_win_set_cursor(win, { line + 1, 0 })
+    text_size.paint(state)
+    assert_eq(run_bg(), "48;48;48", "with the cursor on the heading, CursorLine's")
+    assert_eq(table.concat(marked_rows(), ","), line .. "," .. (line + 1), "and the band covers both rows")
+
+    vim.api.nvim_win_set_cursor(win, { line + 2, 0 })
+    text_size.paint(state)
+    assert_eq(run_bg(), "48;48;48", "also with the cursor on the reserved row")
+
+    vim.api.nvim_win_set_cursor(win, { #out.lines, 0 })
+    text_size.paint(state)
+    assert_eq(run_bg(), "16;16;16", "back to Normal's once the cursor leaves")
+    assert_eq(#marked_rows(), 0, "and the band goes")
+
+    vim.wo[win].cursorlineopt = "number"
+    vim.api.nvim_win_set_cursor(win, { line + 1, 0 })
+    text_size.paint(state)
+    assert_eq(run_bg(), "16;16;16", "cursorlineopt=number draws no band, so neither does the run")
+
+    vim.api.nvim_ui_send = real_send
+    text_size.detach(state)
+    vim.wo[win].cursorline = false
+    vim.wo[win].cursorlineopt = "both"
+    vim.api.nvim_win_set_buf(win, prev_buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+    for g, v in pairs(saved) do
+      vim.api.nvim_set_hl(0, g, v)
+    end
+    text_size.reset_sgr_cache()
+  end)
+  text_size.setup { enabled = false }
+end
+
+-- A float's run takes NormalFloat's background, through 'winhighlight' too.
+do
+  local saved = {}
+  for _, g in ipairs { "Normal", "NormalFloat", "Special" } do
+    saved[g] = vim.api.nvim_get_hl(0, { name = g })
+  end
+  vim.api.nvim_set_hl(0, "Normal", { bg = 0x101010 })
+  vim.api.nvim_set_hl(0, "NormalFloat", { bg = 0x202020 })
+  vim.api.nvim_set_hl(0, "Special", { bg = 0x404040 })
+  local fbuf = vim.api.nvim_create_buf(false, true)
+  local fwin = vim.api.nvim_open_win(fbuf, false, { relative = "editor", row = 1, col = 1, width = 10, height = 2 })
+  assert_eq(text_size._window_bg(fwin), 0x202020, "a float: NormalFloat")
+  vim.wo[fwin].winhighlight = "NormalFloat:Special"
+  assert_eq(text_size._window_bg(fwin), 0x404040, "remapped by winhighlight")
+  assert_eq(text_size._window_bg(vim.api.nvim_get_current_win()), 0x101010, "a split: Normal")
+  vim.api.nvim_win_close(fwin, true)
+  vim.api.nvim_buf_delete(fbuf, { force = true })
+  for g, v in pairs(saved) do
+    vim.api.nvim_set_hl(0, g, v)
+  end
+end
+
 print(string.format("\ntext_size_test: %d passed, %d failed", pass_count, fail_count))
 if fail_count > 0 then os.exit(1) end
