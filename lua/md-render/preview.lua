@@ -521,12 +521,19 @@ function Session:scroll_to_source_line(source_cursor_line)
   target = math.max(1, math.min(target, buf_lines))
   local win_height = vim.api.nvim_win_get_height(self.win)
   local top = math.max(0, target - 1 - math.floor(win_height / 2))
-  -- Centering must not scroll past the end: a document that fits the window
-  -- would lose its first lines and leave the bottom rows empty.  Each line
-  -- takes at least one row, so this still fills the window when lines wrap.
-  top = math.min(top, math.max(0, buf_lines - win_height))
   vim.api.nvim_win_call(self.win, function()
-    vim.fn.winrestview { topline = top + 1 }
+    -- Wrapped lines can fill the window even when there are fewer buffer lines.
+    local remaining = vim.api.nvim_win_text_height(self.win, {
+      start_row = top,
+      end_row = buf_lines - 1,
+      max_height = win_height,
+    }).all
+    if remaining < win_height then
+      vim.fn.cursor(buf_lines, 1)
+      vim.cmd "normal! zb"
+    else
+      vim.fn.winrestview { topline = top + 1 }
+    end
   end)
   vim.api.nvim_win_set_cursor(self.win, { target, 0 })
 end
