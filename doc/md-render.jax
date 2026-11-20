@@ -26,6 +26,7 @@ Snacks.nvim 連携					      |md-render-snacks|
 バッファ変数					 |md-render-buffer-variables|
 ハイライトグループ					  |md-render-highlights|
 オプション依存						|md-render-dependencies|
+トラブルシューティング				     |md-render-troubleshooting|
 
 ==============================================================================
 はじめに						*md-render-introduction*
@@ -50,6 +51,10 @@ md-render.nvim は Neovim 用の Markdown レンダリングエンジンです�
 - 動画（MP4, WebM, MOV, AVI, MKV, M4V）をアニメーションフレームとしてインラ
   イン再生
 - Mermaid ダイアグラムを画像としてインライン表示
+- PlantUML ダイアグラムを、ローカルのレンダラか指定したサーバで画像としてイン
+  ライン表示
+- 画像の拡大表示（画像・動画・ダイアグラムの上で `<CR>` を押すかクリックすると、
+  エディタ全体に拡大して表示。|md-render-image-zoom|）
 - CommonMark の段落（原文で折り返された行はひとつの段落に連結。箇条書き項目の
   継続行や引用の本文も同様。和字同士の連結では半角スペースを入れない）
 - インラインマーカー周りの和字空白（一部のパーサに `**` を認識させるためだけに
@@ -63,6 +68,20 @@ md-render.nvim は Neovim 用の Markdown レンダリングエンジンです�
   完全な URL を控え目なフロートウィンドウに表示。OSC 8 ハイパーリンク対応）
 - `<details>` 対応（クリックまたは `za` / `<CR>` で折りたたみ可能なセクション）
 - ライブラリ API（自作プラグインからプログラム的に利用可能）
+
+類似プラグインとの比較: ~
+
+- markdown-preview.nvim はブラウザで、ブラウザ品質のレンダリングをします。
+  md-render はターミナル内で完結します。
+  https://github.com/iamcco/markdown-preview.nvim
+- render-markdown.nvim は編集中のバッファの中で描画します。md-render は編集バ
+  ッファに手を加えず、別のフローティングウィンドウ・タブ・分割・ページャーへ描
+  画します。
+  https://github.com/MeanderingProgrammer/render-markdown.nvim
+- mcat もターミナルの Markdown レンダラーですが、自動折りたたみテーブルやクリ
+  ックでの折りたたみ切り替えといったレイアウト機能と、CJK の折り返しはありませ
+  ん。
+  https://github.com/Skardyy/mcat
 
 ==============================================================================
 必要要件						*md-render-requirements*
@@ -104,6 +123,32 @@ lazy.nvim の場合: >lua
     },
   }
 <
+vim.pack の場合 (Neovim 0.12+): >lua
+
+  vim.pack.add {
+    "https://github.com/delphinus/md-render.nvim",
+    -- 任意:
+    "https://github.com/nvim-tree/nvim-web-devicons",
+    "https://github.com/delphinus/budoux.lua",
+  }
+<
+mini.deps の場合: >lua
+
+  MiniDeps.add {
+    source = "delphinus/md-render.nvim",
+    depends = {
+      "nvim-tree/nvim-web-devicons", -- 任意
+      "delphinus/budoux.lua", -- 任意
+    },
+  }
+<
+このプラグインはキーマッピングを設定しません。|md-render-mappings| の `<Plug>` マ
+ッピングを、lazy.nvim の例のように自分で割り当ててください。
+
+全機能を見るには、プラグインに同梱のショーケースをページャーで開きます: >sh
+  nvim +"MdRender pager" assets/showcase.md
+<
+プラグインをインストール済みなら `:MdRender demo` でも見られます。
 
 ==============================================================================
 マッピング						    *md-render-mappings*
@@ -170,16 +215,16 @@ open は `<LeftMouse>`)、URL を表示する `<MouseMove>` も有効なまま�
 							  *md-render-image-zoom*
 画像・動画・Mermaid / PlantUML ダイアグラムの上で `<CR>` を押すかクリックすると、
 ステータスラインより上のエディタ全体を覆うフローティングウィンドウに拡大して表
-示する。`q` / `<Esc>` / `<CR>` / クリックで閉じる。Mermaid はウィンドウに合わせた倍
-率で描き直すので、文字がぼやけない。それ以外の画像はウィンドウより小さければ元
-の大きさを超えて拡大し、動画は取り出したフレームの大きさ (幅 400 ピクセルまで)
-で再生するので、どちらも粗くなることがある。
+示します。`q` / `<Esc>` / `<CR>` / クリックで閉じます。Mermaid はウィンドウに合わせ
+た倍率で描き直すので、文字がぼやけません。それ以外の画像はウィンドウより小さけ
+れば元の大きさを超えて拡大し、動画は取り出したフレームの大きさ (幅 400 ピクセ
+ルまで) で再生するので、どちらも粗くなることがあります。
 
 カーソルかマウスが画像の上にあるあいだは、画像の上の見出し行をハイライトし、行
-末に "<CR> / click: zoom" と表示する (|MdRenderImageZoomCaption|、
+末に "<CR> / click: zoom" と表示します (|MdRenderImageZoomCaption|、
 |MdRenderImageZoomHint|)。kitty のポインタ形状のプロトコル (OSC 22) に対応した端
-末では、マウスポインタも手の形になる。表のセルの中の画像には見出し行が無いので、
-エディタ下部の小さなフローティングウィンドウに案内を表示する。
+末では、マウスポインタも手の形になります。表のセルの中の画像には見出し行が無い
+ので、エディタ下部の小さなフローティングウィンドウに案内を表示します。
 
 ==============================================================================
 コマンド						    *md-render-commands*
@@ -1229,6 +1274,57 @@ Details ~
   Mermaid CLI          Mermaid ダイアグラムを画像として描画。 `npx -y
   (mmdc)               @mermaid-js/mermaid-cli` にフォールバック。
                        https://github.com/mermaid-js/mermaid-cli
+
+==============================================================================
+トラブルシューティング				     *md-render-troubleshooting*
+
+画像が表示されない (alt テキストやファイル名だけが出る) ~
+
+画像のインライン表示には、Kitty graphics protocol に対応したターミナルが必要で
+す (|md-render-requirements|)。tmux などのマルチプレクサは、通過させる設定をしな
+い限り、画像のエスケープシーケンスを捨てることがあります。
+
+動画が静止画 1 枚しか表示されない ~
+
+動画のフレームの取り出しには、`ffmpeg` が $PATH にあることが必要です。無ければ、
+最初のフレームだけを静止画として表示します。
+
+Mermaid ダイアグラムが描画されない ~
+
+Mermaid の描画には @mermaid-js/mermaid-cli の `mmdc` コマンドが必要です。グロー
+バルに `mmdc` が無いときは `npx -y @mermaid-js/mermaid-cli` を使いますが、初回は
+mermaid-cli とヘッドレスブラウザをダウンロードし、mermaid-cli の新しいバージョ
+ンが出るたびにダウンロードし直します。数分かかることがあり、終わるまではプレー
+スホルダを表示します。描画に失敗したときは、理由を警告で知らせます。グローバル
+に入れておけば、これらは起きません: >sh
+  npm install -g @mermaid-js/mermaid-cli
+<
+PlantUML ダイアグラムが描画されない ~
+
+`plantuml` / `puml` のフェンスは、`plantuml` コマンドが $PATH にあるか、`java` があっ
+て $PLANTUML_JAR が読み取れる `plantuml.jar` を指しているときに描画します。どち
+らも無ければコードブロックのままです。サーバで描画するとダイアグラムをそこへ送
+ることになるので、サーバは指定されたときだけ使います。|md-render-plantuml| を参
+照してください。
+
+日本語の折り返しが不自然 ~
+
+折り返しは JIS X 4051 の禁則処理を文字単位で適用します。budoux.lua
+(https://github.com/delphinus/budoux.lua) を入れると文節の境界で折り返します。
+プラグインが自動で検出して使います。
+
+日本語の `**` の周りの空白が消える ~
+
+意図した動作です。`これは **強調** です。` のように書かれるのは、`**` が空白で囲
+まれていないと強調と認識しないパーサがあるためです。CommonMark ではこの空白は
+要らないので、マーカーを取り除くと隙間として見えてしまいます。md-render は両隣
+が全角文字のときにこの空白を詰めます。`これは **API** です。` のように隣が半角文
+字なら空白は残し、隣り合う 2 つの span の間の空白も残します。
+
+コードブロックにシンタックスハイライトが付かない ~
+
+コードブロックのハイライトには、その言語の treesitter パーサが必要です。例えば
+Lua なら nvim-treesitter の `:TSInstall lua` で入れます。
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:

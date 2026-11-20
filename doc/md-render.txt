@@ -25,6 +25,7 @@ Global Variables				    |md-render-global-variables|
 Buffer Variables				 |md-render-buffer-variables|
 Highlight Groups					  |md-render-highlights|
 Optional Dependencies					|md-render-dependencies|
+Troubleshooting					     |md-render-troubleshooting|
 
 ==============================================================================
 INTRODUCTION						*md-render-introduction*
@@ -50,6 +51,8 @@ Features: ~
 - Mermaid diagrams rendered as images inline
 - PlantUML diagrams rendered as images inline, by a local renderer or by a
   server you name
+- Image zoom: `<CR>` or a click on an image, a video, or a diagram opens it
+  enlarged to fill the editor (|md-render-image-zoom|)
 - CommonMark paragraphs (soft-wrapped source lines are joined into one
   paragraph, including a list item's continuation lines and a blockquote
   body; no extra space is inserted between CJK characters)
@@ -65,6 +68,20 @@ Features: ~
   in a subtle floating window; OSC 8 hyperlink support)
 - `<details>` support (collapsible sections; toggle by click or `za` / `<CR>`)
 - Library API for programmatic use from other plugins
+
+Compared with similar plugins: ~
+
+- markdown-preview.nvim renders in a browser, at browser quality.  md-render
+  runs entirely inside the terminal.
+  https://github.com/iamcco/markdown-preview.nvim
+- render-markdown.nvim renders inside the buffer you edit.  md-render leaves
+  that buffer untouched and renders into a separate floating window, tab,
+  split, or pager.
+  https://github.com/MeanderingProgrammer/render-markdown.nvim
+- mcat is also a Markdown renderer for the terminal, but it has no layout
+  features such as auto-folding tables and folds you toggle by clicking, and
+  no CJK line breaking.
+  https://github.com/Skardyy/mcat
 
 ==============================================================================
 REQUIREMENTS						*md-render-requirements*
@@ -107,6 +124,33 @@ Using lazy.nvim: >lua
     },
   }
 <
+Using vim.pack (Neovim 0.12+): >lua
+
+  vim.pack.add {
+    "https://github.com/delphinus/md-render.nvim",
+    -- optional:
+    "https://github.com/nvim-tree/nvim-web-devicons",
+    "https://github.com/delphinus/budoux.lua",
+  }
+<
+Using mini.deps: >lua
+
+  MiniDeps.add {
+    source = "delphinus/md-render.nvim",
+    depends = {
+      "nvim-tree/nvim-web-devicons", -- optional
+      "delphinus/budoux.lua", -- optional
+    },
+  }
+<
+The plugin sets no key mappings.  Map the `<Plug>` mappings in
+|md-render-mappings| yourself, as in the lazy.nvim example.
+
+To see every feature, open the showcase bundled with the plugin in the pager:
+>sh
+  nvim +"MdRender pager" assets/showcase.md
+<
+or run `:MdRender demo` once the plugin is installed.
 
 ==============================================================================
 MAPPINGS						    *md-render-mappings*
@@ -1276,6 +1320,58 @@ OPTIONAL DEPENDENCIES					*md-render-dependencies*
   PlantUML             Render PlantUML diagrams as images.  Falls back to a
   (plantuml, or java   server only when one is named; see |md-render-plantuml|.
   with $PLANTUML_JAR)  https://plantuml.com/
+
+==============================================================================
+TROUBLESHOOTING					     *md-render-troubleshooting*
+
+Images do not show, only their alt text or file names ~
+
+Inline images need a terminal that supports the Kitty graphics protocol: see
+|md-render-requirements|.  tmux and other multiplexers can strip the image
+escape sequences unless they are set up to pass them through.
+
+Videos show as a single still frame ~
+
+Extracting video frames needs `ffmpeg` on your $PATH.  Without it, only the
+first frame is shown, as a still image.
+
+Mermaid diagrams do not render ~
+
+Mermaid needs the `mmdc` command from @mermaid-js/mermaid-cli.  Without a
+global `mmdc`, the plugin runs `npx -y @mermaid-js/mermaid-cli`, whose first
+run downloads mermaid-cli and a headless browser, and does so again whenever
+mermaid-cli publishes a new version.  That can take a few minutes, and the
+diagram shows a placeholder until it finishes.  If rendering fails, a warning
+says why.  Install it globally to skip all that: >sh
+  npm install -g @mermaid-js/mermaid-cli
+<
+PlantUML diagrams do not render ~
+
+A `plantuml` or `puml` fence is rendered when a `plantuml` command is on your $PATH,
+or when `java` is available and $PLANTUML_JAR points at a readable `plantuml.jar`.
+Without either, it stays a code block: rendering on a server means sending the
+diagram there, so the plugin uses one only when you name it.  See
+|md-render-plantuml|.
+
+Japanese text breaks in odd places ~
+
+Line breaks follow the JIS X 4051 kinsoku rules character by character.
+Install budoux.lua (https://github.com/delphinus/budoux.lua) for breaks at
+phrase boundaries; the plugin picks it up by itself.
+
+The spaces around `**` disappeared in Japanese text ~
+
+That is deliberate.  `これは **強調** です。` is usually written with those
+spaces so that a parser which only recognizes a `**` next to whitespace still
+sees the emphasis.  CommonMark needs no such help, so once the markers are
+gone the spaces read as gaps.  md-render closes them up when the characters on
+both sides are East Asian wide.  A space next to a narrow character stays, as
+in `これは **API** です。`, and so does a space between two adjacent spans.
+
+Code blocks have no syntax highlighting ~
+
+Highlighting a code block needs the treesitter parser for its language, for
+example `:TSInstall lua` with nvim-treesitter for Lua code blocks.
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:
