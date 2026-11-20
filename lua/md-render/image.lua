@@ -67,6 +67,22 @@ local function term_write(data)
   vim.api.nvim_ui_send(data)
 end
 
+--- Push a mouse pointer shape onto the terminal's stack (OSC 22, as kitty
+--- defines it). `pop_pointer_shape` restores whatever was there before, so
+--- nothing has to remember it. A terminal that does not know the sequence
+--- ignores it.
+---@param name string a CSS cursor name, e.g. "pointer"
+function M.push_pointer_shape(name)
+  if type(vim.api.nvim_ui_send) ~= "function" then return end
+  vim.api.nvim_ui_send("\x1b]22;>" .. name .. "\x1b\\")
+end
+
+--- Pop the shape `push_pointer_shape` pushed.
+function M.pop_pointer_shape()
+  if type(vim.api.nvim_ui_send) ~= "function" then return end
+  vim.api.nvim_ui_send "\x1b]22;<\x1b\\"
+end
+
 local function move_cursor(x, y)
   term_write("\x1b[" .. y .. ";" .. x .. "H")
 end

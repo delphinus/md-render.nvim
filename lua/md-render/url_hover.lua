@@ -168,52 +168,134 @@ local function zoomable(placement)
   return require("md-render.image_zoom").can_zoom(placement)
 end
 
+--- The image the mouse is over in a registered window, if it can be enlarged.
 ---@param mouse { winid: integer, line: integer, screencol: integer }
 ---@param entry { get_placements?: fun(): MdRender.ImagePlacement[]? }
----@return boolean
+---@return MdRender.ImagePlacement?
 local function image_at_mouse(mouse, entry)
-  if not entry.get_placements or mouse.line < 1 then return false end
+  if not entry.get_placements or mouse.line < 1 then return nil end
   local display_utils = require "md-render.display_utils"
   local p = display_utils.image_at(entry.get_placements(), mouse.line - 1, display_utils.mouse_display_col(mouse))
-  return zoomable(p)
+  return zoomable(p) and p or nil
 end
 
---- Show the hint while the cursor is on an image in the current window, and
---- take down a hint that no longer applies. A URL hover is left alone.
+local CAPTION_NS = vim.api.nvim_create_namespace "md_render_image_zoom_caption"
+
+---@class MdRender.ImageHintTarget
+---@field win integer
+---@field placement MdRender.ImagePlacement
+
+---@type { mouse: MdRender.ImageHintTarget?, cursor: MdRender.ImageHintTarget?, caption: { buf: integer, id: integer, line: integer }?, pointer: boolean }
+local image_hint = { pointer = false }
+
+--- Take down the caption mark, if one is up.
+local function clear_caption()
+  local c = image_hint.caption
+  if c and vim.api.nvim_buf_is_valid(c.buf) then pcall(vim.api.nvim_buf_del_extmark, c.buf, CAPTION_NS, c.id) end
+  image_hint.caption = nil
+end
+
+--- Highlight the caption above an image and say at its end that the image
+--- can be enlarged. The caption sits right above where the eye already is,
+--- unlike the hover window at the bottom of the editor.
+---@param target MdRender.ImageHintTarget
+local function mark_caption(target)
+  local buf = vim.api.nvim_win_get_buf(target.win)
+  local line = target.placement.header_line
+  local c = image_hint.caption
+  if c and c.buf == buf and c.line == line then
+    -- A rebuild replaces the buffer's lines, which can carry the mark off
+    -- the caption. Keep it only if it is still there.
+    local pos = vim.api.nvim_buf_get_extmark_by_id(buf, CAPTION_NS, c.id, {})
+    if pos[1] == line then return end
+  end
+  clear_caption()
+  if line < 0 or line >= vim.api.nvim_buf_line_count(buf) then return end
+  local text = vim.api.nvim_buf_get_lines(buf, line, line + 1, false)[1] or ""
+  local hint = "  " .. IMAGE_HINT .. " "
+  -- At the right edge when it fits beside the caption, else right after it.
+  local info = vim.fn.getwininfo(target.win)[1] or {}
+  local room = vim.api.nvim_win_get_width(target.win) - (info.textoff or 0)
+  local pos = vim.api.nvim_strwidth(text) + vim.api.nvim_strwidth(hint) <= room and "right_align" or "eol"
+  local ok, id = pcall(vim.api.nvim_buf_set_extmark, buf, CAPTION_NS, line, 0, {
+    line_hl_group = "MdRenderImageZoomCaption",
+    virt_text = { { hint, "MdRenderImageZoomHint" } },
+    virt_text_pos = pos,
+    -- Take the caption's background, so the line reads as one band.
+    hl_mode = "combine",
+    priority = 200,
+  })
+  if ok then image_hint.caption = { buf = buf, id = id, line = line } end
+end
+
+--- Bring the hint in line with where the mouse and the cursor are. The mouse
+--- wins over the cursor when both are on an image. An image without a caption
+--- (one in a table cell) falls back to the hover window.
+local function refresh_image_hint()
+  local zoom_open = require("md-render.image_zoom").is_open()
+  local target = not zoom_open and (image_hint.mouse or image_hint.cursor) or nil
+  if target and not vim.api.nvim_win_is_valid(target.win) then target = nil end
+
+  if target and target.placement.header_line then
+    mark_caption(target)
+    if state.current_url == IMAGE_HINT then close_hover() end
+  else
+    clear_caption()
+    if target then
+      show_hover(IMAGE_HINT, target.win)
+    elseif state.current_url == IMAGE_HINT then
+      close_hover()
+    end
+  end
+
+  -- The pointer says "clickable" only where a click would do it.
+  local want_pointer = not zoom_open and image_hint.mouse ~= nil
+  if want_pointer ~= image_hint.pointer then
+    local image = require "md-render.image"
+    if want_pointer then
+      image.push_pointer_shape "pointer"
+    else
+      image.pop_pointer_shape()
+    end
+    image_hint.pointer = want_pointer
+  end
+end
+
+--- Take the whole hint down: the caption, the hover window, and the pointer.
+--- The zoom float calls this when it opens over the image.
+function M.clear_image_hint()
+  image_hint.mouse = nil
+  image_hint.cursor = nil
+  refresh_image_hint()
+end
+
+--- Note whether the cursor is on an image in the current window.
 local function update_cursor_hint()
   local win = vim.api.nvim_get_current_win()
   local entry = registered[win]
-  local on_image = false
-  if entry and entry.get_placements and not require("md-render.image_zoom").is_open() then
+  local placement
+  if entry and entry.get_placements then
     local line = vim.api.nvim_win_get_cursor(win)[1] - 1
     local display_utils = require "md-render.display_utils"
-    on_image = zoomable(display_utils.image_at(entry.get_placements(), line, vim.fn.virtcol "." - 1, true))
+    placement = display_utils.image_at(entry.get_placements(), line, vim.fn.virtcol "." - 1, true)
+    if not zoomable(placement) then placement = nil end
   end
-  if on_image then
-    show_hover(IMAGE_HINT, win)
-  elseif state.current_url == IMAGE_HINT then
-    close_hover()
-  end
+  image_hint.cursor = placement and { win = win, placement = placement } or nil
+  refresh_image_hint()
 end
 
 local function handle_mouse_move()
   local mouse = vim.fn.getmousepos()
   local entry = registered[mouse.winid]
 
-  if not entry then
-    cancel_pending()
-    close_hover()
-    update_cursor_hint()
-    return
-  end
-
-  local url = url_at_mouse(mouse, entry.buf, entry.ns)
-  if not url and image_at_mouse(mouse, entry) then url = IMAGE_HINT end
+  local url = entry and url_at_mouse(mouse, entry.buf, entry.ns) or nil
+  local placement = entry and not url and image_at_mouse(mouse, entry) or nil
+  image_hint.mouse = placement and { win = mouse.winid, placement = placement } or nil
+  refresh_image_hint()
 
   if not url then
     cancel_pending()
-    close_hover()
-    update_cursor_hint()
+    if state.current_url ~= IMAGE_HINT then close_hover() end
     return
   end
 
@@ -248,6 +330,13 @@ local function ensure_initialized()
   vim.keymap.set({ "n", "i", "v" }, "<MouseMove>", function()
     handle_mouse_move()
   end, { silent = true, desc = "md-render: URL hover" })
+  -- Leave the terminal's pointer as it was found.
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup(AUGROUP, { clear = false }),
+    callback = function()
+      if image_hint.pointer then require("md-render.image").pop_pointer_shape() end
+    end,
+  })
 end
 
 --- Start showing URL hovers for the given preview window.
@@ -259,14 +348,17 @@ function M.attach(buf, ns, win, get_placements)
   ensure_initialized()
   registered[win] = { buf = buf, ns = ns, get_placements = get_placements }
   if get_placements then
-    vim.api.nvim_create_autocmd({ "CursorMoved", "BufEnter", "WinLeave" }, {
+    vim.api.nvim_create_autocmd({ "CursorMoved", "BufEnter", "WinLeave", "TextChanged" }, {
       group = vim.api.nvim_create_augroup(AUGROUP, { clear = false }),
       buffer = buf,
       callback = function(ev)
         -- On WinLeave the window being left is still current; the hint is
         -- about to be stale, so take it down.
         if ev.event == "WinLeave" then
-          if state.current_url == IMAGE_HINT and state.current_win == win then close_hover() end
+          if image_hint.cursor and image_hint.cursor.win == win then
+            image_hint.cursor = nil
+            refresh_image_hint()
+          end
           return
         end
         update_cursor_hint()
@@ -281,6 +373,14 @@ function M.attach(buf, ns, win, get_placements)
       registered[win] = nil
       cancel_pending()
       if state.current_win == win then close_hover() end
+      local stale = false
+      for _, key in ipairs { "mouse", "cursor" } do
+        if image_hint[key] and image_hint[key].win == win then
+          image_hint[key] = nil
+          stale = true
+        end
+      end
+      if stale then refresh_image_hint() end
     end,
   })
 end
@@ -296,6 +396,9 @@ function M._internal()
     show_hover = show_hover,
     close_hover = close_hover,
     update_cursor_hint = update_cursor_hint,
+    refresh_image_hint = refresh_image_hint,
+    image_hint = image_hint,
+    CAPTION_NS = CAPTION_NS,
     IMAGE_HINT = IMAGE_HINT,
     bottom_reserved_rows = bottom_reserved_rows,
     DEBOUNCE_MS = DEBOUNCE_MS,

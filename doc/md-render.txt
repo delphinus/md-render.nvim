@@ -162,10 +162,10 @@ Inside the preview window, the following keys are available:
 	`<LeftMouse>`	Click images to enlarge them, click links, toggle folds,
 			expand regions
 	`<MouseMove>`	Hover a link to peek its full URL in a small floating
-			window at the bottom of the editor; over an image, the
-			same window says it can be enlarged.  Requires
-			'mousemoveevent' (md-render enables it automatically
-			whenever a preview window is open).
+			window at the bottom of the editor.  Hover an image to
+			see that it can be enlarged (|md-render-image-zoom|).
+			Requires 'mousemoveevent' (md-render enables it
+			automatically whenever a preview window is open).
 
 Inside a render-mode buffer opened with |:MdRender-toggle|, `q` / `<Esc>` /
 `<C-c>` are NOT bound to close — call |:MdRender-toggle| again to return to
@@ -180,8 +180,14 @@ enlarged, in a floating window that covers the editor above the statusline.
 scale the window needs, so its text stays sharp.  Any other image that is
 smaller than the window is enlarged past its own size, and a video plays at
 the size its frames were extracted at (at most 400 pixels wide), so both can
-come out soft.  While the cursor or the mouse is on an image, the window at
-the bottom of the editor shows "<CR> / click: zoom".
+come out soft.
+
+While the cursor or the mouse is on an image, the caption above it is
+highlighted and ends with "<CR> / click: zoom" (|MdRenderImageZoomCaption|,
+|MdRenderImageZoomHint|).  The mouse pointer also turns into a hand, in a
+terminal that supports kitty's pointer shape protocol (OSC 22).  An image in a
+table cell has no caption, so for it the hint is shown in the small floating
+window at the bottom of the editor.
 
 ==============================================================================
 COMMANDS						    *md-render-commands*
@@ -1210,6 +1216,12 @@ IMAGE ~
 
   *MdRenderImagePlaceholder*
                         Placeholder shown while images are loading
+  *MdRenderImageZoomCaption*
+                        The caption above an image while the cursor or
+                        the mouse is on the image (links to `Visual`)
+  *MdRenderImageZoomHint*
+                        "<CR> / click: zoom" at the end of that caption
+                        (links to `Special`)
 
 FLOAT FOOTER ~
 

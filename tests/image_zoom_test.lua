@@ -286,6 +286,73 @@ test("the hint shows while the cursor is on an image", function()
   term.restore()
 end)
 
+test("with a caption, the hint goes on the caption instead", function()
+  local term = fake_terminal()
+  local doc = document()
+  doc.placement.header_line = 0
+  url_hover.attach(doc.buf, vim.api.nvim_create_namespace "zoom_caption_test", doc.win, function()
+    return doc.content.image_placements
+  end)
+  local internal = url_hover._internal()
+
+  vim.api.nvim_win_set_cursor(doc.win, { 3, 0 })
+  internal.update_cursor_hint()
+  local marks = vim.api.nvim_buf_get_extmarks(doc.buf, internal.CAPTION_NS, 0, -1, { details = true })
+  assert_eq(#marks, 1, "one mark")
+  assert_eq(marks[1] and marks[1][2], 0, "on the caption line")
+  local details = marks[1] and marks[1][4] or {}
+  assert_eq(details.line_hl_group, "MdRenderImageZoomCaption", "the caption is highlighted")
+  assert_true(details.virt_text and details.virt_text[1][1]:find(internal.IMAGE_HINT, 1, true), "and says how to zoom")
+  assert_eq(internal.state.current_url, nil, "the hover window stays closed")
+
+  vim.api.nvim_win_set_cursor(doc.win, { 6, 0 })
+  internal.update_cursor_hint()
+  marks = vim.api.nvim_buf_get_extmarks(doc.buf, internal.CAPTION_NS, 0, -1, {})
+  assert_eq(#marks, 0, "off the image, the mark goes")
+
+  doc.finish()
+  term.restore()
+end)
+
+test("the pointer turns into a hand over an image, and back", function()
+  local term = fake_terminal()
+  local doc = document()
+  doc.placement.header_line = 0
+  local pointer = {}
+  local saved_push, saved_pop = image.push_pointer_shape, image.pop_pointer_shape
+  image.push_pointer_shape = function(name)
+    table.insert(pointer, "push " .. name)
+  end
+  image.pop_pointer_shape = function()
+    table.insert(pointer, "pop")
+  end
+  local internal = url_hover._internal()
+
+  internal.image_hint.mouse = { win = doc.win, placement = doc.placement }
+  internal.refresh_image_hint()
+  internal.refresh_image_hint()
+  assert_eq(pointer, { "push pointer" }, "pushed once while the mouse stays on the image")
+
+  internal.image_hint.mouse = nil
+  internal.refresh_image_hint()
+  assert_eq(pointer, { "push pointer", "pop" }, "popped when it leaves")
+
+  internal.image_hint.mouse = { win = doc.win, placement = doc.placement }
+  internal.refresh_image_hint()
+  image_zoom.open(doc.placement)
+  settle()
+  assert_eq(pointer[#pointer], "pop", "opening the zoom gives the pointer back")
+  assert_eq(
+    #vim.api.nvim_buf_get_extmarks(doc.buf, internal.CAPTION_NS, 0, -1, {}),
+    0,
+    "and takes the caption mark down"
+  )
+
+  image.push_pointer_shape, image.pop_pointer_shape = saved_push, saved_pop
+  doc.finish()
+  term.restore()
+end)
+
 -- ============================================================================
 -- Summary
 -- ============================================================================

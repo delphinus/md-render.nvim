@@ -206,6 +206,9 @@ function M.open(placement)
   if not image.supports_kitty() or not M.can_zoom(placement) then return false end
 
   M.close()
+  -- The caption mark, the hover window and the pointer are all about the
+  -- image the float is about to cover.
+  require("md-render.url_hover").clear_image_hint()
 
   local width, height = zoom_area()
   local buf = vim.api.nvim_create_buf(false, true)

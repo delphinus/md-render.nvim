@@ -45,6 +45,7 @@
 ---@field mermaid_source? string mermaid source for async rendering
 ---@field mermaid_text? string mermaid source, kept after rendering so the zoom view can draw it larger
 ---@field title? string what the zoom view names the image: alt text, file name, or diagram kind
+---@field header_line? integer 0-indexed line of the caption above the image, which shows the zoom hint
 ---@field plantuml_source? string PlantUML source for async rendering
 
 ---@class MdRender.Content
@@ -2678,6 +2679,7 @@ function ContentBuilder:render_document(lines, opts)
               mermaid_source = not cached and mermaid_source or nil,
               mermaid_text = mermaid_source,
               title = "Mermaid",
+              header_line = img_start_line - 1,
             })
             lines_shown = lines_shown + 1 + display_rows
             mermaid_handled = true
@@ -2756,6 +2758,7 @@ function ContentBuilder:render_document(lines, opts)
               img_h = orig_img_h,
               plantuml_source = not cached and plantuml_source or nil,
               title = "PlantUML",
+              header_line = img_start_line - 1,
             })
             lines_shown = lines_shown + 1 + display_rows
             plantuml_handled = true
@@ -3153,6 +3156,7 @@ function ContentBuilder:render_document(lines, opts)
                 src_url = src_url,
                 video = is_video,
                 title = display_name,
+                header_line = img_start_line - 1,
               })
               lines_shown = lines_shown + header_lines_added + display_rows
               handled = true
