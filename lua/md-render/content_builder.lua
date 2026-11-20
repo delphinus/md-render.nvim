@@ -2936,21 +2936,23 @@ function ContentBuilder:render_document(lines, opts)
 
         -- Detect image lines: ![alt](path), <img src="path">, ![[image]]
         local img_path, img_alt
+        -- `![](a.png){width=16cm}` is still an image line (Pandoc attributes)
+        local img_line = require("md-render.markdown").strip_image_attributes(line)
         if not current_alert_type then
           -- Markdown image: ![alt](path) (standalone on line)
-          img_alt, img_path = line:match "^%s*!%[([^%]]-)%]%(([^)]-)%)%s*$"
+          img_alt, img_path = img_line:match "^%s*!%[([^%]]-)%]%(([^)]-)%)%s*$"
           -- Also match heading lines that are just an image: # ![alt](path)
           if not img_path then
-            img_alt, img_path = line:match "^#+%s+!%[([^%]]-)%]%(([^)]-)%)%s*$"
+            img_alt, img_path = img_line:match "^#+%s+!%[([^%]]-)%]%(([^)]-)%)%s*$"
           end
           -- Linked image: [![alt](img-path)](link-url) (standalone on line)
           if not img_path then
-            img_alt, img_path = line:match "^%s*%[!%[(.-)%]%((.-)%)%]%(.-%)%s*$"
+            img_alt, img_path = img_line:match "^%s*%[!%[(.-)%]%((.-)%)%]%(.-%)%s*$"
           end
           -- HTML img: <img src="path" alt="alt"> as sole content on line
           -- Also matches inside headings: # <img ...> or ## <img ...>
           if not img_path then
-            local img_tag = line:match "^%s*(<img%s[^>]*>)%s*$" or line:match "^#+%s+(<img%s[^>]*>)%s*$"
+            local img_tag = img_line:match "^%s*(<img%s[^>]*>)%s*$" or img_line:match "^#+%s+(<img%s[^>]*>)%s*$"
             if img_tag then
               img_path = img_tag:match 'src="([^"]*)"' or img_tag:match "src='([^']*)'"
               img_alt = img_tag:match 'alt="([^"]*)"' or img_tag:match "alt='([^']*)'"
@@ -2958,7 +2960,7 @@ function ContentBuilder:render_document(lines, opts)
           end
           -- HTML video: <video src="url">...</video> or <video><source src="url">...</video>
           if not img_path then
-            local video_tag = line:match "^%s*(<video[%s>].-</video>)%s*$"
+            local video_tag = img_line:match "^%s*(<video[%s>].-</video>)%s*$"
             if video_tag then
               img_path = video_tag:match 'src="([^"]*)"' or video_tag:match "src='([^']*)'"
               -- If no src on <video>, check for <source src="...">
@@ -2973,7 +2975,7 @@ function ContentBuilder:render_document(lines, opts)
           -- based on Content-Type. Restrict to this CDN so non-media URLs do not get
           -- stuck on a "Loading..." placeholder.
           if not img_path then
-            local autolink_url = line:match "^%s*<(https?://github%.com/user%-attachments/[%w%-/%.]+)>%s*$"
+            local autolink_url = img_line:match "^%s*<(https?://github%.com/user%-attachments/[%w%-/%.]+)>%s*$"
             if autolink_url then
               img_path = autolink_url
               img_alt = autolink_url:match "([^/]+)$" or autolink_url
@@ -2981,7 +2983,7 @@ function ContentBuilder:render_document(lines, opts)
           end
           -- Obsidian embed: ![[file]] or ![[file|caption]]
           if not img_path then
-            local embed = line:match "^%s*!%[%[(.-)%]%]%s*$"
+            local embed = img_line:match "^%s*!%[%[(.-)%]%]%s*$"
             if embed then
               local target = embed:match "^([^|#]+)" or embed
               local ext = target:match "%.(%w+)$"
@@ -3003,7 +3005,7 @@ function ContentBuilder:render_document(lines, opts)
         elseif not current_alert_type then
           -- Multiple images on one line: ![alt](url) ![alt](url) ...
           -- Also supports linked images: [![alt](img)](url) mixed in
-          local remainder = line:gsub("^%s+", ""):gsub("%s+$", "")
+          local remainder = img_line:gsub("^%s+", ""):gsub("%s+$", "")
           if remainder:match "!%[" then
             local tmp = remainder
             -- Strip linked images [![alt](img)](url)

@@ -310,11 +310,13 @@ function MarkdownTable.render(parsed_table, indent, max_width, expanded, buf_dir
   local col_widths = vim.deepcopy(parsed_table.col_widths)
   local sep_width = vim.api.nvim_strwidth "│" -- border char display width (varies with ambiwidth)
 
-  --- Strip leading HTML comments from text
+  --- Strip leading HTML comments, and Pandoc attributes after an image, from text
   ---@param text string
   ---@return string
   local function strip_html_comments(text)
-    return text:gsub("<!%-%-.-%-%->", ""):match "^%s*(.-)%s*$"
+    local stripped = text:gsub("<!%-%-.-%-%->", ""):match "^%s*(.-)%s*$"
+    -- Also drop Pandoc attributes after an image: ![](a.png){width=4cm}
+    return require("md-render.markdown").strip_image_attributes(stripped)
   end
 
   --- Check if a cell contains only an image reference ![alt](url), <img>, or <video> tag

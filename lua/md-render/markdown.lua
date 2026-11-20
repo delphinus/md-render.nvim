@@ -614,6 +614,21 @@ end
 
 local IMAGE_EXTENSIONS = { png = true, jpg = true, jpeg = true, gif = true, svg = true, webp = true, bmp = true }
 
+--- Drop Pandoc's attribute block written right after an image, as in
+--- `![](a.png){width=16cm}` or `[![alt](a.png)](url){.class}` (the
+--- `link_attributes` extension). The attributes only size the image in
+--- Pandoc's output, so the image is shown as if they were not there.
+---@param text string
+---@return string
+function Markdown.strip_image_attributes(text)
+  if not text:find("![", 1, true) then return text end
+  return (
+    text:gsub("(!?%b[]%b())%{[^{}]*%}", function(image)
+      if image:find("![", 1, true) then return image end
+    end)
+  )
+end
+
 --- Process ![[embeds]]: display as icon + filename with highlight
 ---@param text string
 ---@param highlights MdRender.Markdown.Highlight[]
