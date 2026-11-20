@@ -155,11 +155,15 @@ Inside the preview window, the following keys are available:
 	`q` / `<Esc>` / `<C-c>`	Close the preview window
 	`za`		Toggle the callout fold / expandable region under the
 			cursor (no-op when the cursor is not on one)
-	`<CR>`		Toggle the callout fold / expandable region under the
-			cursor (no-op when the cursor is not on one)
-	`<LeftMouse>`	Click links, toggle folds, expand regions
+	`<CR>`		Enlarge the image under the cursor
+			(|md-render-image-zoom|); elsewhere, toggle the callout
+			fold / expandable region under the cursor (no-op when
+			the cursor is not on one)
+	`<LeftMouse>`	Click images to enlarge them, click links, toggle folds,
+			expand regions
 	`<MouseMove>`	Hover a link to peek its full URL in a small floating
-			window at the bottom of the editor.  Requires
+			window at the bottom of the editor; over an image, the
+			same window says it can be enlarged.  Requires
 			'mousemoveevent' (md-render enables it automatically
 			whenever a preview window is open).
 
@@ -168,6 +172,16 @@ Inside a render-mode buffer opened with |:MdRender-toggle|, `q` / `<Esc>` /
 source mode.  `<LeftMouse>`, `za`, and `<CR>` still toggle folds and expand
 regions (and `<LeftMouse>` opens links); `<MouseMove>` hover-peek also stays
 active.
+
+							  *md-render-image-zoom*
+`<CR>` or a click on an image, a video, or a Mermaid / PlantUML diagram opens it
+enlarged, in a floating window that covers the editor above the statusline.
+`q`, `<Esc>`, `<CR>`, or a click closes it.  A Mermaid diagram is drawn again at the
+scale the window needs, so its text stays sharp.  Any other image that is
+smaller than the window is enlarged past its own size, and a video plays at
+the size its frames were extracted at (at most 400 pixels wide), so both can
+come out soft.  While the cursor or the mouse is on an image, the window at
+the bottom of the editor shows "<CR> / click: zoom".
 
 ==============================================================================
 COMMANDS						    *md-render-commands*

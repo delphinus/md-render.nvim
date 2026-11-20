@@ -905,6 +905,8 @@ MdPreview.show_pager = function(opts)
       end
     end
 
+    if display_utils.zoom_image_at_mouse(session.content.image_placements, mouse) then return end
+
     if session.content.expandable_regions then
       for _, region in ipairs(session.content.expandable_regions) do
         if click_line >= region.start_line and click_line <= region.end_line then

@@ -1,5 +1,9 @@
 --- Show the full URL in a small floating window at the bottom-right of the
 --- editor while the mouse hovers over a link in a md-render preview.
+---
+--- The same float says how to enlarge an image while the mouse or the cursor
+--- is on one. The image itself cannot be highlighted: the terminal draws it
+--- over the cells, so any color given to them stays hidden.
 
 local M = {}
 
@@ -7,7 +11,10 @@ local DEBOUNCE_MS = 100
 local WINBLEND = 15
 local AUGROUP = "md_render_url_hover"
 
----@type table<integer, { buf: integer, ns: integer }>
+--- What the float says over an image that can be enlarged.
+local IMAGE_HINT = "<CR> / click: zoom"
+
+---@type table<integer, { buf: integer, ns: integer, get_placements?: fun(): MdRender.ImagePlacement[]? }>
 local registered = {}
 
 local state = {
@@ -154,6 +161,41 @@ local function url_at_mouse(mouse, buf, ns)
   return nil
 end
 
+--- Whether the zoom float can show this image, which is what the hint offers.
+---@param placement MdRender.ImagePlacement?
+---@return boolean
+local function zoomable(placement)
+  return require("md-render.image_zoom").can_zoom(placement)
+end
+
+---@param mouse { winid: integer, line: integer, screencol: integer }
+---@param entry { get_placements?: fun(): MdRender.ImagePlacement[]? }
+---@return boolean
+local function image_at_mouse(mouse, entry)
+  if not entry.get_placements or mouse.line < 1 then return false end
+  local display_utils = require "md-render.display_utils"
+  local p = display_utils.image_at(entry.get_placements(), mouse.line - 1, display_utils.mouse_display_col(mouse))
+  return zoomable(p)
+end
+
+--- Show the hint while the cursor is on an image in the current window, and
+--- take down a hint that no longer applies. A URL hover is left alone.
+local function update_cursor_hint()
+  local win = vim.api.nvim_get_current_win()
+  local entry = registered[win]
+  local on_image = false
+  if entry and entry.get_placements and not require("md-render.image_zoom").is_open() then
+    local line = vim.api.nvim_win_get_cursor(win)[1] - 1
+    local display_utils = require "md-render.display_utils"
+    on_image = zoomable(display_utils.image_at(entry.get_placements(), line, vim.fn.virtcol "." - 1, true))
+  end
+  if on_image then
+    show_hover(IMAGE_HINT, win)
+  elseif state.current_url == IMAGE_HINT then
+    close_hover()
+  end
+end
+
 local function handle_mouse_move()
   local mouse = vim.fn.getmousepos()
   local entry = registered[mouse.winid]
@@ -161,14 +203,17 @@ local function handle_mouse_move()
   if not entry then
     cancel_pending()
     close_hover()
+    update_cursor_hint()
     return
   end
 
   local url = url_at_mouse(mouse, entry.buf, entry.ns)
+  if not url and image_at_mouse(mouse, entry) then url = IMAGE_HINT end
 
   if not url then
     cancel_pending()
     close_hover()
+    update_cursor_hint()
     return
   end
 
@@ -209,9 +254,25 @@ end
 ---@param buf integer
 ---@param ns integer
 ---@param win integer
-function M.attach(buf, ns, win)
+---@param get_placements? fun(): MdRender.ImagePlacement[]? the window's images, for the zoom hint
+function M.attach(buf, ns, win, get_placements)
   ensure_initialized()
-  registered[win] = { buf = buf, ns = ns }
+  registered[win] = { buf = buf, ns = ns, get_placements = get_placements }
+  if get_placements then
+    vim.api.nvim_create_autocmd({ "CursorMoved", "BufEnter", "WinLeave" }, {
+      group = vim.api.nvim_create_augroup(AUGROUP, { clear = false }),
+      buffer = buf,
+      callback = function(ev)
+        -- On WinLeave the window being left is still current; the hint is
+        -- about to be stale, so take it down.
+        if ev.event == "WinLeave" then
+          if state.current_url == IMAGE_HINT and state.current_win == win then close_hover() end
+          return
+        end
+        update_cursor_hint()
+      end,
+    })
+  end
   vim.api.nvim_create_autocmd("WinClosed", {
     group = vim.api.nvim_create_augroup(AUGROUP, { clear = false }),
     pattern = tostring(win),
@@ -234,6 +295,8 @@ function M._internal()
     handle_mouse_move = handle_mouse_move,
     show_hover = show_hover,
     close_hover = close_hover,
+    update_cursor_hint = update_cursor_hint,
+    IMAGE_HINT = IMAGE_HINT,
     bottom_reserved_rows = bottom_reserved_rows,
     DEBOUNCE_MS = DEBOUNCE_MS,
   }
