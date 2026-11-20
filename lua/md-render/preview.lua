@@ -834,6 +834,11 @@ MdPreview.show_pager = function(opts)
 
   session:bind_window(win)
 
+  -- The keys every other preview has: `za` / `<CR>` on folds and expandable
+  -- blocks, `<CR>` on an image to enlarge it, and the hover hints for links
+  -- and images. No close keys; `q` and clicks are bound below, the pager's way.
+  session:install_float_keymaps(nil, { close_keys = {} })
+
   -- q quits Neovim (pager behavior)
   vim.keymap.set("n", "q", function()
     session:cleanup_images()
