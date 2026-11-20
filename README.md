@@ -18,7 +18,7 @@ A Markdown rendering engine for Neovim. Transforms raw Markdown into richly high
 - **Video** — local and web video (MP4, WebM, MOV, AVI, MKV, M4V) played as animated frames inline
 - **Mermaid diagrams** — rendered as images inline
 - **PlantUML diagrams** — rendered as images inline by a local renderer, or by a server you name
-- **Image zoom** — `<CR>` or a click on an image, a video, or a diagram opens it enlarged to fill the editor; a Mermaid diagram is drawn again at that size, so its text stays sharp. While the cursor or the mouse is on one, a hint at the bottom-right says so
+- **Image zoom** — `<CR>` or a click on an image, a video, or a diagram opens it enlarged to fill the editor; a Mermaid diagram is drawn again at that size, so its text stays sharp. While the cursor or the mouse is on one, the caption above it is highlighted and says how to zoom, and the mouse pointer turns into a hand (OSC 22, in kitty and other terminals that support it)
 - **CommonMark paragraphs** — soft-wrapped source lines join into one paragraph, including a list item's continuation lines and a blockquote body; no extra space is inserted between CJK characters
 - **CJK spacing around inline markers** — the spaces in `これは **強調** です。`, written only so that lenient parsers notice the `**`, are closed up on screen; they stay when a neighbour is narrow, as in `これは **API** です。`
 - **Nested block structure** — a blockquote, callout, or fenced code block indented to a list item's content is rendered in place, not as literal text

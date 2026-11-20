@@ -97,6 +97,10 @@ function M.setup_highlights()
   vim.api.nvim_set_hl(0, "MdRenderLinkObsidian", { link = "Special", default = true })
   -- MdRenderSplit shadow cursor (marks the unfocused side's matching line)
   vim.api.nvim_set_hl(0, "MdRenderShadowCursor", { link = "CursorLine", default = true })
+  -- The caption above an image while the cursor or the mouse is on the image,
+  -- and the hint at its end that says the image can be enlarged
+  vim.api.nvim_set_hl(0, "MdRenderImageZoomCaption", { link = "Visual", default = true })
+  vim.api.nvim_set_hl(0, "MdRenderImageZoomHint", { link = "Special", default = true })
   -- Preview float footer (status info drawn on the bottom border).
   -- The unfilled part of the progress bar follows FloatBorder so it blends
   -- into the border it is drawn on.
