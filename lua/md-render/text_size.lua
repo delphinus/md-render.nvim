@@ -451,22 +451,47 @@ end
 
 local _sgr_cache = {}
 
+---@param name string
+---@return integer?
+local function hl_bg(name)
+  return vim.api.nvim_get_hl(0, { name = name, link = false }).bg
+end
+
+--- The background a window draws its text on: `NormalFloat` in a float and
+--- `Normal` elsewhere, after whatever 'winhighlight' maps either of them to.
+---
+--- Taking `NormalFloat` everywhere painted a heading in a tab, a split or the
+--- pager in the float's color, which most colorschemes make a shade off the
+--- window's, so the heading sat in a box of its own.
+---@param win integer
+---@return integer?
+local function window_bg(win)
+  local group = vim.api.nvim_win_get_config(win).relative ~= "" and "NormalFloat" or "Normal"
+  for from, to in vim.wo[win].winhighlight:gmatch "([^:,]+):([^,]+)" do
+    if from == group then
+      group = to
+      break
+    end
+  end
+  return hl_bg(group) or hl_bg "Normal"
+end
+
+M._window_bg = window_bg
+
 --- Resolve a highlight group to an SGR prefix. OSC 66 text bypasses Neovim's
 --- own cell attributes, so fg/bg have to be re-stated explicitly — including
 --- the background, or the scaled block would show the terminal's default
---- background instead of the float's.
+--- background instead of the window's.
 ---@param hl_name string
+---@param fallback_bg integer? the background to use when the group has none
 ---@return string
-local function sgr_for(hl_name)
-  local cached = _sgr_cache[hl_name]
+local function sgr_for(hl_name, fallback_bg)
+  local key = hl_name .. ":" .. tostring(fallback_bg)
+  local cached = _sgr_cache[key]
   if cached then return cached end
 
   local hl = vim.api.nvim_get_hl(0, { name = hl_name, link = false })
-  local bg = hl.bg
-  if not bg then
-    local float = vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false })
-    bg = float.bg or (vim.api.nvim_get_hl(0, { name = "Normal", link = false }) or {}).bg
-  end
+  local bg = hl.bg or fallback_bg
 
   local parts = { "\x1b[0m" }
   if hl.bold then table.insert(parts, "\x1b[1m") end
@@ -490,9 +515,11 @@ local function sgr_for(hl_name)
   end
 
   local sgr = table.concat(parts)
-  _sgr_cache[hl_name] = sgr
+  _sgr_cache[key] = sgr
   return sgr
 end
+
+M._sgr_for = sgr_for
 
 --- Drop cached SGR strings (call on ColorScheme).
 function M.reset_sgr_cache()
@@ -733,15 +760,88 @@ end
 --- `invalidations` is the one that matters: each is a full-screen repaint.
 M._stats = { paints = 0, invalidations = 0, skipped = 0, keepalives = 0 }
 
+local CURSORLINE_NS = vim.api.nvim_create_namespace "md_render_text_size_cursorline"
+
+--- The 0-indexed line the cursor is on, if the window shows 'cursorline'.
+---@param win integer
+---@return integer?
+local function cursorline_row(win)
+  -- 'cursorlineopt' = "number" highlights the line number and not the line;
+  -- "line", "screenline" and "both" draw the band.
+  local opt = vim.wo[win].cursorlineopt
+  if not vim.wo[win].cursorline or not (opt:find "line" or opt:find "both") then return nil end
+  return vim.api.nvim_win_get_cursor(win)[1] - 1
+end
+
+--- Whether `line` is one of the rows a placement's block covers.
+---@param p MdRender.TextPlacement
+---@param line integer?
+---@return boolean
+local function in_block(p, line)
+  return line ~= nil and line >= p.line and line < p.line + p.scale
+end
+
+--- Carry 'cursorline' over every row of the scaled heading the cursor is on.
+---
+--- Neovim highlights only the cursor's own line, but a scaled heading is
+--- `scale` rows tall: the rest are the blank lines reserved under it. With
+--- the band on one row and not the other, and the run painted in the band's
+--- color on both, the heading looked notched. Only redone when the cursor
+--- moves to another block, because setting a mark triggers the very redraw
+--- that calls this again.
+---@param state MdRender.TextSizeState
+---@param drawn { p: MdRender.TextPlacement }[]
+---@param cursor integer?
+local function extend_cursorline(state, drawn, cursor)
+  local block
+  for _, d in ipairs(drawn) do
+    if in_block(d.p, cursor) then
+      block = d.p
+      break
+    end
+  end
+  local buf = vim.api.nvim_win_get_buf(state.win)
+  local key = block and (buf .. ":" .. block.line) or nil
+  if key == state.cursorline_key then return end
+  if state.cursorline_buf and vim.api.nvim_buf_is_valid(state.cursorline_buf) then
+    vim.api.nvim_buf_clear_namespace(state.cursorline_buf, CURSORLINE_NS, 0, -1)
+  end
+  state.cursorline_key = key
+  state.cursorline_buf = block and buf or nil
+  if not block then return end
+  for row = block.line, block.line + block.scale - 1 do
+    pcall(vim.api.nvim_buf_set_extmark, buf, CURSORLINE_NS, row, 0, { line_hl_group = "CursorLine" })
+  end
+end
+
+M._extend_cursorline = extend_cursorline
+
+--- Take the marks `extend_cursorline` set down.
+---@param state MdRender.TextSizeState
+local function clear_cursorline(state)
+  if state.cursorline_buf and vim.api.nvim_buf_is_valid(state.cursorline_buf) then
+    vim.api.nvim_buf_clear_namespace(state.cursorline_buf, CURSORLINE_NS, 0, -1)
+  end
+  state.cursorline_buf = nil
+  state.cursorline_key = nil
+end
+
 --- Write the runs for `drawn` where they currently sit.
 ---@param state MdRender.TextSizeState
 ---@param drawn { p: MdRender.TextPlacement, row: integer, col: integer, icon_col: integer? }[]
 local function write_runs(state, drawn)
   state.drawn = drawn
+  local cursor = cursorline_row(state.win)
+  extend_cursorline(state, drawn, cursor)
   if #drawn == 0 then return end
+  local base_bg = window_bg(state.win)
+  local cursor_bg = hl_bg "CursorLine" or base_bg
   local out = {}
   for _, d in ipairs(drawn) do
-    local sgr = sgr_for(d.p.hl)
+    -- The run carries its own background, so it has to be the one Neovim
+    -- would put behind the heading: the cursor line's band when the cursor
+    -- is on it, and the window's otherwise.
+    local sgr = sgr_for(d.p.hl, in_block(d.p, cursor) and cursor_bg or base_bg)
     -- The level icon goes out as a run of its own, at plain size.
     --
     -- It has to be a run at all because `v=` moves the scaled text down inside
@@ -1224,6 +1324,8 @@ function M.refresh(state, win, content)
   end
   state.placements = content.text_placements
   state.win = win
+  -- The rebuild replaced the lines the cursor line marks sat on.
+  clear_cursorline(state)
   -- Old blocks may sit where the new layout has none, so force the next paint
   -- through the invalidate path even if the positions happen to line up.
   state.last_layout = nil
@@ -1254,6 +1356,7 @@ function M.detach(state)
     pcall(vim.api.nvim_del_augroup_by_id, state.augroup)
     state.augroup = nil
   end
+  clear_cursorline(state)
   invalidate()
 end
 
