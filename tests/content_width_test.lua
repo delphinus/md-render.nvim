@@ -33,6 +33,7 @@ local function test(name, fn)
 end
 
 -- Mixed CJK and ASCII so that the wrap points land at odd and even columns.
+-- The rules span the full width, so they catch an indent counted twice.
 local DOC = {
   "# Title",
   "",
@@ -40,6 +41,10 @@ local DOC = {
   "    - " .. string.rep("かきくけこ `x = 1` ", 8),
   "",
   string.rep("さしすせそ def ", 10),
+  "",
+  "---",
+  "",
+  "<hr>",
 }
 
 --- Headless Nvim keeps the windows at their old width until the layout
