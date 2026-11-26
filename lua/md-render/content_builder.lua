@@ -2319,7 +2319,7 @@ function ContentBuilder:render_document(lines, opts)
         lines_shown = lines_shown + 1
       end
       local hr_lines_before = #self.lines
-      local rule = indent .. string.rep("─", max_width)
+      local rule = indent .. string.rep("─", math.max(1, max_width - vim.api.nvim_strwidth(indent)))
       self:add_line(rule, { { col = 0, end_col = #rule, hl = "FloatBorder" } })
       if in_details and details_summary_rendered and not skip_details_body then
         apply_details_body_prefix(hr_lines_before, #self.lines)
@@ -2339,7 +2339,7 @@ function ContentBuilder:render_document(lines, opts)
         lines_shown = lines_shown + 1
       end
       local hr_lines_before = #self.lines
-      local rule = indent .. string.rep("─", max_width)
+      local rule = indent .. string.rep("─", math.max(1, max_width - vim.api.nvim_strwidth(indent)))
       self:add_line(rule, { { col = 0, end_col = #rule, hl = "FloatBorder" } })
       if in_details and details_summary_rendered and not skip_details_body then
         apply_details_body_prefix(hr_lines_before, #self.lines)
