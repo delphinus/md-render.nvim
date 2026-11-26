@@ -205,6 +205,9 @@ function M.setup_image_placeholder_highlight()
   local fg = comment_hl.fg or 0x888888
   local bg = blend_color(fg, normal_bg, 0.12)
   vim.api.nvim_set_hl(0, "MdRenderImagePlaceholder", { fg = fg, bg = bg, default = true })
+  -- The reason a download failed, on the same background
+  local error_hl = vim.api.nvim_get_hl(0, { name = "DiagnosticError", link = false })
+  vim.api.nvim_set_hl(0, "MdRenderImageError", { fg = error_hl.fg or 0xdb4b4b, bg = bg, default = true })
 end
 
 --- Set up inline code highlight group (MdRenderInlineCode).

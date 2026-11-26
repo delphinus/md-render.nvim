@@ -730,10 +730,16 @@ end
 ---
 --- These are the placements that reach `process_placement` without a `path`,
 --- and the reason the retry in `place_images` cannot be keyed on `path` alone.
+--- A remote image whose last download failed is left out. Its placeholder
+--- already says why, and asking again on every rebuild would loop: the failure
+--- rebuilds the content to show the reason, and the rebuild would ask again.
+--- Opening the view afresh is what tries it again (`setup_images` asks for
+--- every placement near the viewport without consulting this).
 ---@param placement MdRender.ImagePlacement
 ---@return boolean
 local function has_async_source(placement)
-  return placement.mermaid_source ~= nil or placement.plantuml_source ~= nil or placement.src_url ~= nil
+  if placement.mermaid_source ~= nil or placement.plantuml_source ~= nil then return true end
+  return placement.src_url ~= nil and not require("md-render.image").get_download_error(placement.src_url)
 end
 
 ---@param win integer
@@ -1231,7 +1237,12 @@ function M.setup_images(win, content, ns, opts)
     end
 
     local path = produce(placement)
-    if not path then return end
+    if not path then
+      -- A failed download rebuilds too, so the placeholder can say why in
+      -- place of "Loading image...".
+      if on_download and placement.src_url and image.get_download_error(placement.src_url) then on_download() end
+      return
+    end
     -- A file that did not exist when the content was built changes how many
     -- rows it needs, so everything below it moves. Rebuilding is what puts it
     -- in the right place; the rebuild comes back around through
