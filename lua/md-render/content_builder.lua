@@ -868,6 +868,40 @@ end
 ---@param lines_after integer Line count after adding the alert line(s)
 ---@param alert_type string Alert type key (e.g. "NOTE", "WARNING")
 ---@param is_header boolean Whether this is the alert header line (with icon+label)
+--- The bar a blockquote draws in front of its lines.
+local QUOTE_BAR = "│ "
+
+--- Colour the quote bar at byte `bar_col` on lines `[from, to)`, which were
+--- drawn with `QUOTE_BAR` in front of them: in the callout's colour, with its
+--- background, when they are in one.
+---
+--- `apply_alert_styling` is not used: it recolours every `FloatBorder` on the
+--- line, and the borders of a table drawn in the quote are `FloatBorder` too.
+---@param from integer 0-based first line
+---@param to integer 0-based line after the last
+---@param bar_col integer byte column the bar starts at
+---@param alert_type? string the callout the lines are in
+function ContentBuilder:add_quote_bar(from, to, bar_col, alert_type)
+  local bar_hl, bg_hl = "FloatBorder", nil
+  if alert_type then
+    bar_hl = "MdRenderAlert" .. alert_type:sub(1, 1) .. alert_type:sub(2):lower()
+    bg_hl = bar_hl .. "Bg"
+  end
+  local by_line = {}
+  for _, h in ipairs(self.highlights) do
+    if h.line >= from and h.line < to then by_line[h.line] = h end
+  end
+  for line_idx = from, to - 1 do
+    local h = by_line[line_idx]
+    if not h then
+      h = { line = line_idx, groups = {} }
+      table.insert(self.highlights, h)
+    end
+    table.insert(h.groups, 1, { col = bar_col, end_col = bar_col + #QUOTE_BAR, hl = bar_hl })
+    if bg_hl then table.insert(h.groups, { col = 0, end_col = -1, hl = bg_hl, hl_eol = true }) end
+  end
+end
+
 function ContentBuilder:apply_alert_styling(lines_before, lines_after, alert_type, is_header)
   local alert_hl = "MdRenderAlert" .. alert_type:sub(1, 1) .. alert_type:sub(2):lower()
   local alert_bg_hl = alert_hl .. "Bg"
@@ -1595,6 +1629,9 @@ function ContentBuilder:render_document(lines, opts)
   -- line: the rows are accumulated and rendered together, so the indent of
   -- whichever line happens to flush the buffer is not the table's own.
   local table_buf_indent = ""
+  -- Whether the table sits in a blockquote (`> | a | b |`). Its rows are kept
+  -- without the marker, and the quote's bar is drawn in front of them.
+  local table_buf_quote = false
   local truncated = false
   local current_alert_type = nil
   local skip_callout_body = false
@@ -1645,10 +1682,11 @@ function ContentBuilder:render_document(lines, opts)
       -- table itself, then restore for the caller.
       local saved_src_line = self._current_source_line
       if table_buf_start_idx then self._current_source_line = table_buf_start_idx + source_line_offset end
+      local bar = table_buf_quote and QUOTE_BAR or ""
       self:add_table(
         table_buf,
-        base_indent .. table_buf_indent,
-        math.max(1, base_max_width - #table_buf_indent),
+        base_indent .. table_buf_indent .. bar,
+        math.max(1, base_max_width - #table_buf_indent - vim.api.nvim_strwidth(bar)),
         repo_base_url,
         autolinks,
         tbl_expanded or false,
@@ -1656,6 +1694,9 @@ function ContentBuilder:render_document(lines, opts)
         true
       )
       self._current_source_line = saved_src_line
+      if table_buf_quote then
+        self:add_quote_bar(lines_before_tbl, #self.lines, #(base_indent .. table_buf_indent), current_alert_type)
+      end
       local lines_added = #self.lines - lines_before_tbl
       lines_shown = lines_shown + lines_added
       local has_truncation = false
@@ -1678,6 +1719,7 @@ function ContentBuilder:render_document(lines, opts)
       table_buf = {}
       table_buf_start_idx = nil
       table_buf_indent = ""
+      table_buf_quote = false
     end
   end
 
@@ -2359,36 +2401,71 @@ function ContentBuilder:render_document(lines, opts)
     end
     if prev_was_hr and not is_blank then prev_was_hr = false end
 
+    -- A table inside a blockquote: `> | a | b |`. One level only; a nested
+    -- quote (`>> |`) still renders as quoted text.
+    local is_quote_table_line = (not in_code_block) and not in_callout_code_block and line:match "^>%s?|" ~= nil
+
+    -- A table that moves into or out of a quote is a different table.
+    if (is_table_line or is_quote_table_line) and #table_buf > 0 and table_buf_quote ~= is_quote_table_line then
+      flush_table()
+    end
+
     -- Accumulate table lines
-    if is_table_line then
+    if is_table_line or is_quote_table_line then
       if #table_buf == 0 then
         -- Record the table's original buffer line so flush_table can
         -- stamp source_line_map with the table itself rather than the
         -- line that happens to trigger the flush.
         table_buf_start_idx = src_indices[src_idx]
         table_buf_indent = container_indent
-        -- Ensure exactly 1 blank line before table
-        if lines_shown > 0 and not prev_rendered_blank then
+        table_buf_quote = is_quote_table_line
+        -- Ensure exactly 1 blank line before table. Inside a quote the gap
+        -- keeps the quote's bar, and none is needed right under a callout's
+        -- title or an empty quote line (`>`), which is a gap already.
+        local prev_line = src_idx > 1 and lines[src_idx - 1] or nil
+        local continues_quote = is_quote_table_line and prev_line ~= nil and prev_line:match "^>" ~= nil
+        if continues_quote then
+          if not prev_was_heading and not prev_line:match "^>%s*$" then
+            local gap_at = #self.lines
+            self:add_line(indent .. QUOTE_BAR)
+            self:add_quote_bar(gap_at, #self.lines, #indent, current_alert_type)
+            lines_shown = lines_shown + 1
+          end
+        elseif lines_shown > 0 and not prev_rendered_blank then
           self:add_line(indent)
           lines_shown = lines_shown + 1
         end
       end
-      table.insert(table_buf, line)
+      table.insert(table_buf, is_quote_table_line and (line:gsub("^>%s?", "")) or line)
       goto continue
     end
 
     -- Flush table buffer when a non-table line is encountered
     if #table_buf > 0 then
+      local was_quote = table_buf_quote
       flush_table()
       if lines_shown >= max_lines then
         self:add_line(indent .. "... (truncated)", { { col = 0, end_col = -1, hl = "Comment" } })
         truncated = true
         break
       end
-      -- Ensure exactly 1 blank line after table (collapse duplicates below)
-      self:add_line(indent)
-      lines_shown = lines_shown + 1
-      prev_rendered_blank = true
+      if was_quote and line:match "^>" then
+        -- The quote goes on after the table: the gap keeps its bar. An empty
+        -- quote line (`>`) draws that gap itself.
+        if not line:match "^>%s*$" then
+          local gap_at = #self.lines
+          self:add_line(indent .. QUOTE_BAR)
+          self:add_quote_bar(gap_at, #self.lines, #indent, current_alert_type)
+          lines_shown = lines_shown + 1
+        end
+      else
+        -- The quote, and any callout it was, ends with the table.
+        if was_quote then current_alert_type = nil end
+        -- Ensure exactly 1 blank line after table (collapse duplicates below)
+        self:add_line(indent)
+        lines_shown = lines_shown + 1
+        prev_rendered_blank = true
+      end
     end
 
     -- Collapse consecutive rendered blank lines (outside regular code blocks)
