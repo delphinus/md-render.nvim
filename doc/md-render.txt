@@ -40,7 +40,8 @@ Features: ~
 
 - Rich inline formatting (bold, strikethrough, inline code, links,
   Obsidian `==highlight==`)
-- Tables with box-drawing borders, column alignment, and proportional sizing
+- Tables with box-drawing borders, column alignment, and proportional sizing,
+  also inside a blockquote or callout (`> | a | b |`)
 - Callouts and folds (GitHub / Obsidian alert types with colored borders,
   icons, and folding you can toggle by click or `za` / `<CR>`)
 - Code blocks with treesitter syntax highlighting; expandable when truncated
