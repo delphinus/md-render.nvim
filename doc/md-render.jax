@@ -1209,6 +1209,22 @@ Todo, Success, Question, Failure, Danger, Bug, Example, Quote）について:
   *MdRenderAlert{Type}Bg* アラートの背景色（アラート fg と NormalFloat bg
                         からブレンド）
 
+ヘッダの色は、colorscheme の次のグループから取る。GitHub の 5 種類は GitHub と
+同じく、青・緑・紫・黄・赤になる。
+
+  Note, Todo                        DiagnosticInfo
+  Tip, Success                      DiagnosticOk
+  Important, Example                DiagnosticInfo と DiagnosticError から
+                                    作った紫（後述）
+  Warning, Question                 DiagnosticWarn
+  Caution, Failure, Danger, Bug     DiagnosticError
+  Abstract                          DiagnosticHint
+  Quote                             Comment
+
+どの colorscheme でも紫になるハイライトグループは無いので、紫は DiagnosticInfo
+（青）と DiagnosticError（赤）の中間の色相から作る。明度と彩度は OKLCH で 2 色
+の平均を取る。どちらかに色が無いときは Special を使う。
+
 Details ~
 
   *MdRenderDetailsBg*   `<details>` セクションの背景色

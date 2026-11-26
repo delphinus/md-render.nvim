@@ -1251,6 +1251,23 @@ Abstract, Todo, Success, Question, Failure, Danger, Bug, Example, Quote):
   *MdRenderAlert{Type}Bg* Alert background color (blended from alert
                         fg and NormalFloat bg)
 
+The header color is taken from the following groups of the colorscheme. The
+five GitHub types follow GitHub's colors: blue, green, purple, yellow, red.
+
+  Note, Todo                        DiagnosticInfo
+  Tip, Success                      DiagnosticOk
+  Important, Example                purple made from DiagnosticInfo and
+                                    DiagnosticError (see below)
+  Warning, Question                 DiagnosticWarn
+  Caution, Failure, Danger, Bug     DiagnosticError
+  Abstract                          DiagnosticHint
+  Quote                             Comment
+
+No highlight group is purple in every colorscheme, so the purple is the hue
+halfway between DiagnosticInfo (blue) and DiagnosticError (red), with their
+lightness and chroma averaged in OKLCH. If either has no color, Special is
+used instead.
+
 DETAILS ~
 
   *MdRenderDetailsBg*   `<details>` section background color
