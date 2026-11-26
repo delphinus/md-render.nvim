@@ -1,10 +1,19 @@
 local M = {}
 
---- Alert type definitions: base highlight group for each alert type
+--- Alert type definitions: where each alert type takes its color from.
+--- A string names a highlight group whose fg is used as is. A table with
+--- `between` names two groups; the color is the hue halfway between them,
+--- going the way that passes through magenta (see `hue_between`).
+---
+--- The five GitHub types follow GitHub's own palette: blue, green, purple,
+--- yellow, red. No highlight group is purple in every colorscheme
+--- (`Statement` is purple in some, blue, red or gray in others), so the
+--- purple is made from the blue and the red of the diagnostics, which every
+--- colorscheme defines.
 local ALERT_HL_BASES = {
   Note = "DiagnosticInfo",
-  Tip = "DiagnosticHint",
-  Important = "Special",
+  Tip = "DiagnosticOk",
+  Important = { between = { "DiagnosticInfo", "DiagnosticError" } },
   Warning = "DiagnosticWarn",
   Caution = "DiagnosticError",
   -- Obsidian additional types
@@ -15,9 +24,82 @@ local ALERT_HL_BASES = {
   Failure = "DiagnosticError",
   Danger = "DiagnosticError",
   Bug = "DiagnosticError",
-  Example = "Special",
+  Example = { between = { "DiagnosticInfo", "DiagnosticError" } },
   Quote = "Comment",
 }
+
+--- sRGB channel (0-1) to linear light, and back
+local function to_linear(v)
+  return v <= 0.04045 and v / 12.92 or ((v + 0.055) / 1.055) ^ 2.4
+end
+local function from_linear(v)
+  return v <= 0.0031308 and v * 12.92 or 1.055 * v ^ (1 / 2.4) - 0.055
+end
+
+--- 0xRRGGBB to OKLCH (https://bottosson.github.io/posts/oklab/).
+--- OKLCH is used rather than HSL because its lightness follows what the eye
+--- sees: in HSL a purple at the same lightness as a cyan looks far darker.
+---@param c integer 0xRRGGBB
+---@return number l lightness 0-1
+---@return number c chroma
+---@return number h hue in degrees
+local function rgb_to_oklch(c)
+  local r = to_linear(bit.rshift(c, 16) / 255)
+  local g = to_linear(bit.band(bit.rshift(c, 8), 0xFF) / 255)
+  local b = to_linear(bit.band(c, 0xFF) / 255)
+  local l_ = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ^ (1 / 3)
+  local m_ = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ^ (1 / 3)
+  local s_ = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ^ (1 / 3)
+  local L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_
+  local A = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_
+  local B = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+  return L, math.sqrt(A * A + B * B), math.deg(math.atan2(B, A)) % 360
+end
+
+---@param L number
+---@param C number
+---@param h number degrees
+---@return integer 0xRRGGBB (out-of-gamut channels are clamped)
+local function oklch_to_rgb(L, C, h)
+  local A, B = C * math.cos(math.rad(h)), C * math.sin(math.rad(h))
+  local l_ = (L + 0.3963377774 * A + 0.2158037573 * B) ^ 3
+  local m_ = (L - 0.1055613458 * A - 0.0638541728 * B) ^ 3
+  local s_ = (L - 0.0894841775 * A - 1.2914855480 * B) ^ 3
+  local r = 4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_
+  local g = -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_
+  local b = -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_
+  local function byte(v)
+    v = from_linear(math.max(0, math.min(1, v)))
+    return math.floor(v * 255 + 0.5)
+  end
+  return bit.lshift(byte(r), 16) + bit.lshift(byte(g), 8) + byte(b)
+end
+
+--- The color halfway between two colors in hue, going up from the first
+--- hue to the second. From blue (about 230° in OKLCH) up to red (about 25°,
+--- i.e. 385°) the way passes through purple, so the midpoint is a purple
+--- (about 310°). Lightness and chroma are averaged.
+---@param from integer 0xRRGGBB
+---@param to integer 0xRRGGBB
+---@return integer 0xRRGGBB
+local function hue_between(from, to)
+  local l1, c1, h1 = rgb_to_oklch(from)
+  local l2, c2, h2 = rgb_to_oklch(to)
+  if h2 <= h1 then h2 = h2 + 360 end
+  return oklch_to_rgb((l1 + l2) / 2, (c1 + c2) / 2, ((h1 + h2) / 2) % 360)
+end
+
+--- The fg color an alert type takes from the current colorscheme.
+---@param base string|{between: string[]}
+---@return integer 0xRRGGBB
+local function alert_fg(base)
+  if type(base) == "string" then return vim.api.nvim_get_hl(0, { name = base, link = false }).fg or 0xFFFFFF end
+  local a = vim.api.nvim_get_hl(0, { name = base.between[1], link = false }).fg
+  local b = vim.api.nvim_get_hl(0, { name = base.between[2], link = false }).fg
+  -- Without both colors there is no hue to take the middle of
+  if not (a and b) then return vim.api.nvim_get_hl(0, { name = "Special", link = false }).fg or 0xFFFFFF end
+  return hue_between(a, b)
+end
 
 --- Blend two colors by alpha (0.0 = bg, 1.0 = fg)
 ---@param fg integer foreground color (0xRRGGBB)
@@ -59,9 +141,8 @@ function M.setup_alert_highlights()
   if not normal_hl.bg then normal_hl = vim.api.nvim_get_hl(0, { name = "Normal", link = false }) end
   local normal_bg = normal_hl.bg or 0x1e1e2e
 
-  for name, base_hl_name in pairs(ALERT_HL_BASES) do
-    local base_hl = vim.api.nvim_get_hl(0, { name = base_hl_name, link = false })
-    local fg = base_hl.fg or 0xFFFFFF
+  for name, base in pairs(ALERT_HL_BASES) do
+    local fg = alert_fg(base)
     vim.api.nvim_set_hl(0, "MdRenderAlert" .. name, { fg = fg, bold = true, default = true })
     vim.api.nvim_set_hl(0, "MdRenderAlert" .. name .. "Bg", { bg = blend_color(fg, normal_bg, 0.1), default = true })
   end
