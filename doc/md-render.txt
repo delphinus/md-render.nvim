@@ -1278,6 +1278,8 @@ IMAGE ~
 
   *MdRenderImagePlaceholder*
                         Placeholder shown while images are loading
+  *MdRenderImageError*  Why a web image failed to load, written on its
+                        placeholder (fg from `DiagnosticError`)
   *MdRenderImageZoomCaption*
                         The caption above an image while the cursor or
                         the mouse is on the image (links to `Visual`)
@@ -1347,6 +1349,13 @@ Images do not show, only their alt text or file names ~
 Inline images need a terminal that supports the Kitty graphics protocol: see
 |md-render-requirements|.  tmux and other multiplexers can strip the image
 escape sequences unless they are set up to pass them through.
+
+A web image says "Failed to load image" ~
+
+The download failed, and the reason follows in parentheses: an HTTP status
+such as `HTTP 404`, `timed out`, or `not an image` when the server answered
+with something else, such as a login page.  The image is not asked for again
+while the view stays open; close the preview and open it again to retry.
 
 Videos show as a single still frame ~
 

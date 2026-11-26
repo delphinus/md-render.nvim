@@ -3200,7 +3200,14 @@ function ContentBuilder:render_document(lines, opts)
               -- The image overlay (Kitty graphics) will cover this once loaded.
               local indent_width = vim.api.nvim_strwidth(indent)
               local placeholder_msg
-              if is_video then
+              -- A download that failed says why rather than sitting on
+              -- "Loading..." for good.
+              local load_error = not resolved and src_url and image.get_download_error(src_url)
+              if load_error then
+                placeholder_msg = ("Failed to load %s (%s)"):format(is_video and "video" or "image", load_error)
+                -- Too narrow for the sentence: the reason alone still helps.
+                if vim.api.nvim_strwidth(placeholder_msg) > display_cols then placeholder_msg = load_error end
+              elseif is_video then
                 placeholder_msg = "Loading video..."
               elseif is_animated then
                 placeholder_msg = "Loading animation..."
@@ -3221,9 +3228,22 @@ function ContentBuilder:render_document(lines, opts)
                     .. placeholder_msg
                     .. string.rep(" ", right_pad)
                   local hl_start = #indent + spaces_to_img
-                  self:add_line(placeholder_line, {
-                    { col = hl_start, end_col = #placeholder_line, hl = "MdRenderImagePlaceholder" },
-                  })
+                  local hls = { { col = hl_start, end_col = #placeholder_line, hl = "MdRenderImagePlaceholder" } }
+                  if load_error then
+                    -- The placeholder's background spans the line; the
+                    -- message itself takes the error colour over it.
+                    local msg_start = hl_start + pad
+                    hls = {
+                      { col = hl_start, end_col = msg_start, hl = "MdRenderImagePlaceholder" },
+                      { col = msg_start, end_col = msg_start + #placeholder_msg, hl = "MdRenderImageError" },
+                      {
+                        col = msg_start + #placeholder_msg,
+                        end_col = #placeholder_line,
+                        hl = "MdRenderImagePlaceholder",
+                      },
+                    }
+                  end
+                  self:add_line(placeholder_line, hls)
                 else
                   local fill = indent .. string.rep(" ", spaces_to_img) .. string.rep(" ", display_cols)
                   local hl_start = #indent + spaces_to_img

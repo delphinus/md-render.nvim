@@ -866,21 +866,22 @@ end)
 
 --- Stand in for `vim.system`, recording each spawn and handing back the
 --- completion callback so the test decides when the work finishes.
----@return { spawns: integer, finish: fun(code: integer) }
+---@return { spawns: integer, cmds: string[][], finish: fun(code: integer, stdout?: string) }
 local function stub_vim_system()
-  local rec = { spawns = 0 }
+  local rec = { spawns = 0, cmds = {} }
   local pending = {}
   local real = vim.system
-  vim.system = function(_, _, on_exit)
+  vim.system = function(cmd, _, on_exit)
     rec.spawns = rec.spawns + 1
+    table.insert(rec.cmds, cmd)
     table.insert(pending, on_exit)
     return { pid = 0 }
   end
-  rec.finish = function(code)
+  rec.finish = function(code, stdout)
     local queued = pending
     pending = {}
     for _, on_exit in ipairs(queued) do
-      on_exit { code = code, stdout = "", stderr = "" }
+      on_exit { code = code, stdout = stdout or "", stderr = "" }
     end
     vim.wait(100, function()
       return false
@@ -931,6 +932,74 @@ local function wait_for(answers, n)
     return #answers >= n
   end, 5)
 end
+
+-- ============================================================================
+-- Why a download failed, for the placeholder to show
+-- ============================================================================
+
+--- Download `url` with curl stubbed to end with `code` and print `stdout`, and
+--- return what the image module then says went wrong.
+---@param url string
+---@param code integer
+---@param stdout string
+---@return string? error
+---@return string[] cmd the curl command that was run
+local function failed_download(url, code, stdout)
+  local sys = stub_vim_system()
+  local answers = {}
+  image.download_async(url, function(path)
+    table.insert(answers, path or false)
+  end)
+  vim.wait(2000, function()
+    return sys.spawns > 0
+  end, 5)
+  sys.finish(code, stdout)
+  wait_for(answers, 1)
+  sys.restore()
+  return image.get_download_error(url), sys.cmds[1]
+end
+
+test("download_async: an HTTP error is reported with its status", function()
+  local url = "https://example.invalid/md-render-test-404.png"
+  -- curl -f exits 22 on an HTTP error, and -w still prints the status
+  local err, cmd = failed_download(url, 22, "404")
+  assert_eq(err, "HTTP 404", "the status code is the reason")
+  assert_true(vim.tbl_contains(cmd, "%{http_code}"), "curl is asked to print the status")
+end)
+
+test("download_async: a curl error without a status is named", function()
+  local err = failed_download("https://example.invalid/md-render-test-timeout.png", 28, "000")
+  assert_eq(err, "timed out", "exit 28 is a timeout")
+  err = failed_download("https://example.invalid/md-render-test-exit.png", 99, "000")
+  assert_eq(err, "curl exit 99", "an exit code without a name is given as is")
+end)
+
+test("download_async: a 200 that is not an image says so", function()
+  -- curl succeeds but writes nothing usable: no file exists at the cache path
+  local err = failed_download("https://example.invalid/md-render-test-html.png", 0, "200")
+  assert_eq(err, "not an image", "the body was not an image")
+end)
+
+test("download_async: a later success clears the error", function()
+  local url = ("https://example.invalid/md-render-test-recover-%d.png"):format(vim.uv.hrtime())
+  failed_download(url, 22, "500")
+  assert_eq(image.get_download_error(url), "HTTP 500", "the failure is remembered")
+
+  image.set_download_fn(function(_, output_path, callback)
+    vim.fn.writefile(vim.fn.readfile(test_png, "b"), output_path, "b")
+    callback(true)
+    return true
+  end)
+  local answers = {}
+  image.download_async(url, function(path)
+    table.insert(answers, path or false)
+  end)
+  wait_for(answers, 1)
+  image.set_download_fn(nil)
+  assert_true(answers[1], "the second download succeeds")
+  assert_nil(image.get_download_error(url), "and the error is gone")
+  if answers[1] then os.remove(answers[1]) end
+end)
 
 test("set_download_fn: declining hands the URL back to curl", function()
   local sys = stub_vim_system()

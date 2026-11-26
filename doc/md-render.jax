@@ -1235,6 +1235,8 @@ Details ~
 
   *MdRenderImagePlaceholder*
                         画像読み込み中に表示されるプレースホルダー
+  *MdRenderImageError*  Web 画像の読み込みに失敗した理由。プレースホルダー
+                        の上に表示される (前景色は `DiagnosticError` から)
   *MdRenderImageZoomCaption*
                         カーソルかマウスが画像の上にあるあいだの、画像の
                         上の見出し行（ `Visual` にリンク）
@@ -1300,6 +1302,13 @@ Details ~
 画像のインライン表示には、Kitty graphics protocol に対応したターミナルが必要で
 す (|md-render-requirements|)。tmux などのマルチプレクサは、通過させる設定をしな
 い限り、画像のエスケープシーケンスを捨てることがあります。
+
+Web 画像に「Failed to load image」と出る ~
+
+ダウンロードに失敗しています。括弧の中が理由で、`HTTP 404` のような HTTP ステー
+タス、`timed out` (タイムアウト)、サーバが画像ではないもの (ログイン画面など)
+を返したときの `not an image` などが入ります。プレビューを開いているあいだは取り
+直しません。開き直すと取り直します。
 
 動画が静止画 1 枚しか表示されない ~
 

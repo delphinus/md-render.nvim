@@ -967,6 +967,66 @@ end
 -- In-memory cache: URL -> local file path
 local _url_cache = {}
 
+--- Why the last download of a URL failed, for the placeholder to say so.
+---
+--- Set when a download fails and cleared when one succeeds. It lives for the
+--- session: a rebuild reads it to show the reason instead of "Loading image...",
+--- and the image code reads it to keep from fetching a URL that has just
+--- failed every time the content is rebuilt.
+---@type table<string, string>
+local _url_errors = {}
+
+--- Why the last download of `url` failed, or nil if it did not.
+---@param url string
+---@return string?
+function M.get_download_error(url)
+  return _url_errors[url]
+end
+
+--- Short reasons for the curl exit codes a download is likely to end with.
+--- Exit 22 (an HTTP error) is reported with the status code instead.
+local CURL_ERRORS = {
+  [6] = "could not resolve host",
+  [7] = "could not connect",
+  [28] = "timed out",
+  [35] = "SSL error",
+  [47] = "too many redirects",
+  [52] = "empty reply",
+  [56] = "connection reset",
+  [60] = "SSL certificate problem",
+  [63] = "file too large",
+}
+
+--- Say why curl failed, from its exit code and the `%{http_code}` it printed.
+---@param result vim.SystemCompleted
+---@return string
+local function curl_error(result)
+  local status = tonumber(vim.trim(result.stdout or ""))
+  if status and status >= 400 then return ("HTTP %d"):format(status) end
+  return CURL_ERRORS[result.code] or ("curl exit %d"):format(result.code)
+end
+
+--- Run curl for a download and say why it failed, if it did.
+---@async
+---@param cmd string[] curl and its arguments; `-w %{http_code}` is added
+---@return string? error nil when curl succeeded
+local function run_curl(cmd)
+  local full = vim.list_extend({ cmd[1], "-w", "%{http_code}" }, cmd, 2)
+  local result = async.system(full, { text = true })
+  if result.code == 0 then return nil end
+  return curl_error(result)
+end
+
+--- Remember how a download of `url` ended, and pass the path on.
+---@param url string
+---@param path string?
+---@param err string? why it failed; a default is used when `path` is nil
+---@return string?
+local function settle_download(url, path, err)
+  _url_errors[url] = not path and (err or "download failed") or nil
+  return path
+end
+
 --- Get cache directory for downloaded images
 ---@return string
 local function get_cache_dir()
@@ -1108,17 +1168,19 @@ function M.download_async(url, callback)
     -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
     local taken, ok = custom_download(url, cache_path)
     if taken then
-      if not ok then return nil end
-      return finalize_download(url, cache_path)
+      if not ok then return settle_download(url, nil) end
+      return settle_download(url, finalize_download(url, cache_path), "not an image")
     end
 
     -- Default: download with curl
     local cmd = { "curl", "-sfL", "--max-time", "10", "--max-filesize", "20000000", "-o", cache_path, url }
-    if async.system(cmd, { text = true }).code ~= 0 then
+    local err = run_curl(cmd)
+    if err then
       os.remove(cache_path)
-      return nil
+      return settle_download(url, nil, err)
     end
-    return finalize_download(url, cache_path)
+    -- A page served instead of the image (a login form, say) arrives as 200.
+    return settle_download(url, finalize_download(url, cache_path), "not an image")
   end, callback)
 end
 
@@ -1164,11 +1226,12 @@ function M.download_video_async(url, callback)
   shared_work(cache_path, function()
     -- Try custom download function first (e.g. for authenticated GitHub Enterprise URLs)
     local taken, ok = custom_download(url, cache_path)
-    if taken then return settle(ok) end
+    if taken then return settle_download(url, settle(ok)) end
 
     -- Default: download with curl (larger limits for video)
     local cmd = { "curl", "-sfL", "--max-time", "30", "--max-filesize", "104857600", "-o", cache_path, url }
-    return settle(async.system(cmd, { text = true }).code == 0)
+    local err = run_curl(cmd)
+    return settle_download(url, settle(err == nil), err)
   end, callback)
 end
 
